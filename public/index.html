@@ -1,0 +1,1612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+<style>
+  :root {
+    --bg: #0b0f17; --muted: #94a3b8; --text: #e5e7eb; --accent: #f59e0b;
+    --good: #22c55e; --warn: #ef4444; --border: rgba(148, 163, 184, .18); --chip: #0f172a;
+  }
+
+  .dt-shell {
+    background: radial-gradient(1200px 600px at 20% 0%, rgba(245, 158, 11, .12), transparent 55%), var(--bg);
+    color: var(--text); font-family: system-ui, -apple-system, sans-serif;
+    border-radius: 18px; padding: 15px; min-height: 100vh;
+  }
+
+  .dt-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 10px; }
+  .dt-revision {
+    font-size: 13px; font-weight: 900; padding: 6px 12px; border-radius: 999px;
+    background: rgba(245, 158, 11, .15); border: 1px solid rgba(245, 158, 11, .3); color: var(--accent);
+    line-height: 1; margin-left: 10px;
+  }
+
+  .dt-pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; background: rgba(255, 255, 255, .05); border: 1px solid var(--border); font-size: 14px; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
+  .status-connected .status-dot { background: var(--good); }
+
+  .dt-grid-main { display: grid; gap: 20px; grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr); }
+  @media (max-width: 1024px) { .dt-grid-main { grid-template-columns: 1fr; } }
+
+  .dt-card { background: rgba(255, 255, 255, .02); border: 1px solid var(--border); border-radius: 16px; padding: 16px; height: fit-content; }
+  .dt-score-big { font-size: 32px; font-weight: 950; color: var(--accent); line-height: 1; }
+  
+  .dt-table-scroll { width: 100%; overflow-x: auto; border-radius: 12px; border: 1px solid var(--border); background: rgba(0,0,0,0.2); }
+  table { width: 100%; border-collapse: collapse; min-width: 400px; }
+  th, td { padding: 12px; border-bottom: 1px solid var(--border); text-align: center; }
+  th { background: #0f172a; color: var(--muted); font-size: 11px; text-transform: uppercase; }
+  td.target-label { text-align: center; font-weight: 950; font-size: clamp(34px, 5.2vw, 64px) !important; color: #fff !important; line-height: 1; }
+
+  
+  
+  .pattern-input { width: 180px !important; height: 64px !important; font-size: clamp(22px, 3.8vw, 34px) !important; font-weight: 900 !important; text-transform: uppercase; letter-spacing: 4px; text-align: center; line-height: 1; padding: 10px 12px !important; border-radius: 14px; margin: 0 auto; display: block; box-sizing: border-box; }
+.row-score { font-size: clamp(30px, 5.0vw, 58px) !important; font-weight: 900 !important; display: block; text-align: center; }
+    th, td { padding-top: 14px; padding-bottom: 14px; }
+  }
+.row-score { font-size: clamp(26px, 5.4vw, 48px) !important; }
+  }
+    th, td { padding-top: 14px; padding-bottom: 14px; }
+  }
+.dt-box { background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 12px; padding: 10px; text-align: center; flex: 1; }
+  .chart-container { position: relative; height: 180px; width: 100%; margin: 10px 0; }
+
+  /* New Input Style for Pattern */
+  .pattern-input { 
+    background: var(--chip); color: #fff; border: 1px solid var(--border); 
+    border-radius: 8px; padding: 8px; font-size: 16px; width: 80px; text-align: center;
+    text-transform: uppercase; letter-spacing: 2px;
+  }
+
+  
+  /* Score (right column) */
+  .row-score { font-size: 18px; font-weight: 800; }
+input, select, button { background: var(--chip); color: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 10px; font-size: 15px; outline: none; }
+  button { cursor: pointer; font-weight: 900; background: rgba(245, 158, 11, .15); border: 1px solid var(--accent); }
+  button.secondary { background: rgba(255,255,255,0.05); border-color: var(--border); }
+
+  /* ===== Readability Boost (v7.2.1) ===== */
+  /* Brighter, slightly larger text for tables + small UI labels */
+  th { font-size: 12px !important; color: rgba(255,255,255,.78) !important; }
+  td { font-size: 14px !important; color: rgba(255,255,255,.78) !important; }
+  .dt-pill { font-size: 15px !important; color: rgba(255,255,255,.88) !important; }
+  .dt-revision { font-size: 13px !important; }
+  .dt-box { color: rgba(255,255,255,.88) !important; }
+  .dt-card h3, .dt-card h4, .dt-card h5 { color: rgba(255,255,255,.90); }
+
+  /* Make chart canvas text easier to see (Chart.js uses JS options too) */
+  .chart-container { height: 210px !important; } /* a bit taller = less cramped ticks */
+
+
+  /* ===== Entry board column layout (keeps input boxes perfectly centered) ===== */
+  #mainEntryTable { width: 100%; table-layout: fixed; }
+  #mainEntryTable th:nth-child(1), #mainEntryTable td:nth-child(1) { width: 28%; }
+  #mainEntryTable th:nth-child(2), #mainEntryTable td:nth-child(2) { width: 44%; }
+  #mainEntryTable th:nth-child(3), #mainEntryTable td:nth-child(3) { width: 28%; }
+
+  /* Remove extra side padding that makes the input feel pushed right */
+  #mainEntryTable td:nth-child(2) { padding-left: 0 !important; padding-right: 0 !important; }
+  #mainEntryTable td:nth-child(1), #mainEntryTable td:nth-child(3) { padding-left: 10px; padding-right: 10px; }
+
+
+  /* Keep input letters vertically centered and not clipped */
+  input.pattern-input { padding-top: 6px !important; padding-bottom: 6px !important; }
+
+
+  /* ===== Entry rows: consistent height + perfect vertical alignment ===== */
+  #mainEntryTable tbody tr { height: 96px; }
+  #mainEntryTable td { vertical-align: middle !important; }
+  #mainEntryTable td:nth-child(2) { text-align: center !important; }
+
+
+  /* ===== Fix row alignment: use ONE full-width row separator ===== */
+  #mainEntryTable { border-collapse: collapse !important; }
+  #mainEntryTable tbody tr { border-bottom: 1px solid rgba(255,255,255,0.10) !important; }
+  #mainEntryTable tbody tr:last-child { border-bottom: none !important; }
+
+  /* Remove any per-cell divider tricks that can look misaligned */
+  #mainEntryTable td, #mainEntryTable th { border-bottom: none !important; }
+  #mainEntryTable td::before, #mainEntryTable td::after,
+  #mainEntryTable th::before, #mainEntryTable th::after { display: none !important; content: none !important; }
+
+  /* Ensure identical vertical centering across all columns */
+  #mainEntryTable td > * { margin-top: 0 !important; margin-bottom: 0 !important; }
+
+
+  /* ===== Next Target Banner (big, at-a-distance) ===== */
+  .next-target-banner{
+    margin: 14px 0 12px;
+    padding: 14px 16px;
+    border-radius: 18px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.04));
+    box-shadow: 0 14px 40px rgba(0,0,0,.35);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .next-target-banner .nt-label{
+    font-size: 14px;
+    font-weight: 800;
+    letter-spacing: 1.2px;
+    color: rgba(255,255,255,0.70);
+  }
+  .next-target-banner .nt-value{
+    font-size: clamp(34px, 4.8vw, 60px);
+    font-weight: 950;
+    line-height: 1;
+    color: #fff;
+  }
+  .next-target-banner .nt-sub{
+    font-size: 14px;
+    color: rgba(255,255,255,0.70);
+    min-width: 180px;
+    text-align: right;
+  }
+  @media (max-width: 900px){
+    .next-target-banner{ flex-wrap: wrap; }
+    .next-target-banner .nt-sub{ text-align:left; min-width: 0; width: 100%; }
+  }
+
+
+  /* ===== Make date/time picker icons (calendar/clock) readable ===== */
+  input[type="date"]::-webkit-calendar-picker-indicator,
+  input[type="time"]::-webkit-calendar-picker-indicator {
+    opacity: 0.95 !important;
+    filter: invert(1) brightness(1.4) contrast(1.2);
+    cursor: pointer;
+  }
+  /* Slightly bigger icons on touch devices */
+  @media (hover: none) and (pointer: coarse) {
+    input[type="date"]::-webkit-calendar-picker-indicator,
+    input[type="time"]::-webkit-calendar-picker-indicator {
+      transform: scale(1.25);
+    }
+  }
+
+
+  /* Full-length tables (no vertical scroll panes) */
+  .dt-table-scroll { max-height: none !important; overflow-y: visible !important; }
+
+
+  /* Cloud History action buttons */
+  .dt-mini-btn{
+    font-size: 12px;
+    padding: 6px 10px;
+    border-radius: 10px;
+    border: 1px solid rgba(245,158,11,0.7);
+    background: rgba(245,158,11,0.14);
+    color: #ffffff;
+    cursor: pointer;
+  }
+  .dt-mini-btn:hover{ filter: brightness(1.1); }
+  .dt-mini-btn.danger{
+    border-color: rgba(239,68,68,0.75);
+    background: rgba(239,68,68,0.16);
+  }
+
+
+
+  /* Full-height tables (no scrolling panes) */
+  .dt-table-scroll.v-full { max-height: none !important; overflow: visible !important; }
+
+  /* Singles-only hits input matches big pattern input */
+  .hits-input { width: 180px !important; height: 64px !important; font-size: clamp(22px, 3.8vw, 34px) !important; font-weight: 900 !important; text-align: center; line-height: 1; padding: 10px 12px !important; border-radius: 14px; margin: 0 auto; display: block; box-sizing: border-box; }
+  /* Hide number spinners */
+  input.hits-input::-webkit-outer-spin-button, input.hits-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  input.hits-input { -moz-appearance: textfield; appearance: textfield; }
+
+  /* Score mode selector sizing */
+  #scoreModeSelect { width: 260px; max-width: 100%; }
+  @media (min-width: 1024px){ #scoreModeSelect{ width: 420px; max-width: 520px; padding-right: 48px; white-space: nowrap; } }
+
+  .boardWrap{
+    width:100%;
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    padding:4px;
+    border:1px solid var(--border);
+    border-radius:14px;
+    background: rgba(255,255,255,0.03);
+      min-height: 300px;
+    border: 2px solid var(--accent);
+  }
+  #dartboardCanvas{
+    width: min(100%, 520px);
+    height: auto;
+    display:block;
+    touch-action: manipulation;
+  }
+  .dt-disabled-input{
+    opacity: .65;
+    pointer-events: none;
+  }
+
+
+/* Ensure date/time picker icons are visible on dark UI (Chrome/Edge/Safari) */
+.dtInput::-webkit-calendar-picker-indicator,
+.dtInput[type="time"]::-webkit-calendar-picker-indicator,
+.dtInput[type="date"]::-webkit-calendar-picker-indicator{
+  filter: invert(1) brightness(1.2);
+  opacity: 0.9;
+}
+
+
+  /* v8.8.14 layout fixes */
+  button.primary{
+    width: 100%;
+    padding: 12px 14px;
+    background: var(--accent);
+    color: #000;
+    font-weight: 800;
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+  }
+  button.primary:hover{ filter: brightness(1.03); }
+  .board-entry-section{
+    margin-top: 12px;
+  }
+
+
+
+  /* ===== Tap feedback: small toggles + toast ===== */
+  .dt-toggle{
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    padding:6px 10px;
+    border-radius:999px;
+    background: rgba(255, 255, 255, .05);
+    border: 1px solid var(--border);
+    font-size: 12px;
+    font-weight: 900;
+    color: rgba(255,255,255,.88);
+    user-select:none;
+  }
+  /* Override global input styling for checkboxes */
+  input[type="checkbox"]{
+    width: 18px;
+    height: 18px;
+    padding: 0 !important;
+    margin: 0;
+    border-radius: 6px;
+    accent-color: var(--accent);
+    background: transparent !important;
+    border: 1px solid rgba(255,255,255,0.25);
+  }
+
+  .tap-toast{
+    position: fixed;
+    left: 50%;
+    bottom: 18px;
+    transform: translateX(-50%);
+    padding: 10px 14px;
+    border-radius: 999px;
+    background: rgba(0,0,0,.58);
+    border: 1px solid rgba(255,255,255,.16);
+    color: #fff;
+    font-weight: 950;
+    letter-spacing: .6px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .12s ease, transform .12s ease;
+    z-index: 9999;
+    white-space: nowrap;
+  }
+  .tap-toast.show{
+    opacity: 1;
+    transform: translateX(-50%) translateY(-6px);
+  }
+
+
+  /* ===== Practice Heatmap ===== */
+  .hm-legend{
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 8px;
+    line-height: 1.3;
+  }
+  .hm-grid{
+    display: grid;
+    grid-template-columns: repeat(15, 1fr); /* 90 cells = 6 rows */
+    gap: 6px;
+    padding: 10px;
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    background: rgba(0,0,0,0.18);
+  }
+  .hm-cell{
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    border-radius: 5px;
+    background: rgba(255,255,255,0.06);
+    cursor: pointer;
+    transition: transform .08s ease, filter .08s ease, box-shadow .08s ease;
+  }
+  .hm-cell:hover{
+    transform: translateY(-1px);
+    filter: brightness(1.15);
+  }
+  .hm-l0{ background: rgba(255,255,255,0.06); }
+  .hm-l1{ background: rgba(245,158,11,0.35); }
+  .hm-l2{ background: rgba(245,158,11,0.70); }
+  .hm-l3{ background: rgba(245,158,11,1.00); box-shadow: 0 0 10px rgba(245,158,11,0.45); }
+
+  .hm-selected{
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,0.03);
+    font-size: 13px;
+    color: rgba(255,255,255,0.88);
+  }
+  .hm-chip{
+    display:inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    margin: 0 6px 0 10px;
+    vertical-align: -2px;
+    border: 1px solid rgba(255,255,255,0.12);
+  }
+  /* tighter grid on small screens */
+  @media (max-width: 420px){
+    .hm-grid{ grid-template-columns: repeat(10, 1fr); }
+  }
+
+
+</style>
+  <title>Darts Tracker</title>
+</head>
+<body>
+<div class="dt-shell">
+  <div class="dt-container">
+    <div id="authScreen" style="display:none; text-align:center; padding: 80px 0;">
+      <div class="dt-card" style="max-width: 400px; margin: auto;">
+        <h2>Darts Tracker</h2>
+        <button id="signInBtn" style="width:100%; padding: 15px;">Sign in with Google</button>
+      </div>
+    </div>
+
+    <div id="appInterface" style="display:none;">
+      <header class="dt-header">
+        <div style="display:flex; align-items:center;">
+          <h2 style="margin:0;">Practice Session</h2>
+          <span class="dt-revision">Cloud • v8.8.15 Live</span>
+        </div>
+        <div style="display:flex; gap:10px; align-items:center;">
+          <div id="syncPill" class="dt-pill"><div class="status-dot"></div> <span id="syncText">Syncing...</span></div>
+
+          <div class="dt-pill" style="display:flex; align-items:center; gap:10px;">
+            <span style="opacity:.85; font-weight:800;">Game</span>
+            <select id="scoreModeSelect" aria-label="Game scoring mode">
+              <option value="standard">Standard (S/D/T)</option>
+              <option value="single">Singles only (all hits = 1)</option>
+            </select>
+          </div>
+<div class="dt-pill"><b>Marwan Diab</b> <button id="signOutBtn" style="font-size:10px; padding:4px 8px; margin-left:5px;">Logout</button></div>
+        </div>
+      </header>
+
+      <div class="dt-grid-main">
+        <div class="dt-card">
+          <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:15px;">
+            <input id="sessionDate" type="date">
+            <input id="sessionTime" type="time">
+            <div style="flex:1; text-align:right">
+              <span style="font-size:10px; color:var(--muted); display:block;">SESSION TOTAL</span>
+              <span id="sessionTotal" class="dt-score-big">0</span>
+            </div>
+          </div>
+          
+          <div style="display:flex; gap:10px; margin-bottom:15px;">
+            <button id="saveBtn" class="primary">Save Session</button>
+          </div>
+
+          <!-- NEXT TARGET BANNER -->
+    <div id="nextTargetBanner" class="next-target-banner" style="display:none;">
+      <div class="nt-label">NEXT TARGET</div>
+      <div class="nt-value" id="nextTargetValue">—</div>
+      <div class="nt-sub" id="nextTargetSub">—</div>
+    </div>
+
+
+
+<div id="boardEntryWrap" class="board-entry-section">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
+              <b>Tap Board Entry</b>
+              <div style="display:flex; gap:8px; align-items:center;">
+                <label class="dt-toggle" title="Tap feedback sound">
+                  <input id="soundToggle" type="checkbox">
+                  <span>Sound</span>
+                </label>
+                <label class="dt-toggle" title="Speak Single/Double/Triple/Miss">
+                  <input id="voiceToggle" type="checkbox">
+                  <span>Voice</span>
+                </label>
+                <button id="undoTapBtn" class="secondary" style="padding:8px 10px;">Undo</button>
+                <button id="clearAllBtn" class="secondary" style="padding:8px 10px;">Clear</button>
+              </div>
+            </div>
+            <div class="boardWrap">
+              <canvas id="dartboardCanvas" width="420" height="420" aria-label="Dartboard input"></canvas>
+            </div>
+            <div style="margin-top:10px; font-size:12px; color:var(--muted); line-height:1.3;">
+              Tap where the dart landed. It will fill the next slot for that number (ring S/D/T). Bulls go to <b>BULL</b>.
+              In Singles-only mode, every hit still counts as 1.
+            </div>
+          </div>
+       
+          
+
+          <div class="dt-table-scroll">
+            <table id="mainEntryTable">
+              <thead><tr><th style="text-align:left;">Target</th><th id="inputColHeader">Input (e.g. SDT)</th><th>Score</th></tr></thead>
+              <tbody id="entryBody"></tbody>
+            </table>
+          </div>
+
+          
+
+        </div>
+
+        <div class="dt-card">
+          <div style="display:flex; gap:10px; margin-bottom:15px;">
+            <div class="dt-box"><span style="font-size:12px;">SESSIONS</span><br><b id="kpiSessions">0</b></div>
+            <div class="dt-box"><span style="font-size:12px;">PB TOTAL</span><br><b id="kpiBest">—</b></div>
+          </div>
+          <div class="chart-container"><canvas id="overallChart"></canvas></div>
+
+          <b style="display:block; margin: 18px 0 8px;">Practice Heatmap</b>
+          <div id="practiceHeatLegend" class="hm-legend">Past 90 days.</div>
+          <div id="practiceHeatGrid" class="hm-grid" aria-label="Practice heatmap (past 90 days)"></div>
+          <div id="practiceHeatSelected" class="hm-selected" style="display:none;"></div>
+
+          <div class="dt-table-scroll v-full">
+            <table>
+              <thead><tr><th>Target</th><th>Avg Score</th></tr></thead>
+              <tbody id="heatBody"></tbody>
+            </table>
+          </div>
+          <b style="display:block; margin: 20px 0 10px;">Cloud History</b>
+          <div class="dt-table-scroll v-full">
+            <table>
+              <thead><tr><th>Date</th><th>Score</th><th>Action</th></tr></thead>
+              <tbody id="historyBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+<script>
+(function() {
+  const firebaseConfig = {
+    apiKey: "AIzaSyCAfRz72zGeDxKQGk3TGPAra1US64BGF90",
+    authDomain: "dartstracker2026.firebaseapp.com",
+    projectId: "dartstracker2026",
+    storageBucket: "dartstracker2026.firebasestorage.app",
+    messagingSenderId: "151826966768",
+    appId: "1:151826966768:web:a409ac8d409bf0f796ba35"
+  };
+
+  if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+  const auth = firebase.auth(), db = firebase.firestore();
+  const TARGETS = [...Array.from({length:20}, (_,i)=>String(20-i)), "BULL"];
+  const SCORE_VALS = {"-":0,"S":1,"D":2,"T":3,"B":1}; // Added B for Bullseye flexibility
+
+
+  let scoreMode = normMode(localStorage.getItem("dt_scoreMode") || "standard");
+  // Entry method: both keyboard + tap-board are always enabled
+  let entryMode = "both";
+function normMode(m) { return (m === "single") ? "single" : "standard"; }
+
+  function rowScoreForMode(arr, mode) {
+    const m = normMode(mode);
+    const a = arr || ["-","-","-"];
+    if (m === "single") return a.reduce((acc, v) => acc + (v && v !== "-" ? 1 : 0), 0);
+    return a.reduce((acc, v) => acc + (SCORE_VALS[v] || 0), 0);
+  }
+
+  function entryToHitsValue(arr) {
+    const a = arr || ["-","-","-"];
+    return a.reduce((acc, v) => acc + (v && v !== "-" ? 1 : 0), 0);
+  }
+
+  function applyScoreModeUI(mode, opts={}) {
+    scoreMode = normMode(mode);
+    localStorage.setItem("dt_scoreMode", scoreMode);
+    const sel = document.getElementById("scoreModeSelect");
+    if (sel && sel.value !== scoreMode) sel.value = scoreMode;
+
+    const hdr = document.getElementById("inputColHeader");
+    if (hdr) hdr.textContent = (scoreMode === "single") ? "Hits (0–3)" : "Input (e.g. SDT)";
+
+    // Rebuild the table to swap input types
+    initTable();
+
+    applyEntryModeUI();
+
+    // Refresh right panel stats if we already have session data
+    if (typeof refreshStatsAndViews === "function") refreshStatsAndViews();
+  }
+
+
+  // App revision (shown in header)
+  const APP_REV = "v8.8.12 Live";
+  const __revEl = document.querySelector(".dt-revision");
+  if (__revEl) __revEl.textContent = `Cloud • ${APP_REV}`;
+
+  let currentUser = null, currentEntry = {}, sessionsAll = [], sessions = [], overallChart = null;
+
+  // ---- Live draft sync (instant cross-device updates) ----
+  const deviceId = (localStorage.getItem("dt_deviceId") || (crypto.randomUUID ? crypto.randomUUID() : ("dev_" + Math.random().toString(16).slice(2))));
+  localStorage.setItem("dt_deviceId", deviceId);
+
+  let liveDraftUnsub = null;
+  let draftWriteTimer = null;
+  let suppressLocalEchoUntil = 0;
+
+  function liveDraftRef(uid) {
+    return db.collection("liveDrafts").doc(uid);
+  }
+
+  function deepClone(obj) { return JSON.parse(JSON.stringify(obj || {})); }
+
+  function entryEquals(a,b) {
+    return JSON.stringify(a||{}) === JSON.stringify(b||{});
+  }
+
+  function entryToInputValue(arr) {
+    return (arr || ["-","-","-"]).join("").replace(/-/g, "");
+  }
+
+  function updateUIFromEntry(entry, opts={}) {
+    const skipFocused = !!opts.skipFocused;
+    document.querySelectorAll("#entryBody tr").forEach(row => {
+      const target = row.getAttribute("data-target");
+      const input = row.querySelector("input.pattern-input, input.hits-input");
+      if (!input) return;
+      if (skipFocused && document.activeElement === input) return;
+
+      if (input.classList.contains("hits-input")) {
+        const a = (entry[target] || ["-","-","-"]);
+        const hits = a.filter(v => v && v !== "-").length;
+        if (String(input.value) !== String(hits)) input.value = hits;
+      } else {
+        const val = entryToInputValue(entry[target]);
+        if (input.value !== val) input.value = val;
+      }
+    });
+    refreshCalculations();
+    applyEntryModeUI();
+  }
+
+
+
+  function scheduleDraftWrite() {
+    const user = auth.currentUser;
+    if (!user) return;
+    if (Date.now() < suppressLocalEchoUntil) return; // avoid immediate ping-pong after applying remote changes
+
+    if (draftWriteTimer) clearTimeout(draftWriteTimer);
+    draftWriteTimer = setTimeout(async () => {
+      try {
+        document.getElementById("syncText").textContent = "Syncing...";
+        await liveDraftRef(user.uid).set({
+          uid: user.uid,
+          deviceId,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          mode: scoreMode,
+          entry: currentEntry,
+          total: parseInt(document.getElementById("sessionTotal").textContent || "0", 10),
+          sessionDate: document.getElementById("sessionDate").value || "",
+          sessionTime: document.getElementById("sessionTime").value || ""
+        }, { merge: true });
+        document.getElementById("syncText").textContent = "Connected";
+      } catch (err) {
+        console.error("Live draft write failed", err);
+        document.getElementById("syncText").textContent = "Offline";
+      }
+    }, 80);
+  }
+
+  function startLiveDraft(uid) {
+    if (liveDraftUnsub) liveDraftUnsub();
+    liveDraftUnsub = liveDraftRef(uid).onSnapshot(doc => {
+      if (!doc.exists) return;
+      const data = doc.data() || {};
+      if (data.deviceId && data.deviceId === deviceId) return; // ignore our own writes
+
+      const incomingMode = data.mode || "";
+      const incomingEntry = data.entry || {};
+      const incomingDate = data.sessionDate || "";
+      const incomingTime = data.sessionTime || "";
+
+      if (incomingMode && normMode(incomingMode) !== scoreMode) {
+        applyScoreModeUI(incomingMode);
+      }
+
+      // Apply incoming state
+      if (!entryEquals(incomingEntry, currentEntry)) {
+        currentEntry = deepClone(incomingEntry);
+        localStorage.setItem("dt_draft", JSON.stringify(currentEntry));
+        suppressLocalEchoUntil = Date.now() + 250; // prevent ping-pong
+        updateUIFromEntry(currentEntry, { skipFocused: true });
+      }
+      // Keep date/time in sync (also skip if user is actively editing those fields)
+      const dEl = document.getElementById("sessionDate");
+      const tEl = document.getElementById("sessionTime");
+      if (document.activeElement !== dEl && incomingDate && dEl.value !== incomingDate) dEl.value = incomingDate;
+      if (document.activeElement !== tEl && incomingTime && tEl.value !== incomingTime) tEl.value = incomingTime;
+
+      document.getElementById("syncPill").classList.add("status-connected");
+      document.getElementById("syncText").textContent = "Connected";
+    }, err => {
+      console.error("Live draft listener error", err);
+      document.getElementById("syncText").textContent = "Offline";
+    });
+  }
+
+
+  function initTable() {
+    const tbody = document.getElementById("entryBody");
+    tbody.innerHTML = "";
+    TARGETS.forEach(t => {
+      currentEntry[t] = currentEntry[t] || ["-","-","-"];
+      const tr = document.createElement("tr");
+      tr.setAttribute('data-target', t);
+
+      const inputHTML = (scoreMode === "single")
+        ? `<input type="number" min="0" max="3" step="1" class="hits-input" value="${entryToHitsValue(currentEntry[t])}">`
+        : `<input type="text" maxlength="3" class="pattern-input" value="${entryToInputValue(currentEntry[t])}" placeholder="---">`;
+
+      tr.innerHTML = `
+        <td class="target-label">${t}</td>
+        <td>${inputHTML}</td>
+        <td class="row-score" style="color:var(--accent); font-weight:bold;">0</td>
+      `;
+      tbody.appendChild(tr);
+    });
+    refreshCalculations();
+  }
+
+  // Freedom Input Logic
+  
+  // Sync date/time edits live across devices
+  ["sessionDate","sessionTime"].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener("input", () => {
+      if (auth.currentUser) scheduleDraftWrite();
+    });
+    el.addEventListener("change", () => {
+      if (auth.currentUser) scheduleDraftWrite();
+    });
+  });
+
+document.getElementById("mainEntryTable").addEventListener("input", (e) => {
+    const row = e.target.closest("tr");
+    if (!row) return;
+    const target = row.getAttribute("data-target");
+
+    if (e.target.classList.contains("pattern-input")) {
+      let val = (e.target.value || "").toUpperCase();
+
+      // Sanitizing: only allow S, D, T, and handle Bull (no T)
+      val = val.split('').filter(char => {
+        if (target === "BULL") return "SDB-".includes(char);
+        return "SDT-".includes(char);
+      }).join('');
+
+      e.target.value = val;
+
+      // Pad to 3 chars for storage
+      let arr = val.split("");
+      while(arr.length < 3) arr.push("-");
+      currentEntry[target] = arr;
+    }
+
+    if (e.target.classList.contains("hits-input")) {
+      let n = parseInt(e.target.value || "0", 10);
+      if (Number.isNaN(n)) n = 0;
+      n = Math.max(0, Math.min(3, n));
+      e.target.value = String(n);
+      currentEntry[target] = Array(n).fill("S").concat(Array(3-n).fill("-"));
+    }
+
+    refreshCalculations();
+    localStorage.setItem("dt_draft", JSON.stringify(currentEntry));
+    scheduleDraftWrite();
+  });
+
+  function refreshCalculations() {
+  // keep next-target banner updated
+  // (safe even if banner not present)
+
+    let grandTotal = 0;
+    document.querySelectorAll("#entryBody tr").forEach(row => {
+      const target = row.getAttribute("data-target");
+      const rowData = currentEntry[target] || ["-","-","-"];
+      const rowScore = rowScoreForMode(rowData, scoreMode);
+      row.querySelector(".row-score").textContent = rowScore;
+      grandTotal += rowScore;
+    });
+    document.getElementById("sessionTotal").textContent = grandTotal;
+  }
+
+  function startSync(uid) {
+    db.collection("sessions")
+      .where("uid","==",uid)
+      .orderBy("timestamp","asc")
+      .onSnapshot(snap => {
+        sessionsAll = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        document.getElementById("syncPill").classList.add("status-connected");
+        document.getElementById("syncText").textContent = "Connected";
+        refreshStatsAndViews();
+      });
+  }
+
+  function refreshStatsAndViews() {
+    // Filter sessions by selected scoring mode
+    sessions = sessionsAll.filter(s => normMode(s.mode || "standard") === scoreMode);
+
+    document.getElementById("kpiSessions").textContent = sessions.length;
+    document.getElementById("kpiBest").textContent = sessions.length ? Math.max(...sessions.map(s=> (typeof s.total==="number")?s.total:parseInt(s.total||"0",10))) : "—";
+
+    // Heat table (avg per target)
+    const hBody = document.getElementById("heatBody");
+    hBody.innerHTML = "";
+    TARGETS.forEach(t => {
+      const scs = sessions.map(s => rowScoreForMode(s.entry && s.entry[t] ? s.entry[t] : ["-","-","-"], scoreMode));
+      const avg = scs.length ? (scs.reduce((a,b)=>a+b,0) / scs.length) : 0;
+      hBody.innerHTML += `<tr><td>${t}</td><td>${avg.toFixed(1)}</td></tr>`;
+    });
+
+    // Cloud history (newest first)
+    const hist = document.getElementById("historyBody");
+    hist.innerHTML = "";
+    [...sessions].reverse().forEach(s => {
+      const d = (s.timestamp || "").split(" ")[0] || "";
+      const total = (typeof s.total === "number") ? s.total : parseInt(s.total || "0", 10);
+      hist.innerHTML += `<tr>
+        <td>${d}</td>
+        <td>${total}</td>
+        <td style="display:flex; gap:8px; justify-content:center; align-items:center;">
+          <button class="dt-mini-btn" data-act="load" data-id="${s.id}">Load</button>
+          <button class="dt-mini-btn danger" data-act="delete" data-id="${s.id}">Delete</button>
+        </td>
+      </tr>`;
+    });
+
+    renderChart();
+    renderPracticeHeatMap();
+  }
+
+  function renderChart() {
+    const ctx = document.getElementById("overallChart");
+    if(overallChart) overallChart.destroy();
+    overallChart = new Chart(ctx, {
+      type: 'line',
+      data: { labels: sessions.map(s=>s.timestamp.split(' ')[0]), datasets: [{ label: 'Score', data: sessions.map(s=>s.total), borderColor: '#f59e0b', tension: 0.3 }] },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            titleColor: 'rgba(255,255,255,0.95)',
+            bodyColor: 'rgba(255,255,255,0.90)',
+            titleFont: { size: 13, weight: '700' },
+            bodyFont: { size: 12 }
+          }
+        },
+        scales: {
+          x: {
+            ticks: {
+              color: 'rgba(255,255,255,0.70)',
+              font: { size: 11, weight: '600' },
+              autoSkip: true,
+              maxTicksLimit: 8,
+              maxRotation: 45,
+              minRotation: 45
+            },
+            grid: { color: 'rgba(255,255,255,0.08)' }
+          },
+          y: {
+            ticks: {
+              color: 'rgba(255,255,255,0.75)',
+              font: { size: 12, weight: '700' }
+            },
+            grid: { color: 'rgba(255,255,255,0.08)' }
+          }
+        }
+      }
+    });
+  }
+
+  
+  
+  // ==================== PRACTICE HEATMAP ====================
+  function sessionDateStr(s){
+    const ts = s && s.timestamp;
+    if (!ts) return null;
+
+    if (typeof ts === "string"){
+      if (ts.includes(" ")) return ts.split(" ")[0];
+      if (/^\d{4}-\d{2}-\d{2}$/.test(ts)) return ts;
+      if (/^\d+$/.test(ts)) return new Date(Number(ts)).toISOString().slice(0,10);
+      return null;
+    }
+    if (typeof ts === "number") return new Date(ts).toISOString().slice(0,10);
+    if (typeof ts === "object"){
+      try{
+        if (typeof ts.toDate === "function") return ts.toDate().toISOString().slice(0,10);
+        if ("seconds" in ts) return new Date(ts.seconds * 1000).toISOString().slice(0,10);
+      }catch(e){}
+    }
+    return null;
+  }
+
+  function buildPracticeDayIndex(list){
+    const map = new Map();
+    (list || []).forEach(s=>{
+      const d = sessionDateStr(s);
+      if (!d) return;
+      map.set(d, (map.get(d) || 0) + 1);
+    });
+    return map;
+  }
+
+  function updateHeatSelectedBox(dateStr, count){
+    const sel = document.getElementById("practiceHeatSelected");
+    if (!sel) return;
+
+    const dObj = new Date(dateStr + "T12:00:00");
+    const displayDate = dObj.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+
+    // Extras: best + sum score for that day (across all saved sessions)
+    let totals = [];
+    (sessionsAll || []).forEach(s=>{
+      const d = sessionDateStr(s);
+      if (d !== dateStr) return;
+      const total = (typeof s.total === "number") ? s.total : parseInt(s.total || "0", 10);
+      if (!Number.isNaN(total)) totals.push(total);
+    });
+    const sum = totals.reduce((a,b)=>a+b,0);
+    const best = totals.length ? Math.max(...totals) : 0;
+
+    sel.dataset.date = dateStr;
+    sel.style.display = "block";
+
+    if (count > 0){
+      sel.innerHTML = `<span style="color:rgba(255,255,255,.65); font-weight:800;">Selected:</span>
+        <span style="font-weight:950; margin-left:8px;">${displayDate}</span>
+        <span style="margin-left:10px; color:var(--accent); font-weight:950;">${count} session${count>1?"s":""}</span>
+        <span style="margin-left:10px; color:rgba(255,255,255,.75); font-weight:800;">Best: ${best}</span>
+        <span style="margin-left:10px; color:rgba(255,255,255,.75); font-weight:800;">Total: ${sum}</span>`;
+    } else {
+      sel.innerHTML = `<span style="color:rgba(255,255,255,.65); font-weight:800;">Selected:</span>
+        <span style="font-weight:950; margin-left:8px;">${displayDate}</span>
+        <span style="margin-left:10px; color:rgba(255,255,255,.55); font-weight:800;">Rest day</span>`;
+    }
+  }
+
+  function renderPracticeHeatMap(){
+    const grid = document.getElementById("practiceHeatGrid");
+    const leg  = document.getElementById("practiceHeatLegend");
+    const sel  = document.getElementById("practiceHeatSelected");
+    if (!grid || !leg) return;
+
+    // Use ALL sessions (both game modes) so it's truly "when I practiced"
+    const dayCount = buildPracticeDayIndex(sessionsAll);
+    const today = new Date();
+
+    let h = "";
+    for (let i = 89; i >= 0; i--){
+      const d = new Date(today);
+      d.setDate(d.getDate() - i);
+      const dateStr = localYYYYMMDD(d);
+
+      const n = dayCount.get(dateStr) || 0;
+      const level = (n === 0) ? 0 : (n === 1) ? 1 : (n === 2) ? 2 : 3;
+
+      const title = (n > 0)
+        ? `${dateStr} • ${n} session${n>1?"s":""}`
+        : `${dateStr} • Rest`;
+
+      h += `<div class="hm-cell hm-l${level}" data-date="${dateStr}" data-count="${n}" title="${title}"></div>`;
+    }
+
+    grid.innerHTML = h;
+
+    // Legend
+    leg.innerHTML =
+      `Past 90 days (saved sessions).` +
+      `<span class="hm-chip hm-l0"></span>0` +
+      `<span class="hm-chip hm-l1"></span>1` +
+      `<span class="hm-chip hm-l2"></span>2` +
+      `<span class="hm-chip hm-l3"></span>3+`;
+
+    // If something is selected, refresh its stats
+    if (sel && sel.style.display !== "none" && sel.dataset && sel.dataset.date){
+      const d = sel.dataset.date;
+      const n = dayCount.get(d) || 0;
+      updateHeatSelectedBox(d, n);
+    }
+  }
+
+  (function bindPracticeHeatClick(){
+    const grid = document.getElementById("practiceHeatGrid");
+    if (!grid || grid.dataset.bound) return;
+    grid.dataset.bound = "1";
+
+    grid.addEventListener("click", (e)=>{
+      const cell = e.target.closest("[data-date]");
+      if (!cell) return;
+
+      const dateStr = cell.getAttribute("data-date");
+      const count = parseInt(cell.getAttribute("data-count") || "0", 10) || 0;
+      updateHeatSelectedBox(dateStr, count);
+    });
+  })();
+
+
+
+  // --- Entry mode: keyboard vs tap-board ---
+  const SEG_ORDER = ["20","1","18","4","13","6","10","15","2","17","3","19","7","16","8","11","14","9","12","5"];
+  let tapStack = [];
+  let lastTap = null;
+  let boardReady = false;
+
+  // ---- Tap feedback: sound + optional voice callout ----
+  const __tapSoundKey = "dt_tapSound";   // "1" | "0"
+  const __tapVoiceKey = "dt_tapVoice";   // "1" | "0"
+  let tapSoundEnabled = (localStorage.getItem(__tapSoundKey) ?? "1") === "1";
+  let tapVoiceEnabled = (localStorage.getItem(__tapVoiceKey) ?? "0") === "1";
+
+  // iOS-friendly WebAudio: create/resume only on a user gesture
+  let __audioCtx = null;
+  function ensureAudio(){
+    if (!tapSoundEnabled) return null;
+    try{
+      if (!__audioCtx) __audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (__audioCtx.state === "suspended") __audioCtx.resume();
+      return __audioCtx;
+    } catch (e){
+      return null;
+    }
+  }
+
+  function beep(freq=600, dur=0.055, type="square", vol=0.10){
+    const ctx = ensureAudio();
+    if (!ctx) return;
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = type;
+    o.frequency.value = freq;
+    g.gain.value = 0.0001;
+    o.connect(g);
+    g.connect(ctx.destination);
+
+    const t = ctx.currentTime;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol, t + 0.010);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+
+    o.start(t);
+    o.stop(t + dur + 0.02);
+  }
+
+  let __toastTimer = null;
+  function showTapToast(text){
+    const el = document.getElementById("tapToast");
+    if (!el) return;
+    el.textContent = text;
+    el.classList.add("show");
+    if (__toastTimer) clearTimeout(__toastTimer);
+    __toastTimer = setTimeout(() => el.classList.remove("show"), 600);
+  }
+
+  let __lastSpeakAt = 0;
+
+  // iOS Safari / iPadOS Web Speech (TTS) is finicky:
+  // - voices load async (voiceschanged)
+  // - the engine often needs a user-gesture "unlock"
+  let __ttsInit = false;
+  let __ttsVoices = [];
+  let __ttsUnlocked = false;
+
+  // 1) Better Voice Loading
+  function initTTS() {
+    if (__ttsInit) return;
+    __ttsInit = true;
+    if (!("speechSynthesis" in window)) return;
+
+    const loadVoices = () => {
+      try { __ttsVoices = window.speechSynthesis.getVoices() || []; }
+      catch (e) { __ttsVoices = []; }
+    };
+
+    // Safari often needs this listener because getVoices() loads async
+    try { window.speechSynthesis.onvoiceschanged = loadVoices; } catch (e) {}
+    loadVoices();
+  }
+
+  // 2) Stronger Unlock (call from a USER gesture, e.g. checkbox change)
+  function unlockTTS() {
+    if (!tapVoiceEnabled || __ttsUnlocked) return;
+    if (!("speechSynthesis" in window)) return;
+
+    try {
+      const synth = window.speechSynthesis;
+      // Cancel anything pending before "waking" the engine
+      try { synth.cancel(); } catch (e) {}
+
+      // A truly "empty" but valid utterance to wake the engine
+      const utterance = new SpeechSynthesisUtterance(" ");
+      utterance.volume = 0; // silent
+      synth.speak(utterance);
+      __ttsUnlocked = true;
+      console.log("Speech engine unlocked for iOS/iPadOS");
+    } catch (e) {}
+  }
+
+  function pickEnglishVoice(){
+    if (!__ttsVoices || !__ttsVoices.length) return null;
+    return __ttsVoices.find(v => /^en(-|_)?/i.test(v.lang)) ||
+           __ttsVoices.find(v => /en/i.test(v.lang)) ||
+           __ttsVoices[0] || null;
+  }
+
+  // 3) Updated Speak Function (more iOS-stable)
+  function speak(text) {
+    if (!tapVoiceEnabled || !("speechSynthesis" in window)) return;
+
+    initTTS();
+    unlockTTS();
+
+    const synth = window.speechSynthesis;
+
+    // Crucial for iOS: cancel any pending speech before starting new one
+    try { synth.cancel(); } catch (e) {}
+
+    // Refresh voices one more time (iOS sometimes loads voices AFTER first speak)
+    try { __ttsVoices = synth.getVoices() || __ttsVoices; } catch (e) {}
+
+    const utterance = new SpeechSynthesisUtterance(String(text));
+    const voice = pickEnglishVoice();
+
+    // iOS is more reliable when a specific voice is assigned (when available)
+    if (voice) {
+      utterance.voice = voice;
+      utterance.lang = voice.lang;
+    } else {
+      utterance.lang = "en-US";
+    }
+
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+    utterance.volume = 1.0;
+
+    // Wrap in a tiny timeout to ensure synth.cancel() finished
+    setTimeout(() => {
+      try { synth.speak(utterance); } catch (e) {}
+    }, 50);
+  }
+
+  function tapFeedback(kind, target){
+    // kind: "S" | "D" | "T" | "MISS" | "FULL"
+    if (tapSoundEnabled){
+      if (kind === "S") beep(620, 0.05, "square", 0.09);
+      else if (kind === "D") beep(760, 0.06, "square", 0.10);
+      else if (kind === "T") beep(920, 0.07, "square", 0.11);
+      else if (kind === "FULL"){
+        // Two quick low beeps = "already full / not allowed"
+        beep(180, 0.06, "sawtooth", 0.14);
+        setTimeout(() => beep(140, 0.06, "sawtooth", 0.14), 80);
+      } else {
+        // Miss
+        beep(220, 0.08, "sine", 0.14);
+      }
+    }
+
+    const word =
+      (kind === "MISS") ? "Miss" :
+      (kind === "FULL") ? "Full" :
+      (kind === "S") ? "Single" :
+      (kind === "D") ? "Double" : "Triple";
+
+    const tLabel = (target === "BULL") ? "BULL" : (target ?? "");
+    // Toast shows more context (so you KNOW it registered)
+    const toastTxt = (kind === "MISS")
+      ? "MISS"
+      : (kind === "FULL")
+        ? `FULL ${tLabel}`.trim()
+        : `${word.toUpperCase()} ${tLabel}`.trim();
+
+    showTapToast(toastTxt);
+
+    // Voice says only the word (as requested)
+    speak(word);
+  }
+
+  // Wire up UI toggles (persisted)
+  (function bindTapToggles(){
+    const st = document.getElementById("soundToggle");
+    const vt = document.getElementById("voiceToggle");
+    if (st){
+      st.checked = tapSoundEnabled;
+      st.addEventListener("change", () => {
+        tapSoundEnabled = !!st.checked;
+        localStorage.setItem(__tapSoundKey, tapSoundEnabled ? "1" : "0");
+        if (tapSoundEnabled) ensureAudio();
+      });
+    }
+    if (vt){
+      vt.checked = tapVoiceEnabled;
+      vt.addEventListener("change", () => {
+        tapVoiceEnabled = !!vt.checked;
+        localStorage.setItem(__tapVoiceKey, tapVoiceEnabled ? "1" : "0");
+        // iOS needs a user-gesture "unlock" + voices init
+        if (tapVoiceEnabled){
+          initTTS();
+          unlockTTS();
+        }});
+    }
+  })();
+
+
+
+  
+function applyEntryModeUI(){
+    // Keyboard + Tap-board are both available at all times (no toggle).
+    const wrap = document.getElementById("boardEntryWrap");
+    if (wrap) wrap.style.display = "block";
+    ensureBoard();
+    // Resize/draw after layout
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const c = document.getElementById("dartboardCanvas");
+      if (c && typeof c._resize === "function") c._resize();
+    }));
+  }
+
+  function ensureBoard(){
+    const c = document.getElementById("dartboardCanvas");
+    if (!c) return;
+
+    // First-time init only
+    if (!boardReady){
+      boardReady = true;
+
+      // Sizing logic that handles High DPI screens + hidden container cases
+      c._resize = () => {
+        const wrap = c.closest(".boardWrap") || c.parentElement;
+        if (!wrap) return;
+
+        const wrapW = (wrap.getBoundingClientRect().width || wrap.clientWidth || 0);
+        if (wrapW === 0) return; // still hidden; wait for next frame
+
+        const size = Math.max(280, Math.min(520, wrapW - 24)); // padding buffer
+        const dpr = window.devicePixelRatio || 1;
+
+        c.width = Math.round(size * dpr);
+        c.height = Math.round(size * dpr);
+        c.style.width = size + "px";
+        c.style.height = size + "px";
+        drawBoard();
+      };
+
+      window.addEventListener("resize", () => {
+        if (typeof c._resize === "function") {
+          requestAnimationFrame(() => requestAnimationFrame(() => c._resize()));
+        }
+      });
+
+      // Unified pointer handling for mobile/desktop
+      const handlePoint = (ev) => {
+        
+        const rect = c.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+
+        // Map client coords to internal canvas pixel coords
+        const x = (ev.clientX - rect.left) * (c.width / rect.width);
+        const y = (ev.clientY - rect.top) * (c.height / rect.height);
+
+        const hit = scoreFromPoint(c, x, y);
+        if (hit) applyBoardHit(hit);
+        else tapFeedback("MISS");
+      };
+
+      c.addEventListener("pointerdown", handlePoint);
+
+      // Buttons (guard against double-binding)
+      const undoBtn = document.getElementById("undoTapBtn");
+      if (undoBtn && !undoBtn.dataset.bound){
+        undoBtn.dataset.bound = "1";
+        undoBtn.addEventListener("click", ()=>{
+          const last = tapStack.pop();
+          if (!last) return;
+          currentEntry[last.target] = last.prev.slice();
+          localStorage.setItem("dt_draft", JSON.stringify(currentEntry));
+          updateUIFromEntry(currentEntry);
+          scheduleDraftWrite();
+          lastTap = null;
+          drawBoard();
+        });
+      }
+
+      const clearBtn = document.getElementById("clearAllBtn");
+      if (clearBtn && !clearBtn.dataset.bound){
+        clearBtn.dataset.bound = "1";
+        clearBtn.addEventListener("click", ()=>{
+          if (!confirm("Clear all entries on the board?")) return;
+          TARGETS.forEach(t=>{ currentEntry[t] = ["-","-","-"]; });
+          tapStack = [];
+          lastTap = null;
+          localStorage.setItem("dt_draft", JSON.stringify(currentEntry));
+          updateUIFromEntry(currentEntry);
+          scheduleDraftWrite();
+          drawBoard();
+        });
+      }
+    }
+
+    // Always try to size after layout
+    if (typeof c._resize === "function") {
+      requestAnimationFrame(() => requestAnimationFrame(() => c._resize()));
+    }
+  }
+
+
+
+ function drawBoard(){
+    const c = document.getElementById("dartboardCanvas");
+    if (!c) return;
+    const ctx = c.getContext("2d");
+    const w = c.width, h = c.height;
+    const cx = w/2, cy = h/2;
+
+    ctx.clearRect(0,0,w,h);
+
+    // Geometry (use same constants in scoreFromPoint)
+    const R = Math.min(w,h) * 0.50;
+    const rEdge = R;
+    const rDoubleIn = R*0.90, rDoubleOut = rEdge;
+    const rTripleIn = R*0.54, rTripleOut = R*0.62;
+    const rBullOut  = R*0.12, rBullIn = R*0.05;
+
+    // Background disk (so any tiny gaps look clean)
+    ctx.beginPath();
+    ctx.arc(cx,cy,rEdge,0,Math.PI*2);
+    ctx.fillStyle = "#0b0f17";
+    ctx.fill();
+
+    const wedge = (Math.PI*2)/20;
+    const startAng = -Math.PI/2 - wedge/2;
+
+    // Real board number order (clockwise from top)
+    const SEG_ORDER = [20,1,18,4,13,6,10,15,2,17,3,19,7,16,8,11,14,9,12,5];
+
+    // Colors (match common board: 20 is black, triple/double for 20 is green)
+    const COL_WHITE = "#ffffff";
+    const COL_BLACK = "#0b0b0c";
+    const COL_RED   = "#ef4444";
+    const COL_GREEN = "#22c55e";
+    const WIRE      = "rgba(229,231,235,0.7)";
+
+    // Draw wedges (single areas)
+    for (let i=0;i<20;i++){
+      const a0 = startAng + i*wedge;
+      const a1 = a0 + wedge;
+
+      const isBlack = (i % 2 === 0); // 20 starts black
+      const base = isBlack ? COL_BLACK : COL_WHITE;
+
+      ctx.beginPath();
+      ctx.moveTo(cx,cy);
+      ctx.arc(cx,cy,rEdge,a0,a1);
+      ctx.closePath();
+      ctx.fillStyle = base;
+      ctx.fill();
+    }
+
+    // Triple + Double rings (filled segments)
+    for (let i=0;i<20;i++){
+      const a0 = startAng + i*wedge;
+      const a1 = a0 + wedge;
+
+      const isBlack = (i % 2 === 0);
+      const ringCol = isBlack ? COL_RED : COL_GREEN;
+
+      // Triple ring
+      ctx.beginPath();
+      ctx.arc(cx,cy,rTripleOut,a0,a1);
+      ctx.arc(cx,cy,rTripleIn,a1,a0,true);
+      ctx.closePath();
+      ctx.fillStyle = ringCol;
+      ctx.fill();
+
+      // Double ring
+      ctx.beginPath();
+      ctx.arc(cx,cy,rDoubleOut,a0,a1);
+      ctx.arc(cx,cy,rDoubleIn,a1,a0,true);
+      ctx.closePath();
+      ctx.fillStyle = ringCol;
+      ctx.fill();
+    }
+
+    // Bull: outer bull (single) is green, inner bull (double) is red
+    ctx.beginPath(); ctx.arc(cx,cy,rBullOut,0,Math.PI*2); ctx.fillStyle = COL_GREEN; ctx.fill();
+    ctx.beginPath(); ctx.arc(cx,cy,rBullIn,0,Math.PI*2);  ctx.fillStyle = COL_RED;   ctx.fill();
+
+    // Wire lines (segment separators + ring boundaries)
+    ctx.lineWidth = Math.max(1, R*0.006);
+    ctx.strokeStyle = WIRE;
+
+    // Radial wires
+    for (let i=0;i<20;i++){
+      const a = startAng + i*wedge;
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(a)*rBullOut, cy + Math.sin(a)*rBullOut);
+      ctx.lineTo(cx + Math.cos(a)*rEdge,    cy + Math.sin(a)*rEdge);
+      ctx.stroke();
+    }
+
+    // Ring boundary wires
+    for (const rr of [rBullOut, rTripleIn, rTripleOut, rDoubleIn]){
+      ctx.beginPath();
+      ctx.arc(cx,cy,rr,0,Math.PI*2);
+      ctx.stroke();
+    }
+
+    // Outer edge outline
+    ctx.lineWidth = Math.max(1, R*0.01);
+    ctx.strokeStyle = "rgba(229,231,235,0.85)";
+    ctx.beginPath();
+    ctx.arc(cx,cy,rEdge,0,Math.PI*2);
+    ctx.stroke();
+
+    // Numbers -- MOVED INSIDE THE DOUBLE RING
+    ctx.fillStyle = "#ffffff"; // White text
+    ctx.font = `bold ${Math.round(R*0.07)}px system-ui, -apple-system, sans-serif`; // Smaller font
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    
+    // Position text at 95% of Radius (centered inside the double ring)
+    const rNum = R * 0.95; 
+
+    for (let i=0;i<20;i++){
+      const n = SEG_ORDER[i];
+      const ang = startAng + i*wedge + wedge/2;
+      const x = cx + Math.cos(ang)*rNum;
+      const y = cy + Math.sin(ang)*rNum;
+      ctx.fillText(String(n), x, y);
+    }
+
+    // Visual feedback for last tap
+    if (lastTap && typeof lastTap.x === "number" && typeof lastTap.y === "number"){
+      ctx.fillStyle = "#f59e0b";
+      ctx.beginPath();
+      ctx.arc(lastTap.x, lastTap.y, Math.max(4, R*0.02), 0, Math.PI*2);
+      ctx.fill();
+
+      ctx.strokeStyle = "rgba(0,0,0,0.55)";
+      ctx.lineWidth = Math.max(1, R*0.01);
+      ctx.beginPath();
+      ctx.arc(lastTap.x, lastTap.y, Math.max(4, R*0.02), 0, Math.PI*2);
+      ctx.stroke();
+    }
+  }
+
+
+function scoreFromPoint(canvas, x, y){
+    // Return {target, ring} where ring is "S" | "D" | "T"
+    const w = canvas.width, h = canvas.height;
+    const cx = w/2, cy = h/2;
+
+    const dx = x - cx, dy = y - cy;
+    const r = Math.sqrt(dx*dx + dy*dy);
+
+    // Must match drawBoard geometry
+    const R = Math.min(w,h) * 0.50;
+    const rEdge = R;
+    const rDoubleIn = R*0.90, rDoubleOut = rEdge;
+    const rTripleIn = R*0.54, rTripleOut = R*0.62;
+    const rBullOut  = R*0.12, rBullIn = R*0.05;
+
+    if (r > rEdge) return null;
+
+    // Bulls: inner bull = DOUBLE, outer bull = SINGLE
+    if (r <= rBullIn)  return { target: "BULL", ring: "D" };
+    if (r <= rBullOut) return { target: "BULL", ring: "S" };
+
+    // Angle to segment index (20 at top, clockwise)
+    let ang = Math.atan2(dy, dx);
+    const wedge = (Math.PI*2)/20;
+    const startAng = -Math.PI/2 - wedge/2;
+
+    // Normalize to [0, 2pi)
+    let rel = ang - startAng;
+    while (rel < 0) rel += Math.PI*2;
+    while (rel >= Math.PI*2) rel -= Math.PI*2;
+
+    const idx = Math.floor(rel / wedge);
+
+    const SEG_ORDER = [20,1,18,4,13,6,10,15,2,17,3,19,7,16,8,11,14,9,12,5];
+    const target = String(SEG_ORDER[idx] || 20);
+
+    // Ring classification
+    let ring = "S";
+    if (r >= rDoubleIn && r <= rDoubleOut) ring = "D";
+    else if (r >= rTripleIn && r <= rTripleOut) ring = "T";
+
+    return { target, ring };
+  }
+
+
+function applyBoardHit(hit){
+    const target = hit.target;
+    const ring = hit.ring;
+
+    if (!currentEntry[target]) currentEntry[target] = ["-","-","-"];
+    const prev = currentEntry[target].slice();
+
+    // find next empty slot
+    const arr = currentEntry[target].slice();
+    const ix = arr.indexOf("-");
+    if (ix === -1) { tapFeedback("FULL", target); return; } // already 3 darts logged
+
+    arr[ix] = ring; // store the ring letter (S/D/T)
+    currentEntry[target] = arr;
+
+    tapFeedback(ring, target);
+
+    tapStack.push({ target, prev });
+    lastTap = hit;
+
+    localStorage.setItem("dt_draft", JSON.stringify(currentEntry));
+    updateUIFromEntry(currentEntry);
+    scheduleDraftWrite();
+    drawBoard();
+  }
+
+  auth.onAuthStateChanged(user => {
+    if(user) {
+      document.getElementById("authScreen").style.display = "none";
+      document.getElementById("appInterface").style.display = "block";
+      syncDateTime(true);
+      const saved = localStorage.getItem("dt_draft"); if(saved) currentEntry = JSON.parse(saved);
+      applyScoreModeUI(scoreMode); startSync(user.uid); startLiveDraft(user.uid); scheduleDraftWrite();
+    } else {
+      document.getElementById("appInterface").style.display = "none";
+      document.getElementById("authScreen").style.display = "block";
+    }
+  });
+
+  function localYYYYMMDD(d=new Date()) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth()+1).padStart(2,'0');
+    const day = String(d.getDate()).padStart(2,'0');
+    return `${y}-${m}-${day}`;
+  }
+  function todayISO() { return localYYYYMMDD(new Date()); }
+  function nowHM() { return new Date().toTimeString().slice(0,5); }
+
+  // Keep date/time inputs current without overwriting manual edits
+  let __userTouchedDate = false;
+  let __userTouchedTime = false;
+
+  function syncDateTime(force=false){
+    const dEl = document.getElementById("sessionDate");
+    const tEl = document.getElementById("sessionTime");
+    if (!dEl || !tEl) return;
+
+    if (force || (!__userTouchedDate && !dEl.value)) dEl.value = todayISO();
+    if (force || (!__userTouchedTime && !tEl.value)) tEl.value = nowHM();
+
+    // If values are present but clearly stale (page left open), refresh unless user edited them
+    if (!__userTouchedDate && dEl.value !== todayISO()) dEl.value = todayISO();
+    if (!__userTouchedTime && tEl.value !== nowHM()) tEl.value = nowHM();
+  }
+
+  // Mark manual edits so we don't override the user
+  (function(){
+    const dEl = document.getElementById("sessionDate");
+    const tEl = document.getElementById("sessionTime");
+    if (dEl) dEl.addEventListener("input", ()=>{ __userTouchedDate = true; });
+    if (tEl) tEl.addEventListener("input", ()=>{ __userTouchedTime = true; });
+  })();
+
+  // Periodic + focus/visibility resync
+  setInterval(()=>syncDateTime(false), 30000);
+  window.addEventListener("focus", ()=>syncDateTime(false));
+  document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) syncDateTime(false); });
+
+  window.loadS = (id) => {
+    const s = sessionsAll.find(x => x.id === id) || sessions.find(x => x.id === id);
+    if (s) {
+      // Load the mode first so inputs match
+      scoreMode = normMode(s.mode || "standard");
+      localStorage.setItem("dt_scoreMode", scoreMode);
+      const sel = document.getElementById("scoreModeSelect");
+      if (sel) sel.value = scoreMode;
+      const hdr = document.getElementById("inputColHeader");
+      if (hdr) hdr.textContent = (scoreMode === "single") ? "Hits (0–3)" : "Input (e.g. SDT)";
+
+      currentEntry = JSON.parse(JSON.stringify(s.entry || {}));
+      initTable();
+      scheduleDraftWrite();
+      alert("Loaded!");
+    }
+  };
+
+  
+  // Delete a saved session (used by Cloud History)
+  window.delS = async (id) => {
+    const s = sessions.find(x => x.id === id);
+    const d = s && s.timestamp ? s.timestamp.split(' ')[0] : "";
+    const total = s && (typeof s.total === "number" ? s.total : parseInt(s.total || "0"));
+    const msg = `Delete this session${d ? " ("+d+")" : ""}${(total!=null && !Number.isNaN(total)) ? " score "+total : ""}?`;
+    if (!confirm(msg)) return;
+    try {
+      await db.collection("sessions").doc(id).delete();
+      alert("Deleted.");
+    } catch (err) {
+      alert("Delete failed: " + (err && err.message ? err.message : err));
+    }
+  };
+
+  // Handle Load/Delete button clicks (no inline onclick needed)
+  (function(){
+    const histBody = document.getElementById("historyBody");
+    if (!histBody) return;
+    histBody.addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-act]");
+      if (!btn) return;
+      const id = btn.getAttribute("data-id");
+      const act = btn.getAttribute("data-act");
+      if (act === "load") window.loadS(id);
+      if (act === "delete") window.delS(id);
+    });
+  })();
+
+document.getElementById("signInBtn").onclick = () => auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+  document.getElementById("signOutBtn").onclick = () => auth.signOut();
+
+  // Entry/Game dropdown listeners
+  const __sms = document.getElementById("scoreModeSelect");
+  if (__sms) __sms.addEventListener("change", (e) => applyScoreModeUI(e.target.value));
+document.getElementById("sessionDate").addEventListener("input", scheduleDraftWrite);
+  document.getElementById("sessionTime").addEventListener("input", scheduleDraftWrite);
+  
+  document.getElementById("saveBtn").onclick = async () => {
+    await db.collection("sessions").add({ uid: auth.currentUser.uid, timestamp: document.getElementById("sessionDate").value + " " + document.getElementById("sessionTime").value, mode: scoreMode, entry: currentEntry, total: parseInt(document.getElementById("sessionTotal").textContent) });
+    alert("Saved!");
+  };
+  const __exportBtn = document.getElementById("exportBtn");
+  if (__exportBtn) __exportBtn.onclick = () => {
+    let csv = "Timestamp,Total\n" + sessions.map(s => `${s.timestamp},${s.total}`).join("\n");
+    const a = document.createElement("a"); a.href = 'data:text/csv;charset=utf-8,' + encodeURI(csv);
+    a.download = `darts_summary.csv`; a.click();
+  };
+
+})();
+</script>
+
+<div id="tapToast" class="tap-toast" aria-live="polite"></div>
+</body>
+</html>
