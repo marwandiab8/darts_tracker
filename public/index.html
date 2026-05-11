@@ -747,6 +747,24 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
     document.getElementById("sessionTotal").textContent = grandTotal;
   }
 
+  function resetCurrentSession(opts = {}) {
+    const resetDateTime = !!opts.resetDateTime;
+    TARGETS.forEach(t => { currentEntry[t] = ["-","-","-"]; });
+    tapStack = [];
+    lastTap = null;
+    localStorage.setItem("dt_draft", JSON.stringify(currentEntry));
+
+    if (resetDateTime) {
+      __userTouchedDate = false;
+      __userTouchedTime = false;
+      syncDateTime(true);
+    }
+
+    updateUIFromEntry(currentEntry);
+    scheduleDraftWrite();
+    drawBoard();
+  }
+
   function startSync(uid) {
     db.collection("sessions")
       .where("uid","==",uid)
@@ -1029,6 +1047,9 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
   let __ttsInit = false;
   let __ttsVoices = [];
   let __ttsUnlocked = false;
+  let __speakTimer = null;
+  let __speakRetryTimer = null;
+  let __speakSeq = 0;
 
   // 1) Better Voice Loading
   function initTTS() {
@@ -1065,6 +1086,14 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
     } catch (e) {}
   }
 
+  function scheduleTTSUnlock(opts = {}) {
+    const force = !!opts.force;
+    if (!tapVoiceEnabled) return;
+    initTTS();
+    if (force) __ttsUnlocked = false;
+    unlockTTS();
+  }
+
   function pickEnglishVoice(){
     if (!__ttsVoices || !__ttsVoices.length) return null;
     return __ttsVoices.find(v => /^en(-|_)?/i.test(v.lang)) ||
@@ -1072,25 +1101,10 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
            __ttsVoices[0] || null;
   }
 
-  // 3) Updated Speak Function (more iOS-stable)
-  function speak(text) {
-    if (!tapVoiceEnabled || !("speechSynthesis" in window)) return;
-
-    initTTS();
-    unlockTTS();
-
-    const synth = window.speechSynthesis;
-
-    // Crucial for iOS: cancel any pending speech before starting new one
-    try { synth.cancel(); } catch (e) {}
-
-    // Refresh voices one more time (iOS sometimes loads voices AFTER first speak)
-    try { __ttsVoices = synth.getVoices() || __ttsVoices; } catch (e) {}
-
+  function buildUtterance(text){
     const utterance = new SpeechSynthesisUtterance(String(text));
     const voice = pickEnglishVoice();
 
-    // iOS is more reliable when a specific voice is assigned (when available)
     if (voice) {
       utterance.voice = voice;
       utterance.lang = voice.lang;
@@ -1101,11 +1115,75 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
     utterance.rate = 1.0;
     utterance.pitch = 1.0;
     utterance.volume = 1.0;
+    return utterance;
+  }
 
-    // Wrap in a tiny timeout to ensure synth.cancel() finished
-    setTimeout(() => {
-      try { synth.speak(utterance); } catch (e) {}
-    }, 50);
+  function speakNow(text, seq, allowRetry){
+    if (!tapVoiceEnabled || !("speechSynthesis" in window)) return;
+    if (seq !== __speakSeq) return;
+
+    const synth = window.speechSynthesis;
+    initTTS();
+    unlockTTS();
+
+    try { __ttsVoices = synth.getVoices() || __ttsVoices; } catch (e) {}
+
+    const utterance = buildUtterance(text);
+    utterance.onstart = () => { __ttsUnlocked = true; };
+    utterance.onerror = () => {
+      __ttsUnlocked = false;
+      if (allowRetry && seq === __speakSeq) {
+        __speakRetryTimer = setTimeout(() => {
+          scheduleTTSUnlock();
+          speakNow(text, seq, false);
+        }, 140);
+      }
+    };
+
+    try { synth.speak(utterance); } catch (e) {
+      __ttsUnlocked = false;
+      if (allowRetry && seq === __speakSeq) {
+        __speakRetryTimer = setTimeout(() => {
+          scheduleTTSUnlock();
+          speakNow(text, seq, false);
+        }, 140);
+      }
+      return;
+    }
+
+    if (allowRetry) {
+      __speakRetryTimer = setTimeout(() => {
+        if (seq !== __speakSeq) return;
+        if (!synth.speaking && !synth.pending) {
+          __ttsUnlocked = false;
+          scheduleTTSUnlock();
+          speakNow(text, seq, false);
+        }
+      }, 260);
+    }
+  }
+
+  // 3) Updated Speak Function (more iOS-stable)
+  function speak(text) {
+    if (!tapVoiceEnabled || !("speechSynthesis" in window)) return;
+
+    initTTS();
+    unlockTTS();
+
+    const synth = window.speechSynthesis;
+    const now = Date.now();
+    const seq = ++__speakSeq;
+    const delay = Math.max(90, 140 - Math.min(90, now - __lastSpeakAt));
+    __lastSpeakAt = now;
+
+    if (__speakTimer) clearTimeout(__speakTimer);
+    if (__speakRetryTimer) clearTimeout(__speakRetryTimer);
+
+    // Crucial for iOS: cancel any pending speech before starting new one
+    try { synth.cancel(); } catch (e) {}
+    __speakTimer = setTimeout(() => {
+      speakNow(text, seq, true);
+    }, delay);
   }
 
   function tapFeedback(kind, target){
@@ -1163,11 +1241,26 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
         localStorage.setItem(__tapVoiceKey, tapVoiceEnabled ? "1" : "0");
         // iOS needs a user-gesture "unlock" + voices init
         if (tapVoiceEnabled){
-          initTTS();
-          unlockTTS();
+          scheduleTTSUnlock({ force: true });
+        } else if ("speechSynthesis" in window) {
+          try { window.speechSynthesis.cancel(); } catch (e) {}
         }});
     }
   })();
+
+  ["pointerdown", "touchend", "click"].forEach(evt => {
+    document.addEventListener(evt, () => {
+      if (tapVoiceEnabled) scheduleTTSUnlock();
+    }, { passive: true });
+  });
+
+  window.addEventListener("pageshow", () => {
+    if (tapVoiceEnabled) scheduleTTSUnlock({ force: true });
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && tapVoiceEnabled) scheduleTTSUnlock({ force: true });
+  });
 
 
 
@@ -1254,13 +1347,7 @@ function applyEntryModeUI(){
         clearBtn.dataset.bound = "1";
         clearBtn.addEventListener("click", ()=>{
           if (!confirm("Clear all entries on the board?")) return;
-          TARGETS.forEach(t=>{ currentEntry[t] = ["-","-","-"]; });
-          tapStack = [];
-          lastTap = null;
-          localStorage.setItem("dt_draft", JSON.stringify(currentEntry));
-          updateUIFromEntry(currentEntry);
-          scheduleDraftWrite();
-          drawBoard();
+          resetCurrentSession();
         });
       }
     }
@@ -1590,11 +1677,12 @@ document.getElementById("signInBtn").onclick = () => auth.signInWithPopup(new fi
   // Entry/Game dropdown listeners
   const __sms = document.getElementById("scoreModeSelect");
   if (__sms) __sms.addEventListener("change", (e) => applyScoreModeUI(e.target.value));
-document.getElementById("sessionDate").addEventListener("input", scheduleDraftWrite);
+  document.getElementById("sessionDate").addEventListener("input", scheduleDraftWrite);
   document.getElementById("sessionTime").addEventListener("input", scheduleDraftWrite);
   
   document.getElementById("saveBtn").onclick = async () => {
     await db.collection("sessions").add({ uid: auth.currentUser.uid, timestamp: document.getElementById("sessionDate").value + " " + document.getElementById("sessionTime").value, mode: scoreMode, entry: currentEntry, total: parseInt(document.getElementById("sessionTotal").textContent) });
+    resetCurrentSession({ resetDateTime: true });
     alert("Saved!");
   };
   const __exportBtn = document.getElementById("exportBtn");
