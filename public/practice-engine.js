@@ -389,6 +389,33 @@
     return visit;
   }
 
+  // --- announcing a visit ------------------------------------------------------------------------------
+
+  const ONES = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"];
+  const TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
+
+  // A number the way a caller says it: "one hundred and eighty", "forty five".
+  function sayNumber(n) {
+    if (!Number.isInteger(n) || n < 0 || n > 999) return String(n);
+    if (n < 20) return ONES[n];
+    if (n < 100) return TENS[Math.floor(n / 10)] + (n % 10 ? " " + ONES[n % 10] : "");
+    const rest = n % 100;
+    return ONES[Math.floor(n / 100)] + " hundred" + (rest ? " and " + sayNumber(rest) : "");
+  }
+
+  // What to say when a visit ends. `won` is whether it won the game.
+  function visitSpeech(visit, kind, won) {
+    let text;
+    if (kind === "x01") {
+      if (visit.bust) return "Bust";
+      text = visit.scored ? sayNumber(visit.scored) : "No score";
+    } else {
+      const marks = visit.marks || 0, points = visit.points || 0;
+      text = marks ? sayNumber(marks) + (marks === 1 ? " mark" : " marks") + (points ? " and " + sayNumber(points) + " points" : "") : "No marks";
+    }
+    return won ? text + ". Game shot" : text;
+  }
+
   // --- correcting an earlier visit -------------------------------------------------------------------
 
   // Play a list of finished visits again from the start of a game, using exactly what was entered for
@@ -590,6 +617,8 @@
     canScoreDart,
     undoDart,
     endVisit,
+    sayNumber,
+    visitSpeech,
     replayVisits,
     upgradeGame,
     gameOptions,

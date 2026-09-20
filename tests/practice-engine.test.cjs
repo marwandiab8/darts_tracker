@@ -682,3 +682,30 @@ test("upgrading rebuilds typed totals, but not a typed bust", () => {
   bust.visits.forEach((v) => delete v.input);
   assert.equal(E.upgradeGame(bust), false, "the total of a typed bust was not kept");
 });
+
+// --- announcing a visit ------------------------------------------------------------------------------
+
+test("numbers are said the way a caller says them", () => {
+  assert.equal(E.sayNumber(0), "zero");
+  assert.equal(E.sayNumber(7), "seven");
+  assert.equal(E.sayNumber(13), "thirteen");
+  assert.equal(E.sayNumber(40), "forty");
+  assert.equal(E.sayNumber(45), "forty five");
+  assert.equal(E.sayNumber(100), "one hundred");
+  assert.equal(E.sayNumber(101), "one hundred and one");
+  assert.equal(E.sayNumber(140), "one hundred and forty");
+  assert.equal(E.sayNumber(180), "one hundred and eighty");
+  for (let n = 0; n <= 180; n += 1) assert.match(E.sayNumber(n), /^[a-z ]+$/, String(n));
+});
+
+test("a visit is announced by its total, a bust, or a win", () => {
+  assert.equal(E.visitSpeech({ scored: 60 }, "x01", false), "sixty");
+  assert.equal(E.visitSpeech({ scored: 180 }, "x01", false), "one hundred and eighty");
+  assert.equal(E.visitSpeech({ scored: 0 }, "x01", false), "No score");
+  assert.equal(E.visitSpeech({ scored: 0, bust: true }, "x01", false), "Bust");
+  assert.equal(E.visitSpeech({ scored: 40, remaining: 0 }, "x01", true), "forty. Game shot");
+  assert.equal(E.visitSpeech({ marks: 3, points: 0 }, "cricket", false), "three marks");
+  assert.equal(E.visitSpeech({ marks: 1, points: 0 }, "cricket", false), "one mark");
+  assert.equal(E.visitSpeech({ marks: 5, points: 40 }, "cricket", false), "five marks and forty points");
+  assert.equal(E.visitSpeech({ marks: 0, points: 0 }, "cricket", false), "No marks");
+});

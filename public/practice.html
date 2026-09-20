@@ -15,6 +15,9 @@
   .wrap { max-width: 1000px; margin: 0 auto; }
   header { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
   header h1 { margin: 0; font-size: 22px; }
+  .head-right { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+  #soundBtn { min-height: 36px; padding: 6px 12px; font-size: 14px; }
+  #soundBtn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
   .head-left { display: flex; align-items: center; gap: 12px; min-width: 0; flex-wrap: wrap; }
   a.back { color: var(--accent); text-decoration: none; font-weight: 700; font-size: 14px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 999px; }
   .pill { display: inline-flex; align-items: center; padding: 6px 12px; border-radius: 999px; background: rgba(255,255,255,.05); border: 1px solid var(--border); font-size: 14px; max-width: 100%; }
@@ -138,7 +141,10 @@
       <a class="back" href="./">&larr; Tracker</a>
       <h1>Practice vs Bot</h1>
     </div>
-    <span class="pill hidden" id="userPill"><span id="userName"></span></span>
+    <div class="head-right">
+      <button type="button" class="secondary hidden" id="soundBtn" aria-pressed="true" title="Announce each visit's score out loud">Sound: on</button>
+      <span class="pill hidden" id="userPill"><span id="userName"></span></span>
+    </div>
   </header>
 
   <div id="authScreen" class="card hidden">
@@ -328,7 +334,7 @@
   };
 
   let user = null;
-  let settings = Object.assign({ kind: "x01", startScore: 501, doubleOut: true, rank: "club", first: "player", entry: "board", confirm: false }, store.get(SETTINGS_KEY) || {});
+  let settings = Object.assign({ kind: "x01", startScore: 501, doubleOut: true, rank: "club", first: "player", entry: "board", confirm: false, mute: false }, store.get(SETTINGS_KEY) || {});
   let kpText = "", kpAsking = false, passTimer = null;
   // While you re-enter an earlier visit: where it was, the visits that came after it, and a copy of
   // the game to go back to.
@@ -344,6 +350,41 @@
     if (className) node.className = className;
     if (text !== undefined) node.textContent = text;
     return node;
+  }
+
+  // --- announcing scores -----------------------------------------------------------------------------
+  // Each finished visit is said out loud, by a caller's voice, unless muted. Browsers only let a page
+  // speak once it has been touched, so the first tap anywhere warms the voice up silently.
+  const canSpeak = !!window.speechSynthesis && typeof window.SpeechSynthesisUtterance === "function";
+  let speechReady = false;
+
+  function warmUpSpeech() {
+    if (speechReady || !canSpeak) return;
+    speechReady = true;
+    try { const u = new SpeechSynthesisUtterance(""); u.volume = 0; window.speechSynthesis.speak(u); } catch (_) {}
+  }
+
+  function announce(visit) {
+    if (!canSpeak || settings.mute || !visit || !game) return;
+    try {
+      const u = new SpeechSynthesisUtterance(E.visitSpeech(visit, game.kind, game.winner === visit.who));
+      u.rate = 0.95; u.pitch = visit.who === "bot" ? 0.75 : 1; u.lang = "en-GB";
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(u);
+    } catch (_) { /* no voice available: the score is on the screen anyway */ }
+  }
+
+  function renderSound() {
+    const button = $("soundBtn");
+    button.classList.toggle("hidden", !canSpeak || !user);
+    button.setAttribute("aria-pressed", String(!settings.mute));
+    button.textContent = "Sound: " + (settings.mute ? "off" : "on");
+  }
+
+  function setMute(mute) {
+    settings.mute = mute; store.set(SETTINGS_KEY, settings);
+    if (mute && canSpeak) { try { window.speechSynthesis.cancel(); } catch (_) {} }
+    renderSound();
   }
 
   // --- drawing the board -------------------------------------------------------------------------
@@ -1051,7 +1092,7 @@
   function passTurn() {
     cancelAutoPass();
     if (!game || !game.visitDone || game.turn !== "player") return;
-    E.endVisit(game);
+    announce(E.endVisit(game));
     if (editing) { finishEdit(); return; }
     lastMessage = ""; kpText = ""; kpAsking = false;
     if (game.winner) { finishGame("won"); return; }
@@ -1069,7 +1110,7 @@
       if (game.visitDone) {
         setTimeout(() => {
           if (token !== botToken || !game) return;
-          E.endVisit(game);
+          announce(E.endVisit(game));
           botBusy = false;
           if (game.winner) { finishGame("lost"); return; }
           lastMessage = "";
@@ -1200,6 +1241,10 @@
     event.preventDefault();
   });
   $("confirmToggle").addEventListener("click", () => setConfirm(!settings.confirm));
+  $("soundBtn").addEventListener("click", () => setMute(!settings.mute));
+  document.addEventListener("pointerdown", warmUpSpeech, { once: true });
+  document.addEventListener("keydown", warmUpSpeech, { once: true });
+  renderSound();
   $("entryBoard").addEventListener("click", () => setEntry("board"));
   $("entryKeypad").addEventListener("click", () => setEntry("keypad"));
   $("startBtn").addEventListener("click", startGame);
@@ -1224,6 +1269,7 @@
     $("authScreen").classList.toggle("hidden", !!u);
     $("app").classList.toggle("hidden", !u);
     $("userPill").classList.toggle("hidden", !u);
+    renderSound();
     if (!u) { botToken++; return; }
     const name = u.displayName || u.email || "Signed in";
     $("userName").textContent = name; $("userName").title = name;
