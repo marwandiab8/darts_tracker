@@ -360,6 +360,21 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
   }
 
 
+  /* Phone layout. The header controls used to be one row 630px wide that could not wrap, and the
+     single-column grid used 1fr, which lets wide content stretch the page past the screen. */
+  .dt-header-actions { flex-wrap: wrap; }
+  .dt-card { min-width: 0; }
+  .dt-pill { max-width: 100%; }
+  .dt-pill select { flex: 1 1 auto; min-width: 0; max-width: 100%; }
+  @media (max-width: 1024px) { .dt-grid-main { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 560px) {
+    .dt-header-actions { width: 100%; }
+    /* Tables kept a 400px minimum, which pushed the stats and history tables (overflow: visible)
+       past the screen and hid the Score column of the entry table behind a sideways scroll. */
+    table { min-width: 0; }
+    .pattern-input { width: 120px !important; letter-spacing: 2px; }
+    th, td { padding-left: 6px; padding-right: 6px; }
+  }
 </style>
   <title>Darts Tracker</title>
 </head>
@@ -379,7 +394,7 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
           <h2 style="margin:0;">Practice Session</h2>
           <span class="dt-revision">Cloud • v8.8.15 Live</span>
         </div>
-        <div style="display:flex; gap:10px; align-items:center;">
+        <div class="dt-header-actions" style="display:flex; gap:10px; align-items:center;">
           <div id="syncPill" class="dt-pill"><div class="status-dot"></div> <span id="syncText">Syncing...</span></div>
 
           <div class="dt-pill" style="display:flex; align-items:center; gap:10px;">
@@ -765,8 +780,11 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
     drawBoard();
   }
 
+  let sessionsUnsub = null;
+
   function startSync(uid) {
-    db.collection("sessions")
+    if (sessionsUnsub) sessionsUnsub();
+    sessionsUnsub = db.collection("sessions")
       .where("uid","==",uid)
       .orderBy("timestamp","asc")
       .onSnapshot(snap => {
@@ -774,7 +792,21 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
         document.getElementById("syncPill").classList.add("status-connected");
         document.getElementById("syncText").textContent = "Connected";
         refreshStatsAndViews();
+      }, err => {
+        console.error("Sessions listener error", err);
+        document.getElementById("syncPill").classList.remove("status-connected");
+        document.getElementById("syncText").textContent = "Offline";
       });
+  }
+
+  // On sign-out: stop listening and drop the previous user's data from memory.
+  function stopListeners() {
+    if (sessionsUnsub) sessionsUnsub();
+    sessionsUnsub = null;
+    if (liveDraftUnsub) liveDraftUnsub();
+    liveDraftUnsub = null;
+    sessionsAll = [];
+    sessions = [];
   }
 
   function refreshStatsAndViews() {
@@ -1577,8 +1609,13 @@ function applyBoardHit(hit){
       document.getElementById("appInterface").style.display = "block";
       syncDateTime(true);
       const saved = localStorage.getItem("dt_draft"); if(saved) currentEntry = JSON.parse(saved);
-      applyScoreModeUI(scoreMode); startSync(user.uid); startLiveDraft(user.uid); scheduleDraftWrite();
+      // Do not write the local draft to the cloud here. This device's copy may be older than what
+      // another device has typed, and writing it on open would overwrite that device's entry.
+      // The live listener applies the cloud draft if another device wrote it; this device only
+      // writes when you change something.
+      applyScoreModeUI(scoreMode); startSync(user.uid); startLiveDraft(user.uid);
     } else {
+      stopListeners();
       document.getElementById("appInterface").style.display = "none";
       document.getElementById("authScreen").style.display = "block";
     }
@@ -1623,9 +1660,14 @@ function applyBoardHit(hit){
   window.addEventListener("focus", ()=>syncDateTime(false));
   document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) syncDateTime(false); });
 
+  function hasUnsavedEntry() {
+    return TARGETS.some(t => (currentEntry[t] || []).some(v => v && v !== "-"));
+  }
+
   window.loadS = (id) => {
     const s = sessionsAll.find(x => x.id === id) || sessions.find(x => x.id === id);
     if (s) {
+      if (hasUnsavedEntry() && !confirm("Replace the entry you are working on with this saved session? Your current entry has not been saved.")) return;
       // Load the mode first so inputs match
       scoreMode = normMode(s.mode || "standard");
       localStorage.setItem("dt_scoreMode", scoreMode);
@@ -1680,10 +1722,41 @@ document.getElementById("signInBtn").onclick = () => auth.signInWithPopup(new fi
   document.getElementById("sessionDate").addEventListener("input", scheduleDraftWrite);
   document.getElementById("sessionTime").addEventListener("input", scheduleDraftWrite);
   
+  // A retry after a failure or a timeout writes to the same document, so it can never save twice.
+  let pendingSaveRef = null;
+  const SAVE_TIMEOUT_MS = 15000;
+
   document.getElementById("saveBtn").onclick = async () => {
-    await db.collection("sessions").add({ uid: auth.currentUser.uid, timestamp: document.getElementById("sessionDate").value + " " + document.getElementById("sessionTime").value, mode: scoreMode, entry: currentEntry, total: parseInt(document.getElementById("sessionTotal").textContent) });
-    resetCurrentSession({ resetDateTime: true });
-    alert("Saved!");
+    const btn = document.getElementById("saveBtn");
+    if (btn.disabled) return;
+
+    const user = auth.currentUser;
+    const date = document.getElementById("sessionDate").value;
+    const time = document.getElementById("sessionTime").value;
+    const total = parseInt(document.getElementById("sessionTotal").textContent, 10);
+    if (!user) { alert("You are signed out. Sign in again to save."); return; }
+    if (!date) { alert("Choose a date for this session before saving."); return; }
+    if (!Number.isInteger(total)) { alert("The total is not a number yet. Check the entries and try again."); return; }
+
+    btn.disabled = true;
+    const label = btn.textContent;
+    btn.textContent = "Saving…";
+    try {
+      const ref = pendingSaveRef || (pendingSaveRef = db.collection("sessions").doc());
+      const write = ref.set({ uid: user.uid, timestamp: date + " " + time, mode: scoreMode, entry: currentEntry, total });
+      await Promise.race([write, new Promise((_, reject) => setTimeout(() => reject(new Error("save-timeout")), SAVE_TIMEOUT_MS))]);
+      pendingSaveRef = null;
+      resetCurrentSession({ resetDateTime: true });
+      alert("Saved!");
+    } catch (err) {
+      console.error("Save failed", err);
+      alert(err && err.message === "save-timeout"
+        ? "Saving is taking a while, so you may be offline. Your entry is still here. Press Save again to retry; it will not create a duplicate."
+        : "Could not save: " + ((err && err.message) || err) + "\nYour entry is still here. Press Save to try again.");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
   };
   const __exportBtn = document.getElementById("exportBtn");
   if (__exportBtn) __exportBtn.onclick = () => {
