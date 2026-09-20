@@ -1,0 +1,55 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // A session exactly as the app's Save button writes it. Anyone with a Google account can
+    // sign in, so new sessions are checked for shape and range: a session scores at most
+    // 3 darts on each of 21 targets, so 200 is a safe ceiling.
+    function validNewSession(data) {
+      return data.keys().hasOnly(['uid', 'timestamp', 'mode', 'entry', 'total'])
+        && data.keys().hasAll(['uid', 'timestamp', 'mode', 'entry', 'total'])
+        && data.uid == request.auth.uid
+        && data.timestamp is string && data.timestamp.size() >= 10 && data.timestamp.size() <= 20
+        && data.mode in ['standard', 'single']
+        && data.total is int && data.total >= 0 && data.total <= 200
+        && data.entry is map && data.entry.size() <= 21;
+    }
+
+    // Older sessions carry other fields (imports, a missing mode), so an update only has to
+    // stay sane and keep the same owner.
+    function validSessionUpdate(data) {
+      return data.uid == request.auth.uid
+        && data.keys().size() <= 20
+        && data.total is number && data.total >= 0 && data.total <= 200
+        && data.entry is map && data.entry.size() <= 21;
+    }
+
+    // The live draft is written on every tap, and older drafts carry legacy fields, so it
+    // is checked for owner and size rather than an exact list of fields.
+    function validDraft(data) {
+      return data.uid == request.auth.uid
+        && data.keys().size() <= 20
+        && data.entry is map && data.entry.size() <= 21;
+    }
+
+    // Live typing sync per user.
+    match /liveDrafts/{uid} {
+      allow read, delete: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && validDraft(request.resource.data);
+    }
+
+    // Saved sessions history.
+    match /sessions/{sessionId} {
+      allow read: if signedIn() && resource.data.uid == request.auth.uid;
+      allow create: if signedIn() && validNewSession(request.resource.data);
+      allow update: if signedIn() && resource.data.uid == request.auth.uid
+        && validSessionUpdate(request.resource.data);
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+  }
+}

@@ -64,6 +64,9 @@ node_modules/
 
 # dotenv environment variables file
 .env
+# Per-project function config lives beside the code but is not committed; the template is.
+functions/.env.*
+!functions/.env.example
 
 # dataconnect generated files
 .dataconnect
