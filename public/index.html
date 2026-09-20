@@ -366,6 +366,8 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
   .dt-card { min-width: 0; }
   .dt-pill { max-width: 100%; }
   .dt-pill select { flex: 1 1 auto; min-width: 0; max-width: 100%; }
+  .board-note { margin-top: 6px; font-size: 12px; color: var(--accent); }
+  .board-note:empty { display: none; }
   #userName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   @media (max-width: 1024px) { .dt-grid-main { grid-template-columns: minmax(0, 1fr); } }
   @media (max-width: 560px) {
@@ -455,7 +457,9 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
             <div style="margin-top:10px; font-size:12px; color:var(--muted); line-height:1.3;">
               Tap where the dart landed. It will fill the next slot for that number (ring S/D/T). Bulls go to <b>BULL</b>.
               In Singles-only mode, every hit still counts as 1.
+              Each tap is remembered as a dot on the board and saved with the session.
             </div>
+            <div id="boardNote" class="board-note" aria-live="polite"></div>
           </div>
        
           
@@ -567,6 +571,59 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
 
   let currentUser = null, currentEntry = {}, sessionsAll = [], sessions = [], overallChart = null;
 
+  // ---- Where each dart landed ----
+  // A tap on the board is remembered as {x, y}: the distance from the board's centre as a fraction
+  // of its radius (y grows downward, so both run from -1 to 1). That means the same thing at any
+  // canvas size and on any device. Positions run parallel to the entry: currentPos[target][slot]
+  // is the dart's position, or null for a dart that was typed in (no position) or an empty slot.
+  let currentPos = {};
+
+  function cleanPositions(positions, entry) {
+    const clean = {};
+    if (!positions || typeof positions !== "object") return clean;
+    TARGETS.forEach(t => {
+      const slots = Array.isArray(positions[t]) ? positions[t].slice(0, 3) : [];
+      const darts = (entry && Array.isArray(entry[t])) ? entry[t] : [];
+      const row = [0, 1, 2].map(i => {
+        const p = slots[i];
+        if (!p || typeof p !== "object") return null;
+        const x = Number(p.x), y = Number(p.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+        if (Math.hypot(x, y) > 1.0001) return null;         // outside the board
+        if (!darts[i] || darts[i] === "-") return null;     // no dart in this slot any more
+        return { x: Math.round(x * 1000) / 1000, y: Math.round(y * 1000) / 1000 };
+      });
+      if (row.some(Boolean)) clean[t] = row;
+    });
+    return clean;
+  }
+
+  function persistDraft() {
+    localStorage.setItem("dt_draft", JSON.stringify(currentEntry));
+    localStorage.setItem("dt_draftPos", JSON.stringify(cleanPositions(currentPos, currentEntry)));
+  }
+
+  // When a slot is retyped, its old position no longer describes that dart, so it is dropped.
+  // Slots that keep the same value keep their position.
+  function realignPositions(target, before, after) {
+    const old = currentPos[target] || [null, null, null];
+    currentPos[target] = after.map((value, i) => (value !== "-" && value === (before || [])[i]) ? (old[i] || null) : null);
+  }
+
+  function positionsForSave() {
+    const clean = cleanPositions(currentPos, currentEntry);
+    return Object.keys(clean).length ? clean : undefined;
+  }
+
+  function countPositions(pos) {
+    return Object.values(pos || {}).reduce((n, row) => n + row.filter(Boolean).length, 0);
+  }
+
+  function setBoardNote(text) {
+    const el = document.getElementById("boardNote");
+    if (el) el.textContent = text || "";
+  }
+
   // ---- Live draft sync (instant cross-device updates) ----
   const deviceId = (localStorage.getItem("dt_deviceId") || (crypto.randomUUID ? crypto.randomUUID() : ("dev_" + Math.random().toString(16).slice(2))));
   localStorage.setItem("dt_deviceId", deviceId);
@@ -627,6 +684,7 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
           updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
           mode: scoreMode,
           entry: currentEntry,
+          positions: cleanPositions(currentPos, currentEntry),
           total: parseInt(document.getElementById("sessionTotal").textContent || "0", 10),
           sessionDate: document.getElementById("sessionDate").value || "",
           sessionTime: document.getElementById("sessionTime").value || ""
@@ -656,11 +714,14 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
       }
 
       // Apply incoming state
-      if (!entryEquals(incomingEntry, currentEntry)) {
+      const incomingPos = cleanPositions(data.positions, incomingEntry);
+      if (!entryEquals(incomingEntry, currentEntry) || !entryEquals(incomingPos, cleanPositions(currentPos, currentEntry))) {
         currentEntry = deepClone(incomingEntry);
-        localStorage.setItem("dt_draft", JSON.stringify(currentEntry));
+        currentPos = incomingPos;
+        persistDraft();
         suppressLocalEchoUntil = Date.now() + 250; // prevent ping-pong
         updateUIFromEntry(currentEntry, { skipFocused: true });
+        drawBoard();
       }
       // Keep date/time in sync (also skip if user is actively editing those fields)
       const dEl = document.getElementById("sessionDate");
@@ -732,6 +793,7 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
       // Pad to 3 chars for storage
       let arr = val.split("");
       while(arr.length < 3) arr.push("-");
+      realignPositions(target, currentEntry[target], arr);
       currentEntry[target] = arr;
     }
 
@@ -740,11 +802,13 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
       if (Number.isNaN(n)) n = 0;
       n = Math.max(0, Math.min(3, n));
       e.target.value = String(n);
-      currentEntry[target] = Array(n).fill("S").concat(Array(3-n).fill("-"));
+      const arr = Array(n).fill("S").concat(Array(3-n).fill("-"));
+      realignPositions(target, currentEntry[target], arr);
+      currentEntry[target] = arr;
     }
 
     refreshCalculations();
-    localStorage.setItem("dt_draft", JSON.stringify(currentEntry));
+    persistDraft();
     scheduleDraftWrite();
   });
 
@@ -766,9 +830,11 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
   function resetCurrentSession(opts = {}) {
     const resetDateTime = !!opts.resetDateTime;
     TARGETS.forEach(t => { currentEntry[t] = ["-","-","-"]; });
+    currentPos = {};
+    setBoardNote("");
     tapStack = [];
     lastTap = null;
-    localStorage.setItem("dt_draft", JSON.stringify(currentEntry));
+    persistDraft();
 
     if (resetDateTime) {
       __userTouchedDate = false;
@@ -833,7 +899,7 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
       const d = (s.timestamp || "").split(" ")[0] || "";
       const total = (typeof s.total === "number") ? s.total : parseInt(s.total || "0", 10);
       hist.innerHTML += `<tr>
-        <td>${d}</td>
+        <td>${d}${(s.positions && Object.keys(s.positions).length) ? ' <span title="Dart positions saved. Load it to see them on the board." aria-label="Dart positions saved">&#9679;</span>' : ""}</td>
         <td>${total}</td>
         <td style="display:flex; gap:8px; justify-content:center; align-items:center;">
           <button class="dt-mini-btn" data-act="load" data-id="${s.id}">Load</button>
@@ -1367,10 +1433,11 @@ function applyEntryModeUI(){
           const last = tapStack.pop();
           if (!last) return;
           currentEntry[last.target] = last.prev.slice();
-          localStorage.setItem("dt_draft", JSON.stringify(currentEntry));
+          currentPos[last.target] = last.prevPos.slice();
+          persistDraft();
           updateUIFromEntry(currentEntry);
           scheduleDraftWrite();
-          lastTap = null;
+          lastTap = last.prevLast || null;
           drawBoard();
         });
       }
@@ -1517,19 +1584,26 @@ function applyEntryModeUI(){
       ctx.fillText(String(n), x, y);
     }
 
-    // Visual feedback for last tap
-    if (lastTap && typeof lastTap.x === "number" && typeof lastTap.y === "number"){
-      ctx.fillStyle = "#f59e0b";
-      ctx.beginPath();
-      ctx.arc(lastTap.x, lastTap.y, Math.max(4, R*0.02), 0, Math.PI*2);
-      ctx.fill();
-
-      ctx.strokeStyle = "rgba(0,0,0,0.55)";
-      ctx.lineWidth = Math.max(1, R*0.01);
-      ctx.beginPath();
-      ctx.arc(lastTap.x, lastTap.y, Math.max(4, R*0.02), 0, Math.PI*2);
-      ctx.stroke();
-    }
+    // Where each dart landed: one dot per tapped dart, the most recent one ringed.
+    // Darts that were typed in the table have no position, so they have no dot.
+    const dotR = Math.max(4, R*0.024);
+    const dot = (px, py, latest) => {
+      ctx.beginPath(); ctx.arc(px, py, dotR + Math.max(1.5, R*0.008), 0, Math.PI*2);
+      ctx.fillStyle = "rgba(255,255,255,0.95)"; ctx.fill();
+      ctx.beginPath(); ctx.arc(px, py, dotR, 0, Math.PI*2);
+      ctx.fillStyle = "#f59e0b"; ctx.fill();
+      ctx.lineWidth = Math.max(1, R*0.008); ctx.strokeStyle = "rgba(11,15,23,0.9)"; ctx.stroke();
+      if (latest) {
+        ctx.beginPath(); ctx.arc(px, py, dotR * 2, 0, Math.PI*2);
+        ctx.lineWidth = Math.max(2, R*0.012); ctx.strokeStyle = "#f59e0b"; ctx.stroke();
+      }
+    };
+    TARGETS.forEach(t => (currentPos[t] || []).forEach((p, i) => {
+      const dart = currentEntry[t] && currentEntry[t][i];
+      if (!p || !dart || dart === "-") return;
+      dot(cx + p.x * R, cy + p.y * R, false);
+    }));
+    if (lastTap) dot(cx + lastTap.x * R, cy + lastTap.y * R, true);
   }
 
 
@@ -1550,9 +1624,12 @@ function scoreFromPoint(canvas, x, y){
 
     if (r > rEdge) return null;
 
+    // Where the tap landed, relative to the board's centre and radius (see currentPos).
+    const px = Math.round((dx / R) * 1000) / 1000, py = Math.round((dy / R) * 1000) / 1000;
+
     // Bulls: inner bull = DOUBLE, outer bull = SINGLE
-    if (r <= rBullIn)  return { target: "BULL", ring: "D" };
-    if (r <= rBullOut) return { target: "BULL", ring: "S" };
+    if (r <= rBullIn)  return { target: "BULL", ring: "D", x: px, y: py };
+    if (r <= rBullOut) return { target: "BULL", ring: "S", x: px, y: py };
 
     // Angle to segment index (20 at top, clockwise)
     let ang = Math.atan2(dy, dx);
@@ -1574,7 +1651,7 @@ function scoreFromPoint(canvas, x, y){
     if (r >= rDoubleIn && r <= rDoubleOut) ring = "D";
     else if (r >= rTripleIn && r <= rTripleOut) ring = "T";
 
-    return { target, ring };
+    return { target, ring, x: px, y: py };
   }
 
 
@@ -1593,12 +1670,19 @@ function applyBoardHit(hit){
     arr[ix] = ring; // store the ring letter (S/D/T)
     currentEntry[target] = arr;
 
+    // ...and where it landed, in the same slot
+    const prevPos = (currentPos[target] || [null, null, null]).slice();
+    const slots = prevPos.slice();
+    slots[ix] = { x: hit.x, y: hit.y };
+    currentPos[target] = slots;
+    setBoardNote("");
+
     tapFeedback(ring, target);
 
-    tapStack.push({ target, prev });
-    lastTap = hit;
+    tapStack.push({ target, prev, prevPos, prevLast: lastTap });
+    lastTap = { target, ring, x: hit.x, y: hit.y };
 
-    localStorage.setItem("dt_draft", JSON.stringify(currentEntry));
+    persistDraft();
     updateUIFromEntry(currentEntry);
     scheduleDraftWrite();
     drawBoard();
@@ -1614,6 +1698,7 @@ function applyBoardHit(hit){
       document.getElementById("userName").title = shownName; // full text if it is cut short on a narrow screen
       syncDateTime(true);
       const saved = localStorage.getItem("dt_draft"); if(saved) currentEntry = JSON.parse(saved);
+      try { currentPos = cleanPositions(JSON.parse(localStorage.getItem("dt_draftPos") || "{}"), currentEntry); } catch (_) { currentPos = {}; }
       // Do not write the local draft to the cloud here. This device's copy may be older than what
       // another device has typed, and writing it on open would overwrite that device's entry.
       // The live listener applies the cloud draft if another device wrote it; this device only
@@ -1682,8 +1767,18 @@ function applyBoardHit(hit){
       if (hdr) hdr.textContent = (scoreMode === "single") ? "Hits (0–3)" : "Input (e.g. SDT)";
 
       currentEntry = JSON.parse(JSON.stringify(s.entry || {}));
+      currentPos = cleanPositions(s.positions, currentEntry);
+      tapStack = [];
+      lastTap = null;
       initTable();
+      persistDraft();
       scheduleDraftWrite();
+      drawBoard();
+      const shown = countPositions(currentPos);
+      const darts = TARGETS.reduce((n, t) => n + (currentEntry[t] || []).filter(v => v && v !== "-").length, 0);
+      setBoardNote(shown
+        ? `Dots show where ${shown} dart${shown === 1 ? "" : "s"} landed.`
+        : (darts ? "No dart positions were saved for this session, so there are no dots to show." : ""));
       alert("Loaded!");
     }
   };
@@ -1748,7 +1843,10 @@ document.getElementById("signInBtn").onclick = () => auth.signInWithPopup(new fi
     btn.textContent = "Saving…";
     try {
       const ref = pendingSaveRef || (pendingSaveRef = db.collection("sessions").doc());
-      const write = ref.set({ uid: user.uid, timestamp: date + " " + time, mode: scoreMode, entry: currentEntry, total });
+      const data = { uid: user.uid, timestamp: date + " " + time, mode: scoreMode, entry: currentEntry, total };
+      const positions = positionsForSave();
+      if (positions) data.positions = positions;
+      const write = ref.set(data);
       await Promise.race([write, new Promise((_, reject) => setTimeout(() => reject(new Error("save-timeout")), SAVE_TIMEOUT_MS))]);
       pendingSaveRef = null;
       resetCurrentSession({ resetDateTime: true });

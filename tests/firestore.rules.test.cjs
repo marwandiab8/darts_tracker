@@ -110,6 +110,46 @@ test("the biggest possible session is accepted", async () => {
 
 const draft = (overrides = {}) => ({ uid: me, deviceId: "device-1", updatedAt: new Date(), mode: "standard", entry: entry(), total: 6, sessionDate: "2026-09-20", sessionTime: "19:30", ...overrides });
 
+// --- where each dart landed (uses draft() from above) ---------------------------------------
+
+// Positions run parallel to the entry: per target, three slots that are {x, y} (relative to the
+// board's centre and radius) or null. See public/index.html.
+function positions() {
+  const result = { "20": [{ x: 0.012, y: -0.583 }, null, null], BULL: [{ x: -0.02, y: 0.03 }, null, null] };
+  return result;
+}
+
+test("a session can be saved with dart positions, and without them", async () => {
+  const db = asUser(me);
+  await assertSucceeds(addDoc(collection(db, "sessions"), session({ positions: positions() })));
+  await assertSucceeds(addDoc(collection(db, "sessions"), session()));
+});
+
+test("positions that are not a map, or are oversized, are refused", async () => {
+  const db = asUser(me);
+  await assertFails(addDoc(collection(db, "sessions"), session({ positions: "0.1,0.2" })));
+  await assertFails(addDoc(collection(db, "sessions"), session({ positions: [1, 2, 3] })));
+  const oversized = Object.fromEntries(Array.from({ length: 30 }, (_, index) => [`t${index}`, [null, null, null]]));
+  await assertFails(addDoc(collection(db, "sessions"), session({ positions: oversized })));
+});
+
+test("other unknown fields are still refused next to positions", async () => {
+  await assertFails(addDoc(collection(asUser(me), "sessions"), session({ positions: positions(), note: "x" })));
+});
+
+test("a session's positions can be edited by its owner, within limits", async () => {
+  const db = asUser(me);
+  const ref = await assertSucceeds(addDoc(collection(db, "sessions"), session({ positions: positions() })));
+  await assertSucceeds(updateDoc(doc(db, "sessions", ref.id), { positions: { "20": [null, null, null] } }));
+  await assertFails(updateDoc(doc(db, "sessions", ref.id), { positions: "nope" }));
+});
+
+test("a live draft can carry positions, and cannot carry a non-map", async () => {
+  const db = asUser(me);
+  await assertSucceeds(setDoc(doc(db, "liveDrafts", me), draft({ positions: positions() }), { merge: true }));
+  await assertFails(setDoc(doc(db, "liveDrafts", me), draft({ positions: "x" }), { merge: true }));
+});
+
 test("a user can read and write their own live draft, with a merge like the app does", async () => {
   const db = asUser(me);
   await assertSucceeds(setDoc(doc(db, "liveDrafts", me), draft(), { merge: true }));

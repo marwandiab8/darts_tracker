@@ -135,3 +135,16 @@ test("target keys that are not on the board are ignored", () => {
   assert.equal(item.metadata.targetSummaries.length, 21);
   assert.equal(item.metadata.targetSummaries.some((row) => row.target === "25"), false);
 });
+
+// --- dart positions stay in the app ----------------------------------------------------------
+
+test("dart positions on a session are not forwarded to Time Left", () => {
+  const item = _test.mapSessionToTimeLeft({
+    uid: "u", timestamp: "2026-09-20 19:30", mode: "standard", total: 3,
+    entry: { "20": ["T", "-", "-"] },
+    positions: { "20": [{ x: 0.012, y: -0.583 }, null, null] }
+  }, "s1");
+  assert.equal(JSON.stringify(item).includes("positions"), false);
+  assert.equal(JSON.stringify(item).includes("0.583"), false);
+  assert.equal(item.metadata.targetSummaries.find((row) => row.target === "20").score, 3);
+});
