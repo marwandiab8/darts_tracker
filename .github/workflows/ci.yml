@@ -39,11 +39,14 @@ jobs:
       - name: Install function dependencies
         run: npm --prefix functions ci
 
-      # Parses the function and every inline script in public/index.html without running them.
+      # Parses the function and every inline script in the app's pages without running them.
       - name: Syntax check
         run: |
           npm --prefix functions run check
           node scripts/check-app.cjs
+
+      - name: Practice engine tests
+        run: npm run test:engine
 
       - name: Function tests
         run: npm run test:functions

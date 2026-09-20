@@ -202,3 +202,83 @@ test("anything else in the database is closed", async () => {
   await assertFails(getDoc(doc(db, "somethingElse", "x")));
   await assertFails(setDoc(doc(db, "somethingElse", "x"), { a: 1 }));
 });
+
+// --- practice games against the bot ------------------------------------------------------------
+
+const dartList = (count) => Array.from({ length: count }, () => ({ x: 0, y: -0.58, s: "T20" }));
+const botGame = (overrides = {}) => ({
+  uid: me, timestamp: "2026-09-20 19:30", kind: "x01", startScore: 501, doubleOut: true, rank: "club", first: "player",
+  result: "won", durationSec: 600, rounds: 15, playerAvg: 54.2, botAvg: 47.9, playerScore: 0, botScore: 120,
+  playerDarts: dartList(45), botDarts: dartList(42), ...overrides,
+});
+
+test("a signed-in user can save, list and delete their own bot games, and nobody else can read them", async () => {
+  const db = asUser(me);
+  const ref = await assertSucceeds(addDoc(collection(db, "botGames"), botGame()));
+  await assertSucceeds(getDoc(ref));
+  const listed = await assertSucceeds(getDocs(query(collection(db, "botGames"), where("uid", "==", me))));
+  assert.equal(listed.size, 1);
+  await assertFails(getDoc(doc(asUser(other), "botGames", ref.id)));
+  await assertFails(getDocs(query(collection(asUser(other), "botGames"), where("uid", "==", me))));
+  await assertFails(deleteDoc(doc(asUser(other), "botGames", ref.id)));
+  await assertFails(getDoc(doc(env.unauthenticatedContext().firestore(), "botGames", ref.id)));
+  await assertSucceeds(deleteDoc(ref));
+});
+
+test("a cricket game has no start score, and an x01 game needs one from 201 to 701", async () => {
+  const db = asUser(me);
+  const cricket = botGame({ kind: "cricket", playerAvg: 2.1, botAvg: 1.7 });
+  delete cricket.startScore;
+  delete cricket.doubleOut;
+  await assertSucceeds(addDoc(collection(db, "botGames"), cricket));
+  await assertFails(addDoc(collection(db, "botGames"), botGame({ kind: "cricket" })));
+  for (const startScore of [101, 150, 501.5, 801, "501", 0]) {
+    await assertFails(addDoc(collection(db, "botGames"), botGame({ startScore })));
+  }
+  for (const startScore of [201, 301, 401, 501, 601, 701]) {
+    await assertSucceeds(addDoc(collection(db, "botGames"), botGame({ startScore })));
+  }
+  const noScore = botGame();
+  delete noScore.startScore;
+  await assertFails(addDoc(collection(db, "botGames"), noScore));
+});
+
+test("an abandoned game with no darts is fine, and the optional fields can be left out", async () => {
+  const db = asUser(me);
+  const minimal = { uid: me, timestamp: "2026-09-20 19:30", kind: "cricket", rank: "pro", result: "abandoned", playerDarts: [], botDarts: [] };
+  await assertSucceeds(addDoc(collection(db, "botGames"), minimal));
+});
+
+test("bot games with the wrong shape are refused", async () => {
+  const db = asUser(me);
+  const refused = [
+    botGame({ uid: other }),
+    botGame({ rank: "god" }),
+    botGame({ result: "draw" }),
+    botGame({ kind: "bullseye" }),
+    botGame({ first: "nobody" }),
+    botGame({ timestamp: 5 }),
+    botGame({ timestamp: "x" }),
+    botGame({ playerDarts: "many" }),
+    botGame({ playerDarts: dartList(601) }),
+    botGame({ botDarts: dartList(601) }),
+    botGame({ playerAvg: -1 }),
+    botGame({ botAvg: "fast" }),
+    botGame({ durationSec: 999999 }),
+    botGame({ doubleOut: "yes" }),
+    botGame({ extra: "field" }),
+  ];
+  for (const data of refused) await assertFails(addDoc(collection(db, "botGames"), data));
+  const missing = botGame();
+  delete missing.result;
+  await assertFails(addDoc(collection(db, "botGames"), missing));
+  await assertSucceeds(addDoc(collection(db, "botGames"), botGame({ playerDarts: dartList(600), botDarts: dartList(600) })));
+});
+
+test("a saved bot game cannot be edited", async () => {
+  const db = asUser(me);
+  const ref = await assertSucceeds(addDoc(collection(db, "botGames"), botGame()));
+  await assertFails(updateDoc(ref, { result: "lost" }));
+  await assertFails(updateDoc(ref, { playerAvg: 200 }));
+  await assertFails(setDoc(ref, botGame({ result: "lost" })));
+});

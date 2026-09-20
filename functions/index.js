@@ -182,6 +182,88 @@ function mapSessionToTimeLeft(session, sessionId, syncStatus = "active") {
   };
 }
 
+const BOT_RANK_NAMES = { beginner: "Beginner", casual: "Casual", club: "Club", league: "League", pro: "Pro" };
+
+function cleanNumber(value, low, high, digits = 2) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  const clamped = Math.min(high, Math.max(low, number));
+  const scale = 10 ** digits;
+  return Math.round(clamped * scale) / scale;
+}
+
+// A practice game against the bot. Like a session, it is written by the browser, so every field is
+// checked or clamped here. The dart positions stay in Darts Tracker; only a summary is sent.
+function mapBotGameToTimeLeft(game, gameId, syncStatus = "active") {
+  const timeZone = DARTS_DEFAULT_TIME_ZONE.value() || "America/Toronto";
+  const dateId = timestampDateId(game.timestamp || game.dateId || game.createdAt, timeZone);
+  const appBaseUrl = String(DARTS_APP_BASE_URL.value() || "").replace(/\/+$/, "");
+
+  const kind = game.kind === "cricket" ? "cricket" : "x01";
+  const rank = Object.prototype.hasOwnProperty.call(BOT_RANK_NAMES, game.rank) ? game.rank : "club";
+  const result = ["won", "lost", "abandoned"].includes(game.result) ? game.result : "abandoned";
+  const startScore = kind === "x01" && Number.isInteger(game.startScore) && game.startScore >= 201 && game.startScore <= 701 ? game.startScore : null;
+  const doubleOut = kind === "x01" ? game.doubleOut !== false : null;
+  const playerAvg = cleanNumber(game.playerAvg, 0, 300);
+  const botAvg = cleanNumber(game.botAvg, 0, 300);
+  const playerDarts = Array.isArray(game.playerDarts) ? Math.min(game.playerDarts.length, 600) : 0;
+  const botDarts = Array.isArray(game.botDarts) ? Math.min(game.botDarts.length, 600) : 0;
+  const durationSec = cleanNumber(game.durationSec, 0, 86400, 0);
+
+  const gameName = kind === "cricket" ? "Cricket" : `${startScore || 501}${doubleOut ? "" : " straight out"}`;
+  const rankName = BOT_RANK_NAMES[rank];
+  const resultWord = { won: "Won", lost: "Lost", abandoned: "Unfinished" }[result];
+  const averageName = kind === "cricket" ? "marks per round" : "three-dart average";
+  const scores = [];
+  if (playerAvg !== null && playerDarts) scores.push(`Your ${averageName} ${playerAvg} against ${botAvg === null ? "the bot's" : botAvg}`);
+
+  return {
+    dateId: dateId || undefined,
+    sourceApp: "DartstRacker2026",
+    category: "dartsRecord",
+    title: `Bot practice: ${gameName} vs ${rankName} (${result})`,
+    summary: `${resultWord} ${gameName} against the ${rankName} bot${scores.length ? `. ${scores[0]}` : ""}${playerDarts ? `. ${playerDarts} darts thrown` : ""}.`,
+    description: `Practice game against the ${rankName} bot in Darts Tracker: ${gameName}, ${result}.`,
+    sourceFirebaseProjectId: DARTS_FIREBASE_PROJECT_ID.value() || "dartstracker2026",
+    sourceProjectName: "Darts Tracker",
+    sourceProjectId: DARTS_SOURCE_PROJECT_ID,
+    sourceCollection: "botGames",
+    sourceDocumentId: gameId,
+    sourceDocumentPath: `botGames/${gameId}`,
+    sourceStoragePath: null,
+    sourceUrl: appBaseUrl ? `${appBaseUrl}/practice.html` : "",
+    fileUrl: null,
+    thumbnailUrl: null,
+    contentType: null,
+    fileName: null,
+    fileSize: null,
+    originalCreatedAt: game.createdAt || null,
+    originalUpdatedAt: game.updatedAt || null,
+    capturedAt: game.timestamp || game.createdAt || null,
+    visibility: "ownerOnly",
+    syncStatus,
+    metadata: {
+      uid: game.uid || null,
+      practiceType: "bot",
+      kind,
+      startScore,
+      doubleOut,
+      rank,
+      result,
+      playerAvg,
+      botAvg,
+      playerScore: cleanNumber(game.playerScore, 0, 100000, 0),
+      botScore: cleanNumber(game.botScore, 0, 100000, 0),
+      playerDarts,
+      botDarts,
+      rounds: cleanNumber(game.rounds, 0, 1000, 0),
+      durationSec,
+      timestamp: cleanString(game.timestamp || ""),
+      source: "dartstracker2026",
+    },
+  };
+}
+
 function readConfig() {
   return {
     calendarId: TIME_LEFT_CALENDAR_ID.value(),
@@ -237,60 +319,70 @@ async function postToTimeLeft(item) {
   return body;
 }
 
-exports.syncDartsPracticeSummaryToTimeLeft = onDocumentWritten(
-  {
-    region: "northamerica-northeast1",
-    document: "sessions/{sessionId}",
-    timeoutSeconds: 60,
-    memory: "256MiB",
-    retry: false,
-    secrets: [TIME_LEFT_INGESTION_TOKEN],
-  },
-  async (event) => {
-    const sessionId = event.params && event.params.sessionId;
-    const before = event.data && event.data.before && event.data.before.exists ? event.data.before.data() || {} : null;
-    const after = event.data && event.data.after && event.data.after.exists ? event.data.after.data() || {} : null;
-    const deleted = before && !after;
-    const source = after || before;
-    if (!sessionId || !source) return null;
+// Forwards a changed document to Time Left, for the owner only. Failures are logged, not thrown,
+// so a Time Left outage never fails or retries a save in the app.
+async function forwardOwnerDocument({ event, collectionName, idParam, mapItem }) {
+  const documentId = event.params && event.params[idParam];
+  const before = event.data && event.data.before && event.data.before.exists ? event.data.before.data() || {} : null;
+  const after = event.data && event.data.after && event.data.after.exists ? event.data.after.data() || {} : null;
+  const deleted = before && !after;
+  const source = after || before;
+  if (!documentId || !source) return null;
 
-    const ownerUid = DARTS_OWNER_UID.value();
-    if (!isOwnerSession(source, ownerUid)) {
-      logger.warn("darts Time Left sync skipped: not the owner's session", {
-        sourceDocumentPath: `sessions/${sessionId}`,
-        ownerConfigured: Boolean(ownerUid),
-      });
-      return null;
-    }
-
-    const item = mapSessionToTimeLeft(source, sessionId, deleted ? "deletedFromSource" : "active");
-    try {
-      const result = await postToTimeLeft(item);
-      logger.info("darts Time Left sync complete", {
-        sourceDocumentPath: item.sourceDocumentPath,
-        dateId: item.dateId || null,
-        category: item.category,
-        syncStatus: item.syncStatus,
-      });
-      return result;
-    } catch (error) {
-      const responseMessage =
-        error.body && typeof error.body === "object"
-          ? cleanString(error.body.error || error.body.message || error.body.raw || "", 300)
-          : "";
-      logger.warn("darts Time Left sync failed", {
-        sourceDocumentPath: item.sourceDocumentPath,
-        sourceApp: item.sourceApp,
-        sourceFirebaseProjectId: item.sourceFirebaseProjectId,
-        sourceProjectId: item.sourceProjectId,
-        dateId: item.dateId || null,
-        status: error.status || null,
-        responseMessage: responseMessage || null,
-        message: String(error.message || error).slice(0, 300),
-      });
-      return null;
-    }
+  const ownerUid = DARTS_OWNER_UID.value();
+  if (!isOwnerSession(source, ownerUid)) {
+    logger.warn("darts Time Left sync skipped: not the owner's document", {
+      sourceDocumentPath: `${collectionName}/${documentId}`,
+      ownerConfigured: Boolean(ownerUid),
+    });
+    return null;
   }
+
+  const item = mapItem(source, documentId, deleted ? "deletedFromSource" : "active");
+  try {
+    const result = await postToTimeLeft(item);
+    logger.info("darts Time Left sync complete", {
+      sourceDocumentPath: item.sourceDocumentPath,
+      dateId: item.dateId || null,
+      category: item.category,
+      syncStatus: item.syncStatus,
+    });
+    return result;
+  } catch (error) {
+    const responseMessage =
+      error.body && typeof error.body === "object"
+        ? cleanString(error.body.error || error.body.message || error.body.raw || "", 300)
+        : "";
+    logger.warn("darts Time Left sync failed", {
+      sourceDocumentPath: item.sourceDocumentPath,
+      sourceApp: item.sourceApp,
+      sourceFirebaseProjectId: item.sourceFirebaseProjectId,
+      sourceProjectId: item.sourceProjectId,
+      dateId: item.dateId || null,
+      status: error.status || null,
+      responseMessage: responseMessage || null,
+      message: String(error.message || error).slice(0, 300),
+    });
+    return null;
+  }
+}
+
+const SYNC_OPTIONS = {
+  region: "northamerica-northeast1",
+  timeoutSeconds: 60,
+  memory: "256MiB",
+  retry: false,
+  secrets: [TIME_LEFT_INGESTION_TOKEN],
+};
+
+exports.syncDartsPracticeSummaryToTimeLeft = onDocumentWritten(
+  { ...SYNC_OPTIONS, document: "sessions/{sessionId}" },
+  (event) => forwardOwnerDocument({ event, collectionName: "sessions", idParam: "sessionId", mapItem: mapSessionToTimeLeft })
+);
+
+exports.syncBotGameToTimeLeft = onDocumentWritten(
+  { ...SYNC_OPTIONS, document: "botGames/{gameId}" },
+  (event) => forwardOwnerDocument({ event, collectionName: "botGames", idParam: "gameId", mapItem: mapBotGameToTimeLeft })
 );
 
 exports.backfillDartsPracticeSummariesToTimeLeft = onRequest(
@@ -344,9 +436,11 @@ exports.backfillDartsPracticeSummariesToTimeLeft = onRequest(
 
 module.exports._test = {
   authorizeBackfill,
+  forwardOwnerDocument,
   clampTotal,
   isOwnerSession,
   normalizeDarts,
+  mapBotGameToTimeLeft,
   mapSessionToTimeLeft,
   rowScoreForMode,
   summarizeTargets,

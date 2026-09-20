@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Practice vs Bot - Darts Tracker</title>
+<style>
+  :root {
+    --bg: #0b0f17; --muted: #94a3b8; --text: #e5e7eb; --accent: #f59e0b; --bot: #38bdf8;
+    --good: #22c55e; --warn: #ef4444; --border: rgba(148, 163, 184, .18); --chip: #0f172a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; }
+  .shell { background: radial-gradient(1200px 600px at 20% 0%, rgba(245, 158, 11, .12), transparent 55%), var(--bg); min-height: 100vh; padding: 16px; }
+  .wrap { max-width: 1000px; margin: 0 auto; }
+  header { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+  header h1 { margin: 0; font-size: 22px; }
+  .head-left { display: flex; align-items: center; gap: 12px; min-width: 0; flex-wrap: wrap; }
+  a.back { color: var(--accent); text-decoration: none; font-weight: 700; font-size: 14px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 999px; }
+  .pill { display: inline-flex; align-items: center; padding: 6px 12px; border-radius: 999px; background: rgba(255,255,255,.05); border: 1px solid var(--border); font-size: 14px; max-width: 100%; }
+  #userName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+  .card { background: rgba(255,255,255,.02); border: 1px solid var(--border); border-radius: 16px; padding: 16px; margin-bottom: 16px; min-width: 0; }
+  .card h2 { margin: 0 0 12px; font-size: 18px; }
+  .hidden { display: none !important; }
+  .muted { color: var(--muted); }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  select, button { font: inherit; }
+  select { width: 100%; background: var(--chip); color: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 12px; min-height: 44px; }
+  button { cursor: pointer; background: var(--accent); color: #111; border: 0; border-radius: 12px; padding: 12px 18px; font-weight: 800; min-height: 44px; }
+  button.secondary { background: rgba(255,255,255,.07); color: var(--text); border: 1px solid var(--border); }
+  button.danger { background: transparent; color: #fca5a5; border: 1px solid rgba(239,68,68,.4); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button:focus-visible, select:focus-visible, canvas:focus-visible, a:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+  .form-grid { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .form-grid .wide { grid-column: 1 / -1; }
+  .segmented { display: flex; gap: 8px; }
+  .segmented label { flex: 1; margin: 0; color: var(--text); }
+  .segmented input { position: absolute; opacity: 0; pointer-events: none; }
+  .segmented span { display: block; text-align: center; padding: 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--chip); font-weight: 700; cursor: pointer; }
+  .segmented input:checked + span { background: rgba(245,158,11,.16); border-color: var(--accent); color: var(--accent); }
+  .segmented input:focus-visible + span { outline: 3px solid #fff; outline-offset: 2px; }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+  .resume { border: 1px solid rgba(245,158,11,.4); background: rgba(245,158,11,.08); border-radius: 12px; padding: 12px; margin-bottom: 14px; }
+
+  .play-grid { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+  .boards { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 12px; }
+  .side { border: 1px solid var(--border); border-radius: 14px; padding: 12px; text-align: center; background: rgba(0,0,0,.2); min-width: 0; }
+  .side.turn { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .side.bot.turn { border-color: var(--bot); box-shadow: 0 0 0 1px var(--bot) inset; }
+  .side .who { font-weight: 800; font-size: 14px; color: var(--muted); overflow-wrap: anywhere; }
+  .side .big { font-size: clamp(38px, 9vw, 60px); font-weight: 950; line-height: 1.05; color: var(--accent); }
+  .side.bot .big { color: var(--bot); }
+  .side .small { font-size: 13px; color: var(--muted); }
+  .status { min-height: 48px; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,.04); border: 1px solid var(--border); margin-bottom: 12px; font-size: 15px; }
+  .status strong { color: var(--accent); }
+  .hint { font-size: 14px; color: #bbf7d0; margin-top: 6px; min-height: 20px; }
+  .canvas-wrap { width: 100%; max-width: 520px; margin: 0 auto; }
+  canvas { display: block; width: 100%; height: auto; aspect-ratio: 1; touch-action: manipulation; border-radius: 50%; }
+  canvas.tappable { cursor: crosshair; }
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 12px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 8px 6px; border-bottom: 1px solid var(--border); text-align: center; font-size: 14px; }
+  th { color: var(--muted); font-size: 11px; text-transform: uppercase; }
+  .cricket td.num { font-weight: 900; font-size: 20px; }
+  .cricket td.mark { font-size: 22px; font-weight: 900; }
+  .cricket tr.closed td { opacity: .4; }
+  .mark.you { color: var(--accent); } .mark.bot { color: var(--bot); }
+  .log-wrap { max-height: 260px; overflow-y: auto; }
+  .scroll-x { overflow-x: auto; }
+  .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+  .stat { border: 1px solid var(--border); border-radius: 12px; padding: 10px; text-align: center; background: rgba(0,0,0,.2); }
+  .stat b { display: block; font-size: 22px; }
+  .stat span { font-size: 12px; color: var(--muted); }
+  .over h2 { font-size: 26px; margin-bottom: 4px; }
+  .saved { font-size: 14px; margin-top: 8px; }
+  .saved.ok { color: var(--good); } .saved.bad { color: #fca5a5; }
+  .legend { display: inline-block; width: 12px; height: 12px; border-radius: 50%; vertical-align: middle; margin-right: 4px; }
+  .filters { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+  .filters > div { flex: 1 1 140px; }
+  td.left, th.left { text-align: left; }
+  .won { color: var(--good); font-weight: 800; } .lost { color: #fca5a5; font-weight: 800; } .abandoned { color: var(--muted); }
+  .empty { padding: 18px; text-align: center; color: var(--muted); }
+  #authScreen { text-align: center; padding: 60px 0; }
+  @media (max-width: 800px) {
+    .play-grid { grid-template-columns: 1fr; }
+    .form-grid { grid-template-columns: 1fr; }
+    .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+</style>
+</head>
+<body>
+<div class="shell"><div class="wrap">
+  <header>
+    <div class="head-left">
+      <a class="back" href="./">&larr; Tracker</a>
+      <h1>Practice vs Bot</h1>
+    </div>
+    <span class="pill hidden" id="userPill"><span id="userName"></span></span>
+  </header>
+
+  <div id="authScreen" class="card hidden">
+    <h2>Sign in to play</h2>
+    <p class="muted">Use the same Google account as the tracker so your games are saved with your practice.</p>
+    <button id="signInBtn" type="button">Sign in with Google</button>
+  </div>
+
+  <div id="app" class="hidden">
+    <!-- Choosing a game -->
+    <section class="card" id="setupCard">
+      <h2>New game</h2>
+      <div class="resume hidden" id="resumeBox">
+        <div id="resumeText"></div>
+        <div class="actions">
+          <button type="button" id="resumeBtn">Resume game</button>
+          <button type="button" class="danger" id="discardBtn">Discard it</button>
+        </div>
+      </div>
+      <div class="form-grid">
+        <div class="wide">
+          <label id="kindLabel">Game</label>
+          <div class="segmented" role="radiogroup" aria-labelledby="kindLabel">
+            <label><input type="radio" name="kind" value="x01" checked><span>501 (201 to 701)</span></label>
+            <label><input type="radio" name="kind" value="cricket"><span>Cricket</span></label>
+          </div>
+        </div>
+        <div id="startScoreBox">
+          <label for="startScore">Start score</label>
+          <select id="startScore"></select>
+        </div>
+        <div id="outBox">
+          <label for="outRule">Finish</label>
+          <select id="outRule">
+            <option value="double">Double out (standard)</option>
+            <option value="straight">Straight out (any dart)</option>
+          </select>
+        </div>
+        <div>
+          <label for="rank">Bot level</label>
+          <select id="rank"></select>
+          <div class="muted" id="rankBlurb" style="font-size:13px;margin-top:4px;"></div>
+        </div>
+        <div>
+          <label for="first">Who throws first</label>
+          <select id="first">
+            <option value="player">You</option>
+            <option value="bot">The bot</option>
+          </select>
+        </div>
+      </div>
+      <div class="actions"><button type="button" id="startBtn">Start game</button></div>
+    </section>
+
+    <!-- Playing -->
+    <section class="hidden" id="gameCard">
+      <div class="play-grid">
+        <div class="card" style="margin-bottom:0;">
+          <div id="scoreboard"></div>
+          <div class="status" id="status" aria-live="polite"></div>
+          <div class="canvas-wrap"><canvas id="board" width="640" height="640" aria-label="Dartboard. Tap where your dart landed."></canvas></div>
+          <div class="controls">
+            <button type="button" class="secondary" id="undoBtn">Undo dart</button>
+            <button type="button" class="secondary" id="missBtn">Missed the board</button>
+            <button type="button" id="nextBtn">Bot's turn</button>
+          </div>
+          <div class="controls"><button type="button" class="danger" id="quitBtn">Quit game</button></div>
+        </div>
+        <div>
+          <div class="card" id="overCard" hidden>
+            <div class="over">
+              <h2 id="overTitle"></h2>
+              <div class="muted" id="overSub"></div>
+              <div class="stats" id="overStats"></div>
+              <div class="saved" id="saveNote" role="status"></div>
+              <div class="actions">
+                <button type="button" id="retryBtn" class="hidden">Try saving again</button>
+                <button type="button" id="againBtn">Play again</button>
+                <button type="button" class="secondary" id="changeBtn">Change setup</button>
+              </div>
+              <p class="muted" style="font-size:13px;margin-bottom:0;"><span class="legend" style="background:#f59e0b"></span>Your darts <span class="legend" style="background:#38bdf8;margin-left:10px"></span>Bot darts</p>
+            </div>
+          </div>
+          <div class="card" style="margin-bottom:0;">
+            <h2>Rounds</h2>
+            <div class="log-wrap"><table id="log"><thead></thead><tbody></tbody></table></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Where the darts go -->
+    <section class="card" id="heatCard" style="margin-top:16px;">
+      <h2>Heat map</h2>
+      <div class="filters">
+        <div><label for="heatKind">Games</label>
+          <select id="heatKind"><option value="all">All games</option><option value="x01">501 games</option><option value="cricket">Cricket</option></select></div>
+        <div><label for="heatWho">Darts</label>
+          <select id="heatWho"><option value="player">Yours</option><option value="bot">The bot's</option></select></div>
+      </div>
+      <div class="play-grid">
+        <div class="canvas-wrap"><canvas id="heat" width="640" height="640" aria-label="Heat map of where darts landed"></canvas></div>
+        <div>
+          <div class="empty hidden" id="heatEmpty">Play a game and every dart you throw will show up here.</div>
+          <div id="heatStats"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="historyCard">
+      <h2>Your practice games</h2>
+      <div class="muted hidden" id="historyNote"></div>
+      <div class="scroll-x"><table>
+        <thead><tr><th class="left">When</th><th class="left">Game</th><th>Bot</th><th>Result</th><th>Avg</th><th>Darts</th><th></th></tr></thead>
+        <tbody id="historyBody"></tbody>
+      </table></div>
+    </section>
+  </div>
+</div></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
+<script src="practice-engine.js"></script>
+<script>
+(function () {
+  "use strict";
+  const E = window.DartsEngine;
+  const firebaseConfig = {
+    apiKey: "AIzaSyCAfRz72zGeDxKQGk3TGPAra1US64BGF90",
+    authDomain: "dartstracker2026.firebaseapp.com",
+    projectId: "dartstracker2026",
+    storageBucket: "dartstracker2026.firebasestorage.app",
+    messagingSenderId: "151826966768",
+    appId: "1:151826966768:web:a409ac8d409bf0f796ba35"
+  };
+  if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+  const auth = firebase.auth(), db = firebase.firestore();
+
+  const $ = (id) => document.getElementById(id);
+  const SETTINGS_KEY = "dt_practice_settings", GAME_KEY = "dt_practice_game", UNSAVED_KEY = "dt_practice_unsaved";
+  const BOT_DELAY = 800, BOT_PAUSE = 1300;
+  const RANK_IDS = E.RANKS.map((r) => r.id);
+
+  // Everything that persists in the browser is a convenience, so a blocked or full storage is fine.
+  const store = {
+    get(key) { try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : null; } catch (_) { return null; } },
+    set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch (_) {} },
+    remove(key) { try { localStorage.removeItem(key); } catch (_) {} },
+  };
+
+  let user = null;
+  let settings = Object.assign({ kind: "x01", startScore: 501, doubleOut: true, rank: "club", first: "player" }, store.get(SETTINGS_KEY) || {});
+  let game = null, startedAt = 0, botToken = 0, botBusy = false;
+  let lastMessage = "", reviewing = false, pendingRecord = null, savedGames = [];
+
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  // --- drawing the board -------------------------------------------------------------------------
+  const SEG = E.SEG_ORDER;
+  function boardMetrics(canvas) {
+    const size = canvas.width;
+    return { cx: size / 2, cy: size / 2, R: size * 0.44 };
+  }
+
+  function drawBoardBase(canvas) {
+    const ctx = canvas.getContext("2d");
+    const { cx, cy, R } = boardMetrics(canvas);
+    const G = E.GEOM;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.beginPath(); ctx.arc(cx, cy, R * 1.12, 0, Math.PI * 2); ctx.fillStyle = "#05070b"; ctx.fill();
+    const wedge = (Math.PI * 2) / 20, start = -Math.PI / 2 - wedge / 2;
+    for (let i = 0; i < 20; i++) {
+      const a0 = start + i * wedge, a1 = a0 + wedge, dark = i % 2 === 0;
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, R, a0, a1); ctx.closePath();
+      ctx.fillStyle = dark ? "#0b0b0c" : "#ffffff"; ctx.fill();
+      const ring = dark ? "#ef4444" : "#22c55e";
+      for (const [inner, outer] of [[G.tripleIn, G.tripleOut], [G.doubleIn, 1]]) {
+        ctx.beginPath(); ctx.arc(cx, cy, outer * R, a0, a1); ctx.arc(cx, cy, inner * R, a1, a0, true); ctx.closePath();
+        ctx.fillStyle = ring; ctx.fill();
+      }
+    }
+    ctx.beginPath(); ctx.arc(cx, cy, G.bullOut * R, 0, Math.PI * 2); ctx.fillStyle = "#22c55e"; ctx.fill();
+    ctx.beginPath(); ctx.arc(cx, cy, G.bullIn * R, 0, Math.PI * 2); ctx.fillStyle = "#ef4444"; ctx.fill();
+    ctx.lineWidth = Math.max(1, R * 0.006); ctx.strokeStyle = "rgba(229,231,235,0.7)";
+    for (let i = 0; i < 20; i++) {
+      const a = start + i * wedge;
+      ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * G.bullOut * R, cy + Math.sin(a) * G.bullOut * R);
+      ctx.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R); ctx.stroke();
+    }
+    for (const r of [G.bullOut, G.tripleIn, G.tripleOut, G.doubleIn, 1]) { ctx.beginPath(); ctx.arc(cx, cy, r * R, 0, Math.PI * 2); ctx.stroke(); }
+    ctx.fillStyle = "#fff"; ctx.font = "bold " + Math.round(R * 0.07) + "px system-ui, sans-serif";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    for (let i = 0; i < 20; i++) {
+      const a = start + i * wedge + wedge / 2;
+      ctx.fillText(String(SEG[i]), cx + Math.cos(a) * R * 0.95, cy + Math.sin(a) * R * 0.95);
+    }
+  }
+
+  function drawDot(ctx, canvas, p, color, latest, small) {
+    const { cx, cy, R } = boardMetrics(canvas);
+    const px = cx + p.x * R, py = cy + p.y * R, dotR = Math.max(small ? 3 : 4, R * (small ? 0.016 : 0.024));
+    ctx.beginPath(); ctx.arc(px, py, dotR + Math.max(1.5, R * 0.008), 0, Math.PI * 2); ctx.fillStyle = "rgba(255,255,255,0.95)"; ctx.fill();
+    ctx.beginPath(); ctx.arc(px, py, dotR, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
+    ctx.lineWidth = Math.max(1, R * 0.008); ctx.strokeStyle = "rgba(11,15,23,0.9)"; ctx.stroke();
+    if (latest) { ctx.beginPath(); ctx.arc(px, py, dotR * 2, 0, Math.PI * 2); ctx.lineWidth = Math.max(2, R * 0.012); ctx.strokeStyle = color; ctx.stroke(); }
+  }
+
+  const YOU = "#f59e0b", BOT = "#38bdf8";
+
+  function drawGameBoard() {
+    const canvas = $("board");
+    drawBoardBase(canvas);
+    if (!game) return;
+    const ctx = canvas.getContext("2d");
+    if (reviewing) {
+      game.darts.bot.forEach((p) => drawDot(ctx, canvas, p, BOT, false, true));
+      game.darts.player.forEach((p) => drawDot(ctx, canvas, p, YOU, false, true));
+      return;
+    }
+    // Only the darts of the visit in progress, so the board is clear for each new turn.
+    const mine = game.darts[game.turn], count = game.visitDarts.length;
+    mine.slice(mine.length - count).forEach((p, i, list) => drawDot(ctx, canvas, p, game.turn === "player" ? YOU : BOT, i === list.length - 1, false));
+  }
+
+  // --- the heat map ----------------------------------------------------------------------------------
+  function heatColor(t) {
+    const stops = [[0, [56, 189, 248]], [0.33, [34, 197, 94]], [0.66, [250, 204, 21]], [1, [239, 68, 68]]];
+    for (let i = 1; i < stops.length; i++) {
+      if (t <= stops[i][0]) {
+        const [t0, c0] = stops[i - 1], [t1, c1] = stops[i], f = (t - t0) / (t1 - t0);
+        return c0.map((v, k) => Math.round(v + (c1[k] - v) * f));
+      }
+    }
+    return stops[stops.length - 1][1];
+  }
+
+  function drawHeat(points) {
+    const canvas = $("heat");
+    drawBoardBase(canvas);
+    const ctx = canvas.getContext("2d");
+    const { cx, cy, R } = boardMetrics(canvas);
+    ctx.beginPath(); ctx.arc(cx, cy, R * 1.12, 0, Math.PI * 2); ctx.fillStyle = "rgba(5,7,11,0.55)"; ctx.fill();
+    if (!points.length) return;
+    const { grid, max, n } = E.heatGrid(points, 96, 0.07);
+    if (!max) return;
+    const off = document.createElement("canvas"); off.width = n; off.height = n;
+    const octx = off.getContext("2d"), image = octx.createImageData(n, n);
+    for (let i = 0; i < grid.length; i++) {
+      const t = grid[i] / max;
+      if (t < 0.03) continue;
+      const [r, g, b] = heatColor(t);
+      image.data.set([r, g, b, Math.round(255 * Math.min(0.85, 0.2 + t * 0.7))], i * 4);
+    }
+    octx.putImageData(image, 0, 0);
+    ctx.save();
+    ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.clip();
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(off, cx - R, cy - R, R * 2, R * 2);
+    ctx.restore();
+  }
+
+  function renderHeat() {
+    const kind = $("heatKind").value, who = $("heatWho").value;
+    const points = [];
+    for (const item of savedGames) {
+      if (kind !== "all" && item.data.kind !== kind) continue;
+      const list = E.cleanDarts(who === "bot" ? item.data.botDarts : item.data.playerDarts);
+      for (const p of list) points.push(p);
+    }
+    drawHeat(points);
+    $("heatEmpty").classList.toggle("hidden", points.length > 0);
+    const box = $("heatStats"); box.textContent = "";
+    if (!points.length) return;
+    const s = E.heatStats(points);
+    const pct = (n) => Math.round((n / s.total) * 100) + "%";
+    const grid = el("div", "stats");
+    for (const [value, label] of [[s.total, "darts"], [pct(s.triples), "trebles"], [pct(s.doubles), "doubles"], [pct(s.bulls), "bull"], [pct(s.misses), "missed the board"], [pct(s.singles), "singles"]]) {
+      const cell = el("div", "stat"); cell.append(el("b", "", String(value)), el("span", "", label)); grid.append(cell);
+    }
+    box.append(grid);
+    const top = el("p", "muted", "Most hit: " + s.top.map((t) => (t.target === "BULL" ? "Bull" : t.target) + " (" + t.count + ")").join(", "));
+    box.append(top);
+    const key = el("p", "muted", "Red is where the most darts landed, blue where a few did.");
+    key.style.fontSize = "13px";
+    box.append(key);
+  }
+
+  // --- history -----------------------------------------------------------------------------------------
+  function gameName(d) { return d.kind === "cricket" ? "Cricket" : String(d.startScore || 501) + (d.doubleOut === false ? " straight" : ""); }
+  const rankName = (id) => E.rankById(id).name;
+
+  function renderHistory() {
+    const body = $("historyBody"); body.textContent = "";
+    const rows = savedGames.slice().sort((a, b) => String(b.data.timestamp).localeCompare(String(a.data.timestamp))).slice(0, 40);
+    if (!rows.length) {
+      const tr = el("tr"), td = el("td", "empty", "No games yet."); td.colSpan = 7; tr.append(td); body.append(tr);
+      return;
+    }
+    for (const item of rows) {
+      const d = item.data, tr = el("tr");
+      const avg = (v) => (typeof v === "number" ? String(Math.round(v * 10) / 10) : "-");
+      tr.append(el("td", "left", String(d.timestamp || "").slice(0, 16)), el("td", "left", gameName(d)), el("td", "", rankName(d.rank)),
+        el("td", ["won", "lost", "abandoned"].includes(d.result) ? d.result : "", d.result === "won" ? "Won" : d.result === "lost" ? "Lost" : "Unfinished"),
+        el("td", "", avg(d.playerAvg) + " v " + avg(d.botAvg)),
+        el("td", "", String((d.playerDarts || []).length)));
+      const cell = el("td"), del = el("button", "danger", "Delete");
+      del.type = "button"; del.style.minHeight = "36px"; del.style.padding = "6px 10px";
+      del.addEventListener("click", () => deleteGame(item));
+      cell.append(del); tr.append(cell); body.append(tr);
+    }
+  }
+
+  async function deleteGame(item) {
+    if (!window.confirm("Delete this game from your record? It is also removed from Time Left.")) return;
+    try {
+      await db.collection("botGames").doc(item.id).delete();
+      savedGames = savedGames.filter((g) => g.id !== item.id);
+      renderHistory(); renderHeat();
+    } catch (error) {
+      window.alert("Could not delete the game: " + (error && error.message ? error.message : error));
+    }
+  }
+
+  async function loadGames() {
+    const note = $("historyNote");
+    try {
+      const snap = await db.collection("botGames").where("uid", "==", user.uid).get();
+      savedGames = snap.docs.map((doc) => ({ id: doc.id, data: doc.data() }));
+      note.classList.add("hidden");
+    } catch (error) {
+      note.textContent = "Could not load your games: " + (error && error.message ? error.message : error);
+      note.classList.remove("hidden");
+    }
+    renderHistory(); renderHeat();
+  }
+
+  // --- setup ---------------------------------------------------------------------------------------------
+  function buildSetup() {
+    const start = $("startScore");
+    E.START_SCORES.forEach((v) => { const o = el("option", "", String(v)); o.value = String(v); start.append(o); });
+    const rank = $("rank");
+    E.RANKS.forEach((r) => { const o = el("option", "", r.name); o.value = r.id; rank.append(o); });
+    applySettingsToForm();
+    for (const id of ["startScore", "outRule", "rank", "first"]) $(id).addEventListener("change", readForm);
+    document.querySelectorAll('input[name="kind"]').forEach((r) => r.addEventListener("change", readForm));
+  }
+
+  function applySettingsToForm() {
+    if (!["x01", "cricket"].includes(settings.kind)) settings.kind = "x01";
+    if (!E.START_SCORES.includes(Number(settings.startScore))) settings.startScore = 501;
+    if (!RANK_IDS.includes(settings.rank)) settings.rank = "club";
+    document.querySelectorAll('input[name="kind"]').forEach((r) => { r.checked = r.value === settings.kind; });
+    $("startScore").value = String(settings.startScore);
+    $("outRule").value = settings.doubleOut === false ? "straight" : "double";
+    $("rank").value = settings.rank;
+    $("first").value = settings.first === "bot" ? "bot" : "player";
+    syncSetupVisibility();
+  }
+
+  function readForm() {
+    const kind = document.querySelector('input[name="kind"]:checked');
+    settings = { kind: kind ? kind.value : "x01", startScore: Number($("startScore").value), doubleOut: $("outRule").value !== "straight", rank: $("rank").value, first: $("first").value };
+    store.set(SETTINGS_KEY, settings);
+    syncSetupVisibility();
+  }
+
+  function syncSetupVisibility() {
+    const x01 = settings.kind === "x01";
+    $("startScoreBox").classList.toggle("hidden", !x01);
+    $("outBox").classList.toggle("hidden", !x01);
+    $("rankBlurb").textContent = E.rankById(settings.rank).blurb;
+  }
+
+  // --- a game ------------------------------------------------------------------------------------------------
+  const NAMES = { S: "Single ", D: "Double ", T: "Treble " };
+  function describe(label) {
+    if (label === "MISS") return "Missed the board";
+    if (label === "DB") return "Bullseye";
+    if (label === "SB") return "Outer bull";
+    return NAMES[label[0]] + label.slice(1);
+  }
+  const short = (label) => (label === "SB" ? "25" : label === "DB" ? "Bull" : label[0] === "S" ? label.slice(1) : label);
+
+  function persistGame() {
+    if (game && !game.winner) store.set(GAME_KEY, { game, startedAt, settings });
+  }
+
+  function startGame() {
+    readForm();
+    game = E.createGame({ kind: settings.kind, startScore: settings.startScore, doubleOut: settings.doubleOut, first: settings.first });
+    startedAt = Date.now(); reviewing = false; lastMessage = ""; pendingRecord = null;
+    store.set(GAME_KEY, { game, startedAt, settings });
+    showGame();
+    render();
+    if (game.turn === "bot") runBot();
+  }
+
+  // The record and the heat map are for between games; they only get in the way while playing.
+  function showRecord(show) {
+    $("heatCard").classList.toggle("hidden", !show);
+    $("historyCard").classList.toggle("hidden", !show);
+  }
+
+  function showGame() {
+    $("setupCard").classList.add("hidden");
+    $("gameCard").classList.remove("hidden");
+    $("overCard").hidden = true;
+    showRecord(false);
+  }
+
+  function showSetup() {
+    botToken++; botBusy = false;
+    game = null; reviewing = false;
+    $("gameCard").classList.add("hidden");
+    $("setupCard").classList.remove("hidden");
+    showRecord(true);
+    checkResume();
+    drawGameBoard();
+  }
+
+  function looksLikeGame(g) {
+    return g && typeof g === "object" && (g.kind === "x01" || g.kind === "cricket") && g.darts && Array.isArray(g.darts.player) && Array.isArray(g.darts.bot)
+      && Array.isArray(g.visits) && Array.isArray(g.visitDarts) && (g.turn === "player" || g.turn === "bot") && !g.winner
+      && (g.kind === "cricket" ? g.marks && g.points && g.marksThrown : g.remaining && Number.isFinite(g.remaining.player) && Number.isFinite(g.remaining.bot));
+  }
+
+  function checkResume() {
+    const saved = store.get(GAME_KEY);
+    const ok = saved && looksLikeGame(saved.game);
+    $("resumeBox").classList.toggle("hidden", !ok);
+    if (ok) {
+      const g = saved.game, when = new Date(Number(saved.startedAt) || Date.now());
+      $("resumeText").textContent = "You have an unfinished " + (g.kind === "cricket" ? "Cricket" : g.startScore) + " game from " + when.toLocaleString() + ".";
+    }
+  }
+
+  function resumeGame() {
+    const saved = store.get(GAME_KEY);
+    if (!saved || !looksLikeGame(saved.game)) { checkResume(); return; }
+    game = saved.game; startedAt = Number(saved.startedAt) || Date.now();
+    if (saved.settings && RANK_IDS.includes(saved.settings.rank)) settings = Object.assign(settings, saved.settings);
+    reviewing = false; lastMessage = "Game resumed."; pendingRecord = null;
+    showGame(); render();
+    if (game.turn === "bot") {
+      // A bot turn was interrupted: start it over from the beginning of the visit.
+      while (game.visitDarts.length && E.undoDart(game)) { /* take back its unfinished darts */ }
+      runBot();
+    }
+  }
+
+  function scoreBlock(who) {
+    const s = E.summarize(game)[who];
+    const side = el("div", "side " + who + (game.turn === who && !game.winner ? " turn" : ""));
+    side.append(el("div", "who", who === "player" ? "You" : rankName(settings.rank) + " bot"));
+    if (game.kind === "x01") {
+      side.append(el("div", "big", String(game.remaining[who])));
+      const last = game.visits.filter((v) => v.who === who).slice(-1)[0];
+      side.append(el("div", "small", "Avg " + (s.darts ? s.avg.toFixed(1) : "-") + " · Last " + (last ? (last.bust ? "bust" : last.scored) : "-")));
+    } else {
+      side.append(el("div", "big", String(game.points[who])));
+      side.append(el("div", "small", "Points · " + (s.darts ? s.avg.toFixed(1) : "-") + " marks/round"));
+    }
+    return side;
+  }
+
+  function renderScoreboard() {
+    const box = $("scoreboard"); box.textContent = "";
+    const top = el("div", "boards");
+    top.append(scoreBlock("player"), scoreBlock("bot"));
+    box.append(top);
+    if (game.kind === "cricket") {
+      const wrap = el("div", "scroll-x"), table = el("table", "cricket"), body = el("tbody");
+      const symbol = (n) => (n >= 3 ? "⊗" : n === 2 ? "×" : n === 1 ? "/" : "");
+      for (const n of E.CRICKET_NUMBERS) {
+        const tr = el("tr", game.marks.player[n] >= 3 && game.marks.bot[n] >= 3 ? "closed" : "");
+        const a = el("td", "mark you", symbol(game.marks.player[n])), c = el("td", "num", n === 25 ? "Bull" : String(n)), b = el("td", "mark bot", symbol(game.marks.bot[n]));
+        a.setAttribute("aria-label", game.marks.player[n] + " marks for you"); b.setAttribute("aria-label", game.marks.bot[n] + " marks for the bot");
+        tr.append(a, c, b); body.append(tr);
+      }
+      table.append(body); wrap.append(table); box.append(wrap);
+    }
+  }
+
+  function renderLog() {
+    const head = $("log").tHead, body = $("log").tBodies[0];
+    head.textContent = ""; body.textContent = "";
+    const hr = el("tr");
+    hr.append(el("th", "", "Round"), el("th", "", "You"), el("th", "", "Bot"));
+    head.append(hr);
+    const cell = (v) => (v ? (game.kind === "x01" ? (v.bust ? "Bust" : String(v.scored)) : v.marks + " marks" + (v.points ? ", +" + v.points : "")) : "");
+    const rounds = new Map();
+    for (const v of game.visits) { const r = rounds.get(v.round) || {}; r[v.who] = v; rounds.set(v.round, r); }
+    [...rounds.entries()].reverse().forEach(([round, r]) => {
+      const tr = el("tr"); tr.append(el("td", "", String(round)), el("td", "", cell(r.player)), el("td", "", cell(r.bot))); body.append(tr);
+    });
+    if (!rounds.size) { const tr = el("tr"), td = el("td", "empty", "Nothing thrown yet."); td.colSpan = 3; tr.append(td); body.append(tr); }
+  }
+
+  function renderStatus() {
+    const box = $("status"); box.textContent = "";
+    if (reviewing) return;
+    const line = el("div");
+    if (game.turn === "player" && !game.visitDone) {
+      line.append(el("strong", "", "Your turn"), document.createTextNode(" · dart " + (game.visitDarts.length + 1) + " of 3. Tap where it landed."));
+    } else if (game.turn === "player") {
+      line.append(el("strong", "", game.winner ? "You won the game!" : "Visit finished"), document.createTextNode(game.winner ? " Check the darts, then finish." : ". Check the darts, then pass to the bot."));
+    } else {
+      line.append(el("strong", "", "Bot's turn"), document.createTextNode(" · " + (botBusy ? "throwing…" : "waiting")));
+    }
+    box.append(line);
+    if (lastMessage) box.append(el("div", "muted", lastMessage));
+    if (game.kind === "x01" && game.turn === "player" && !game.visitDone && game.remaining.player <= 170) {
+      const route = E.checkoutRoute(game.remaining.player, 3 - game.visitDarts.length, game.doubleOut);
+      if (route) box.append(el("div", "hint", "Checkout: " + route.map((d) => short(d.label)).join(" · ")));
+    }
+  }
+
+  function renderControls() {
+    const mine = game.turn === "player" && !reviewing && !game.winner;
+    const canThrow = mine && !game.visitDone && !botBusy;
+    $("board").classList.toggle("tappable", canThrow);
+    $("undoBtn").disabled = !(game.turn === "player" && game.undo.length > 0 && !botBusy && !game.winner) ;
+    $("missBtn").disabled = !canThrow;
+    const pending = game.turn === "player" && game.visitDone && !reviewing;
+    $("nextBtn").classList.toggle("hidden", !pending);
+    $("nextBtn").textContent = game.winner ? "Finish game" : "Bot's turn";
+    $("undoBtn").classList.toggle("hidden", reviewing);
+    $("missBtn").classList.toggle("hidden", reviewing);
+    $("quitBtn").classList.toggle("hidden", reviewing);
+  }
+
+  function render() {
+    if (!game) return;
+    renderScoreboard(); renderLog(); renderStatus(); renderControls(); drawGameBoard();
+  }
+
+  function visitText(result) {
+    const hit = result.hit, name = describe(hit.label);
+    if (result.event === "bust") return name + ": bust. Your score goes back to " + (game.turn === "player" ? game.remaining.player : game.remaining.bot) + ".";
+    if (game.kind === "x01") return name + (hit.points ? " · " + hit.points : "");
+    return name;
+  }
+
+  function playerThrow(position) {
+    if (!game || reviewing || game.turn !== "player" || game.visitDone || game.winner || botBusy) return;
+    const result = E.throwDart(game, position);
+    lastMessage = visitText(result);
+    persistGame(); render();
+  }
+
+  function onBoardTap(event) {
+    const canvas = $("board"), rect = canvas.getBoundingClientRect();
+    if (!rect.width) return;
+    const { cx, cy, R } = boardMetrics(canvas);
+    const px = ((event.clientX - rect.left) / rect.width) * canvas.width, py = ((event.clientY - rect.top) / rect.height) * canvas.height;
+    playerThrow({ x: Math.round(((px - cx) / R) * 1000) / 1000, y: Math.round(((py - cy) / R) * 1000) / 1000 });
+  }
+
+  function missDart() {
+    // Somewhere just off the board, so it can be seen at the edge of the picture.
+    const angle = Math.random() * Math.PI * 2, radius = 1.04 + Math.random() * 0.07;
+    playerThrow({ x: Math.round(Math.cos(angle) * radius * 1000) / 1000, y: Math.round(Math.sin(angle) * radius * 1000) / 1000 });
+  }
+
+  function undo() {
+    if (!game || game.turn !== "player" || botBusy || !E.undoDart(game)) return;
+    lastMessage = "Dart taken back.";
+    persistGame(); render();
+  }
+
+  function passTurn() {
+    if (!game || !game.visitDone || game.turn !== "player") return;
+    E.endVisit(game);
+    lastMessage = "";
+    if (game.winner) { finishGame("won"); return; }
+    persistGame(); render(); runBot();
+  }
+
+  // The bot throws one dart at a time so the darts can be watched landing.
+  function runBot() {
+    const token = ++botToken;
+    botBusy = true;
+    render();
+    const rng = E.mulberry32((Date.now() ^ Math.floor(Math.random() * 4294967296)) >>> 0);
+    const step = () => {
+      if (token !== botToken || !game) return;
+      if (game.visitDone) {
+        setTimeout(() => {
+          if (token !== botToken || !game) return;
+          E.endVisit(game);
+          botBusy = false;
+          if (game.winner) { finishGame("lost"); return; }
+          lastMessage = "";
+          persistGame(); render();
+        }, BOT_PAUSE);
+        return;
+      }
+      const result = E.throwDart(game, E.botThrow(E.botAim(game), settings.rank, rng));
+      lastMessage = "Bot: " + visitText(result).replace("Your score", "Its score");
+      persistGame(); render();
+      setTimeout(step, BOT_DELAY);
+    };
+    setTimeout(step, BOT_DELAY);
+  }
+
+  // --- saving -----------------------------------------------------------------------------------------------------
+  function pad(n) { return String(n).padStart(2, "0"); }
+  function localStamp(ms) { const d = new Date(ms); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes()); }
+
+  function buildRecord(result) {
+    const s = E.summarize(game);
+    const record = {
+      uid: user.uid, timestamp: localStamp(startedAt), kind: game.kind, rank: settings.rank, first: game.first, result,
+      durationSec: Math.max(0, Math.min(86400, Math.round((Date.now() - startedAt) / 1000))),
+      rounds: game.round, playerAvg: s.player.avg, botAvg: s.bot.avg, playerScore: s.player.score, botScore: s.bot.score,
+      playerDarts: game.darts.player.map((d) => ({ x: d.x, y: d.y, s: d.s })),
+      botDarts: game.darts.bot.map((d) => ({ x: d.x, y: d.y, s: d.s })),
+    };
+    if (game.kind === "x01") { record.startScore = game.startScore; record.doubleOut = game.doubleOut; }
+    return record;
+  }
+
+  async function saveRecord(record) {
+    const note = $("saveNote");
+    note.className = "saved"; note.textContent = "Saving…";
+    $("retryBtn").classList.add("hidden");
+    store.set(UNSAVED_KEY, record);
+    try {
+      const ref = await db.collection("botGames").add(record);
+      store.remove(UNSAVED_KEY);
+      pendingRecord = null;
+      savedGames.push({ id: ref.id, data: record });
+      note.className = "saved ok"; note.textContent = "Saved to your practice record. It will show up in Time Left.";
+      renderHistory(); renderHeat();
+      return true;
+    } catch (error) {
+      pendingRecord = record;
+      note.className = "saved bad";
+      note.textContent = "Could not save this game: " + (error && error.message ? error.message : error) + ". It is kept on this device.";
+      $("retryBtn").classList.remove("hidden");
+      return false;
+    }
+  }
+
+  function finishGame(result) {
+    botToken++; botBusy = false;
+    store.remove(GAME_KEY);
+    reviewing = true;
+    const s = E.summarize(game), won = result === "won", abandoned = result === "abandoned";
+    $("overCard").hidden = false;
+    showRecord(true);
+    $("overTitle").textContent = abandoned ? "Game ended" : won ? "You won!" : "The " + rankName(settings.rank) + " bot won";
+    $("overSub").textContent = gameName({ kind: game.kind, startScore: game.startScore, doubleOut: game.doubleOut }) + " against the " + rankName(settings.rank) + " bot";
+    const stats = $("overStats"); stats.textContent = "";
+    const add = (value, label) => { const c = el("div", "stat"); c.append(el("b", "", String(value)), el("span", "", label)); stats.append(c); };
+    const unit = game.kind === "x01" ? "3-dart avg" : "marks/round";
+    add(s.player.avg.toFixed(1), "you, " + unit); add(s.bot.avg.toFixed(1), "bot, " + unit);
+    add(s.player.darts, "your darts");
+    if (game.kind === "x01") add(s.player.best, "your best visit");
+    add(Math.max(1, Math.round((Date.now() - startedAt) / 60000)) + " min", "time");
+    add(game.round, "rounds");
+    lastMessage = "";
+    render();
+    $("status").textContent = "Game over. Every dart is shown on the board.";
+    saveRecord(buildRecord(result));
+  }
+
+  function quitGame() {
+    if (!game || game.winner) return;
+    const thrown = game.darts.player.length;
+    const message = thrown ? "End this game? It is saved as unfinished, with the darts you have thrown." : "Leave this game? Nothing has been thrown, so nothing is saved.";
+    if (!window.confirm(message)) return;
+    if (!thrown) { store.remove(GAME_KEY); showSetup(); return; }
+    // Bring the visit that is in progress to a clean stop so the record is consistent.
+    botToken++; botBusy = false;
+    finishGame("abandoned");
+  }
+
+  async function retryUnsavedFromEarlier() {
+    const record = store.get(UNSAVED_KEY);
+    if (!record || record.uid !== user.uid) return;
+    try {
+      const ref = await db.collection("botGames").add(record);
+      store.remove(UNSAVED_KEY);
+      savedGames.push({ id: ref.id, data: record });
+      renderHistory(); renderHeat();
+    } catch (_) { /* still offline or refused: it stays on the device for the next visit */ }
+  }
+
+  // --- start up -----------------------------------------------------------------------------------------------------
+  buildSetup();
+  $("startBtn").addEventListener("click", startGame);
+  $("resumeBtn").addEventListener("click", resumeGame);
+  $("discardBtn").addEventListener("click", () => { store.remove(GAME_KEY); checkResume(); });
+  $("board").addEventListener("pointerdown", (event) => { if (event.button === 0 || event.pointerType === "touch") onBoardTap(event); });
+  $("undoBtn").addEventListener("click", undo);
+  $("missBtn").addEventListener("click", missDart);
+  $("nextBtn").addEventListener("click", passTurn);
+  $("quitBtn").addEventListener("click", quitGame);
+  $("againBtn").addEventListener("click", startGame);
+  $("changeBtn").addEventListener("click", showSetup);
+  $("retryBtn").addEventListener("click", () => { if (pendingRecord) saveRecord(pendingRecord); });
+  $("heatKind").addEventListener("change", renderHeat);
+  $("heatWho").addEventListener("change", renderHeat);
+  $("signInBtn").addEventListener("click", () => auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()));
+
+  auth.onAuthStateChanged((u) => {
+    user = u;
+    $("authScreen").classList.toggle("hidden", !!u);
+    $("app").classList.toggle("hidden", !u);
+    $("userPill").classList.toggle("hidden", !u);
+    if (!u) { botToken++; return; }
+    const name = u.displayName || u.email || "Signed in";
+    $("userName").textContent = name; $("userName").title = name;
+    checkResume();
+    drawGameBoard(); drawHeat([]);
+    loadGames().then(retryUnsavedFromEarlier);
+  });
+})();
+</script>
+</body>
+</html>

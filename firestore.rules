@@ -46,6 +46,38 @@ service cloud.firestore {
         && validPositions(data);
     }
 
+    function optionalNumber(data, key, low, high) {
+      return !data.keys().hasAny([key]) || (data[key] is number && data[key] >= low && data[key] <= high);
+    }
+
+    // A finished (or abandoned) practice game against the bot, exactly as practice.html saves it.
+    // Every dart is stored as {x, y, s}: where it landed and what it scored, at most 600 a side.
+    // A game is never edited after it is saved, so there is no update rule below.
+    function validBotGame(data) {
+      return data.keys().hasOnly(['uid', 'timestamp', 'kind', 'startScore', 'doubleOut', 'rank', 'first', 'result',
+          'durationSec', 'rounds', 'playerAvg', 'botAvg', 'playerScore', 'botScore', 'playerDarts', 'botDarts'])
+        && data.keys().hasAll(['uid', 'timestamp', 'kind', 'rank', 'result', 'playerDarts', 'botDarts'])
+        && data.uid == request.auth.uid
+        && data.timestamp is string && data.timestamp.size() >= 10 && data.timestamp.size() <= 20
+        && data.kind in ['x01', 'cricket']
+        && (data.kind == 'x01'
+            ? (data.keys().hasAll(['startScore', 'doubleOut'])
+                && data.startScore is int && data.startScore >= 201 && data.startScore <= 701
+                && data.startScore % 100 == 1 && data.doubleOut is bool)
+            : !data.keys().hasAny(['startScore', 'doubleOut']))
+        && data.rank in ['beginner', 'casual', 'club', 'league', 'pro']
+        && (!data.keys().hasAny(['first']) || data.first in ['player', 'bot'])
+        && data.result in ['won', 'lost', 'abandoned']
+        && data.playerDarts is list && data.playerDarts.size() <= 600
+        && data.botDarts is list && data.botDarts.size() <= 600
+        && optionalNumber(data, 'durationSec', 0, 86400)
+        && optionalNumber(data, 'rounds', 0, 1000)
+        && optionalNumber(data, 'playerAvg', 0, 300)
+        && optionalNumber(data, 'botAvg', 0, 300)
+        && optionalNumber(data, 'playerScore', 0, 100000)
+        && optionalNumber(data, 'botScore', 0, 100000);
+    }
+
     // Live typing sync per user.
     match /liveDrafts/{uid} {
       allow read, delete: if signedIn() && request.auth.uid == uid;
@@ -59,6 +91,14 @@ service cloud.firestore {
       allow create: if signedIn() && validNewSession(request.resource.data);
       allow update: if signedIn() && resource.data.uid == request.auth.uid
         && validSessionUpdate(request.resource.data);
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    // Practice games against the bot. Read and delete your own; a saved game is never edited.
+    match /botGames/{gameId} {
+      allow read: if signedIn() && resource.data.uid == request.auth.uid;
+      allow create: if signedIn() && validBotGame(request.resource.data);
+      allow update: if false;
       allow delete: if signedIn() && resource.data.uid == request.auth.uid;
     }
   }

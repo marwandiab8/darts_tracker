@@ -32,6 +32,8 @@ The Time Left item uses:
 - `sourceDocumentPath`: `sessions/{sessionId}`
 - `visibility`: `ownerOnly`
 
+Games played against the bot on `practice.html` are sent the same way from `botGames/{gameId}` (function `syncBotGameToTimeLeft`), as a summary with `sourceCollection: botGames`. See [bot-practice.md](bot-practice.md).
+
 ## Required Time Left Setup
 
 In Time Left To Live:
