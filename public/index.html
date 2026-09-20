@@ -366,6 +366,7 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
   .dt-card { min-width: 0; }
   .dt-pill { max-width: 100%; }
   .dt-pill select { flex: 1 1 auto; min-width: 0; max-width: 100%; }
+  #userName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   @media (max-width: 1024px) { .dt-grid-main { grid-template-columns: minmax(0, 1fr); } }
   @media (max-width: 560px) {
     .dt-header-actions { width: 100%; }
@@ -404,7 +405,7 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
               <option value="single">Singles only (all hits = 1)</option>
             </select>
           </div>
-<div class="dt-pill"><b>Marwan Diab</b> <button id="signOutBtn" style="font-size:10px; padding:4px 8px; margin-left:5px;">Logout</button></div>
+<div class="dt-pill"><b id="userName"></b> <button id="signOutBtn" style="font-size:10px; padding:4px 8px; margin-left:5px;">Logout</button></div>
         </div>
       </header>
 
@@ -1607,6 +1608,10 @@ function applyBoardHit(hit){
     if(user) {
       document.getElementById("authScreen").style.display = "none";
       document.getElementById("appInterface").style.display = "block";
+      // The name in the header is the signed-in account's own, not a fixed one.
+      const shownName = user.displayName || user.email || "Signed in";
+      document.getElementById("userName").textContent = shownName;
+      document.getElementById("userName").title = shownName; // full text if it is cut short on a narrow screen
       syncDateTime(true);
       const saved = localStorage.getItem("dt_draft"); if(saved) currentEntry = JSON.parse(saved);
       // Do not write the local draft to the cloud here. This device's copy may be older than what
