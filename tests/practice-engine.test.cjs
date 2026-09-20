@@ -554,3 +554,102 @@ test("winning dart by dart, and taking it back", () => {
   assert.equal(game.darts.player.length, 0);
   assert.throws(() => E.enterDarts(E.createGame({ kind: "cricket" }), [20]), /only for x01/);
 });
+
+// --- correcting an earlier visit --------------------------------------------------------------------
+
+// A finished game of visits: you throw the given labels, the bot throws its own.
+function playVisits(options, script) {
+  const game = E.createGame(options);
+  for (const labels of script) {
+    for (const label of labels) throwLabel(game, label);
+    E.endVisit(game);
+  }
+  return game;
+}
+
+test("visits remember what was entered", () => {
+  const game = E.createGame({ kind: "x01", startScore: 501 });
+  throwLabel(game, "T20");
+  assert.equal(game.visitInput.t, "b");
+  throwLabel(game, "S5");
+  throwLabel(game, "MISS");
+  E.endVisit(game);
+  assert.equal(game.visits[0].input.pts.length, 3);
+  assert.equal(game.visitInput, null);
+  E.enterVisit(game, 100);
+  assert.deepEqual(game.visitInput, { t: "v", score: 100, n: 3 });
+  E.undoDart(game);
+  assert.equal(game.visitInput, null, "undo forgets it too");
+  E.enterDarts(game, [20, 15]);
+  assert.deepEqual(game.visitInput, { t: "l", scores: [20, 15] });
+});
+
+test("replaying every visit gives the same game", () => {
+  const game = playVisits({ kind: "x01", startScore: 501 }, [["T20", "T19", "S1"], ["S20", "S5", "S1"], ["T20", "T20", "S5"]]);
+  const replay = E.replayVisits(E.gameOptions(game), game.visits);
+  assert.equal(replay.dropped, 0);
+  assert.deepEqual(replay.game.remaining, game.remaining);
+  assert.deepEqual(replay.game.darts, game.darts);
+  assert.equal(replay.game.turn, game.turn);
+  assert.equal(replay.game.round, game.round);
+});
+
+test("correcting your visit changes your score and leaves the bot's darts as they were", () => {
+  const game = playVisits({ kind: "x01", startScore: 501 }, [["T20", "T20", "T20"], ["S20", "S5", "S1"]]);
+  const index = E.lastPlayerVisit(game);
+  assert.equal(index, 0);
+  // The correct visit was 60 + 20 + 1, not three trebles: play the visits before it, enter it again,
+  // then put the later visits back.
+  const base = E.replayVisits(E.gameOptions(game), game.visits.slice(0, index)).game;
+  throwLabel(base, "T20"); throwLabel(base, "S20"); throwLabel(base, "S1");
+  E.endVisit(base);
+  const corrected = E.replayVisits(E.gameOptions(game), [...base.visits, ...game.visits.slice(index + 1)]);
+  assert.equal(corrected.dropped, 0);
+  assert.equal(corrected.game.remaining.player, 501 - 81);
+  assert.equal(corrected.game.remaining.bot, game.remaining.bot, "the bot's score is untouched");
+  assert.deepEqual(corrected.game.darts.bot, game.darts.bot, "and so are its darts");
+  assert.equal(corrected.game.turn, "player");
+});
+
+test("a correction that finishes the game drops the visits after it", () => {
+  const g = playVisits({ kind: "x01", startScore: 201 }, [["T20", "T20", "T20"], ["S1", "S1", "S1"], ["S1", "S1", "S1"], ["S1", "S1", "S1"]]);
+  assert.equal(g.remaining.player, 18);
+  // Visit 3 was really S1 then D10: 21 - 1 - 20 = 0.
+  const base = E.replayVisits(E.gameOptions(g), g.visits.slice(0, 2)).game;
+  throwLabel(base, "S1"); throwLabel(base, "D10");
+  assert.equal(base.winner, "player");
+  E.endVisit(base);
+  const corrected = E.replayVisits(E.gameOptions(g), [...base.visits, ...g.visits.slice(3)]);
+  assert.equal(corrected.game.winner, "player");
+  assert.equal(corrected.dropped, 1, "the bot's later visit no longer happened");
+});
+
+test("correcting works for cricket, where the two sides depend on each other", () => {
+  const game = playVisits({ kind: "cricket" }, [["S20", "MISS", "MISS"], ["S19", "MISS", "MISS"], ["S20", "S20", "S20"]]);
+  assert.equal(game.marks.player[20], 3);
+  assert.equal(game.points.player, 20, "the fourth mark on 20 scores while the bot has it open");
+  // Visit 1 was really a treble 20.
+  const base = E.replayVisits(E.gameOptions(game), []).game;
+  throwLabel(base, "T20"); throwLabel(base, "MISS"); throwLabel(base, "MISS");
+  E.endVisit(base);
+  const corrected = E.replayVisits(E.gameOptions(game), [...base.visits, ...game.visits.slice(1)]);
+  assert.equal(corrected.dropped, 0);
+  assert.equal(corrected.game.points.player, 60, "all three later 20s now score");
+  assert.equal(corrected.game.marks.bot[19], 1, "the bot's dart is where it was");
+});
+
+test("a visit typed on the keypad can be corrected too, and games with unrecorded visits cannot", () => {
+  const game = E.createGame({ kind: "x01", startScore: 501 });
+  E.enterVisit(game, 100); E.endVisit(game);
+  visit(game, ["S20", "S1", "S1"]);
+  assert.equal(E.lastPlayerVisit(game), 0);
+  const base = E.replayVisits(E.gameOptions(game), []).game;
+  E.enterDarts(base, [20, 15, 3]); E.endVisit(base);
+  const corrected = E.replayVisits(E.gameOptions(game), [...base.visits, game.visits[1]]);
+  assert.equal(corrected.game.remaining.player, 463);
+  assert.equal(corrected.game.remaining.bot, 501 - 22);
+  const old = JSON.parse(JSON.stringify(game));
+  old.visits.forEach((v) => delete v.input);
+  assert.equal(E.lastPlayerVisit(old), -1);
+  assert.match(E.replayVisits(E.gameOptions(old), old.visits).error, /cannot be replayed/);
+});

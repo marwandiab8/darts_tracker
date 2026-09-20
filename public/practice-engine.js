@@ -154,6 +154,7 @@
       turn: first,
       round: 1,
       visitDarts: [],
+      visitInput: null,
       visitDone: false,
       winner: null,
       visits: [],
@@ -177,7 +178,7 @@
     return game;
   }
 
-  const SNAPSHOT_FIELDS = ["remaining", "visitStart", "visitBust", "marks", "points", "marksThrown", "visitMarks", "visitPoints", "visitDarts", "visitDone", "winner"];
+  const SNAPSHOT_FIELDS = ["remaining", "visitStart", "visitBust", "visitInput", "marks", "points", "marksThrown", "visitMarks", "visitPoints", "visitDarts", "visitDone", "winner"];
 
   function snapshot(game) {
     const copy = {};
@@ -199,6 +200,9 @@
     game.undo.push(snapshot(game));
     game.visitDarts.push(hit.label);
     game.darts[who].push({ x: round3(position.x), y: round3(position.y), s: hit.label });
+    // What was entered, so the game can be replayed after an earlier visit is corrected.
+    if (!game.visitInput) game.visitInput = { t: "b", pts: [] };
+    game.visitInput.pts.push({ x: round3(position.x), y: round3(position.y) });
 
     let event = "ok";
     if (game.kind === "x01") {
@@ -273,6 +277,7 @@
       if (!Number.isInteger(count) || count < route.length || count > 3) throw new Error("A finish from " + left + " takes " + route.length + " to 3 darts.");
     }
     game.undo.push(snapshot(game));
+    game.visitInput = { t: "v", score, n: count };
     for (let i = 0; i < count; i += 1) game.darts[who].push({ s: "?" });
     game.visitDarts = Array(count).fill("?");
     game.visitDone = true;
@@ -328,6 +333,7 @@
     const outcome = evaluateDarts(game.remaining[who], game.doubleOut, scores);
     if (outcome.error) throw new Error(outcome.error);
     game.undo.push(snapshot(game));
+    game.visitInput = { t: "l", scores: scores.slice() };
     for (let i = 0; i < outcome.darts; i += 1) game.darts[who].push({ s: "?" });
     game.visitDarts = Array(outcome.darts).fill("?");
     game.visitDone = true;
@@ -356,7 +362,8 @@
   function endVisit(game) {
     if (!game.visitDone) throw new Error("The visit is not finished.");
     const who = game.turn;
-    const visit = { who, round: game.round, darts: game.visitDarts.slice() };
+    const visit = { who, round: game.round, darts: game.visitDarts.slice(), input: game.visitInput };
+    game.visitInput = null;
     if (game.kind === "x01") {
       visit.bust = game.visitBust;
       visit.scored = game.visitStart - game.remaining[who];
@@ -380,6 +387,44 @@
       game.visitStart = game.remaining[game.turn];
     }
     return visit;
+  }
+
+  // --- correcting an earlier visit -------------------------------------------------------------------
+
+  // Play a list of finished visits again from the start of a game, using exactly what was entered for
+  // each. Returns { game, dropped } where `dropped` counts visits left over because the game was
+  // already won before them, or { error }. Because both sides' entries are replayed as recorded, the
+  // bot's darts stay where they landed even when one of yours changes.
+  function replayVisits(options, visits) {
+    const game = createGame(options);
+    let used = 0;
+    for (const visit of visits) {
+      if (game.winner) break;
+      if (!visit.input) return { error: "This game has a visit that cannot be replayed." };
+      if (game.turn !== visit.who) return { error: "The visits do not alternate." };
+      try {
+        const input = visit.input;
+        if (input.t === "b") for (const point of input.pts) throwDart(game, point);
+        else if (input.t === "v") enterVisit(game, input.score, input.n);
+        else if (input.t === "l") enterDarts(game, input.scores);
+        else return { error: "Unknown visit." };
+      } catch (error) {
+        return { error: error.message };
+      }
+      if (!game.visitDone) return { error: "A visit is unfinished." };
+      endVisit(game);
+      used += 1;
+    }
+    return { game, dropped: visits.length - used };
+  }
+
+  const gameOptions = (game) => ({ kind: game.kind, startScore: game.startScore, doubleOut: game.doubleOut, first: game.first });
+
+  // The position of your latest visit, or -1. A game can only be corrected if every visit was recorded.
+  function lastPlayerVisit(game) {
+    if (!game.visits.every((visit) => visit.input)) return -1;
+    for (let i = game.visits.length - 1; i >= 0; i -= 1) if (game.visits[i].who === "player") return i;
+    return -1;
   }
 
   function summarize(game) {
@@ -525,6 +570,9 @@
     canScoreDart,
     undoDart,
     endVisit,
+    replayVisits,
+    gameOptions,
+    lastPlayerVisit,
     summarize,
     heatGrid,
     heatStats,

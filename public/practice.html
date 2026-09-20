@@ -237,7 +237,11 @@
             <button type="button" class="secondary" id="missBtn">Missed the board</button>
             <button type="button" id="nextBtn">Bot's turn</button>
           </div>
-          <div class="controls"><button type="button" class="danger" id="quitBtn">Quit game</button></div>
+          <div class="controls">
+            <button type="button" class="secondary hidden" id="editBtn">Edit my last visit</button>
+            <button type="button" class="secondary hidden" id="cancelEditBtn">Cancel edit</button>
+            <button type="button" class="danger" id="quitBtn">Quit game</button>
+          </div>
         </div>
         <div>
           <div class="card" id="overCard" hidden>
@@ -326,6 +330,9 @@
   let user = null;
   let settings = Object.assign({ kind: "x01", startScore: 501, doubleOut: true, rank: "club", first: "player", entry: "board", confirm: false }, store.get(SETTINGS_KEY) || {});
   let kpText = "", kpAsking = false, passTimer = null;
+  // While you re-enter an earlier visit: where it was, the visits that came after it, and a copy of
+  // the game to go back to.
+  let editing = null;
   // After your third dart the turn passes to the bot by itself. This is the pause first, long enough
   // to see the dart land and to press Undo, and longer after a bust so the message can be read.
   const PASS_DELAY = 1200, PASS_DELAY_BUST = 2400;
@@ -571,11 +578,11 @@
   const short = (label) => (label === "SB" ? "25" : label === "DB" ? "Bull" : label[0] === "S" ? label.slice(1) : label);
 
   function persistGame() {
-    if (game && !game.winner) store.set(GAME_KEY, { game, startedAt, settings });
+    if (game && !game.winner && !editing) store.set(GAME_KEY, { game, startedAt, settings });
   }
 
   function startGame() {
-    cancelAutoPass();
+    cancelAutoPass(); editing = null;
     readForm();
     game = E.createGame({ kind: settings.kind, startScore: settings.startScore, doubleOut: settings.doubleOut, first: settings.first });
     startedAt = Date.now(); reviewing = false; lastMessage = ""; pendingRecord = null;
@@ -600,7 +607,7 @@
   }
 
   function showSetup() {
-    cancelAutoPass();
+    cancelAutoPass(); editing = null;
     botToken++; botBusy = false;
     game = null; reviewing = false;
     $("gameCard").classList.add("hidden");
@@ -691,13 +698,17 @@
   function renderStatus() {
     const box = $("status"); box.textContent = "";
     if (reviewing) return;
+    if (editing) {
+      const was = editing.original, what = game.kind === "x01" ? (was.bust ? "a bust" : was.scored) : was.marks + " marks" + (was.points ? ", +" + was.points : "");
+      box.append(el("div", "hint", "Editing your visit in round " + was.round + " (it was " + what + "). Enter it again."));
+    }
     const line = el("div");
     if (game.turn === "player" && !game.visitDone && keypadActive()) {
       line.append(el("strong", "", "Your turn"), document.createTextNode(" · enter your three-dart score."));
     } else if (game.turn === "player" && !game.visitDone) {
       line.append(el("strong", "", "Your turn"), document.createTextNode(" · dart " + (game.visitDarts.length + 1) + " of 3. Tap where it landed."));
     } else if (game.turn === "player") {
-      line.append(el("strong", "", game.winner ? "You won the game!" : "Visit finished"), document.createTextNode(game.winner ? " Check the darts, then finish." : passTimer ? ". The bot is up next. Undo to change a dart." : settings.confirm && !keypadActive() ? ". Check your darts. Press Enter when they are right, or Undo to change one." : ". Pass to the bot when you are ready."));
+      line.append(el("strong", "", game.winner ? "You won the game!" : "Visit finished"), document.createTextNode(game.winner ? " Check the darts, then finish." : editing ? ". Saving your change. Undo to change a dart." : passTimer ? ". The bot is up next. Undo to change a dart." : settings.confirm && !keypadActive() ? ". Check your darts. Press Enter when they are right, or Undo to change one." : ". Pass to the bot when you are ready."));
     } else {
       line.append(el("strong", "", "Bot's turn"), document.createTextNode(" · " + (botBusy ? "throwing…" : "waiting")));
     }
@@ -717,7 +728,9 @@
     $("missBtn").disabled = !canThrow;
     const pending = game.turn === "player" && game.visitDone && !reviewing;
     $("nextBtn").classList.toggle("hidden", !pending || keypadActive());
-    $("nextBtn").textContent = game.winner ? "Finish game" : settings.confirm && !keypadActive() ? "Enter" : "Bot's turn";
+    $("nextBtn").textContent = editing ? "Save change" : game.winner ? "Finish game" : settings.confirm && !keypadActive() ? "Enter" : "Bot's turn";
+    $("editBtn").classList.toggle("hidden", !canEdit());
+    $("cancelEditBtn").classList.toggle("hidden", !editing);
     $("undoBtn").classList.toggle("hidden", reviewing || keypadActive());
     $("undoBtn").textContent = keypadActive() ? "Undo score" : "Undo dart";
     $("missBtn").classList.toggle("hidden", reviewing || keypadActive());
@@ -896,7 +909,7 @@
     } else {
       $("kpConfirmText").textContent = game.visitBust ? "Bust! Your score stays " + game.remaining.player + "." : game.winner ? "Checkout! You won the game." : "Scored.";
       add("Undo score", "secondary", undo);
-      add(game.winner ? "Finish game" : "Bot's turn", "", passTurn);
+      add(editing ? "Save change" : game.winner ? "Finish game" : "Bot's turn", "", passTurn);
     }
   }
 
@@ -985,10 +998,54 @@
     passTimer = setTimeout(() => { passTimer = null; passTurn(); }, game.visitBust ? PASS_DELAY_BUST : PASS_DELAY);
   }
 
+  // --- correcting your previous visit -------------------------------------------------------------------
+  const canEdit = () => !!game && !reviewing && !editing && !botBusy && !game.winner && game.turn === "player" && !game.visitDone && !game.visitDarts.length && E.lastPlayerVisit(game) >= 0;
+
+  function startEdit() {
+    if (!canEdit()) return;
+    const index = E.lastPlayerVisit(game);
+    // Back to the start of that visit; the visits after it are kept aside and put back afterwards.
+    const base = E.replayVisits(E.gameOptions(game), game.visits.slice(0, index));
+    if (base.error) { lastMessage = "That visit cannot be edited: " + base.error; render(); return; }
+    editing = { index, later: game.visits.slice(index + 1), backup: JSON.stringify(game), original: game.visits[index] };
+    cancelAutoPass();
+    game = base.game;
+    kpText = ""; kpAsking = false; lastMessage = "";
+    render();
+  }
+
+  function cancelEdit() {
+    if (!editing) return;
+    cancelAutoPass();
+    game = JSON.parse(editing.backup);
+    editing = null; kpText = ""; kpAsking = false;
+    lastMessage = "Edit cancelled. Your visit is as it was.";
+    render();
+  }
+
+  // The corrected visit is done: play the whole game again with it, keeping the bot's darts as thrown.
+  function finishEdit() {
+    const later = editing.later, backup = editing.backup;
+    const result = E.replayVisits(E.gameOptions(game), game.visits.concat(later));
+    editing = null; kpText = ""; kpAsking = false;
+    if (result.error) {
+      game = JSON.parse(backup);
+      lastMessage = "That change does not fit the rest of the game (" + result.error + "), so it was not made.";
+      render();
+      return;
+    }
+    game = result.game;
+    if (game.winner) { finishGame(game.winner === "player" ? "won" : "lost"); return; }
+    lastMessage = "Visit corrected.";
+    persistGame(); render();
+    if (game.turn === "bot") runBot();
+  }
+
   function passTurn() {
     cancelAutoPass();
     if (!game || !game.visitDone || game.turn !== "player") return;
     E.endVisit(game);
+    if (editing) { finishEdit(); return; }
     lastMessage = ""; kpText = ""; kpAsking = false;
     if (game.winner) { finishGame("won"); return; }
     persistGame(); render(); runBot();
@@ -1064,7 +1121,7 @@
   }
 
   function finishGame(result) {
-    cancelAutoPass();
+    cancelAutoPass(); editing = null;
     botToken++; botBusy = false;
     store.remove(GAME_KEY);
     reviewing = true;
@@ -1091,6 +1148,7 @@
 
   function quitGame() {
     if (!game || game.winner) return;
+    if (editing) cancelEdit();
     const thrown = game.darts.player.length;
     const message = thrown ? "End this game? It is saved as unfinished, with the darts you have thrown." : "Leave this game? Nothing has been thrown, so nothing is saved.";
     if (!window.confirm(message)) return;
@@ -1145,6 +1203,8 @@
   $("missBtn").addEventListener("click", missDart);
   $("nextBtn").addEventListener("click", passTurn);
   $("quitBtn").addEventListener("click", quitGame);
+  $("editBtn").addEventListener("click", startEdit);
+  $("cancelEditBtn").addEventListener("click", cancelEdit);
   $("againBtn").addEventListener("click", startGame);
   $("changeBtn").addEventListener("click", showSetup);
   $("retryBtn").addEventListener("click", () => { if (pendingRecord) saveRecord(pendingRecord); });
