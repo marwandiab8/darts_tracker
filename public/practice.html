@@ -299,7 +299,10 @@
 
   let user = null;
   let settings = Object.assign({ kind: "x01", startScore: 501, doubleOut: true, rank: "club", first: "player", entry: "board" }, store.get(SETTINGS_KEY) || {});
-  let kpText = "", kpAsking = false;
+  let kpText = "", kpAsking = false, passTimer = null;
+  // After your third dart the turn passes to the bot by itself. This is the pause first, long enough
+  // to see the dart land and to press Undo, and longer after a bust so the message can be read.
+  const PASS_DELAY = 1200, PASS_DELAY_BUST = 2400;
   let game = null, startedAt = 0, botToken = 0, botBusy = false;
   let lastMessage = "", reviewing = false, pendingRecord = null, savedGames = [];
 
@@ -545,6 +548,7 @@
   }
 
   function startGame() {
+    cancelAutoPass();
     readForm();
     game = E.createGame({ kind: settings.kind, startScore: settings.startScore, doubleOut: settings.doubleOut, first: settings.first });
     startedAt = Date.now(); reviewing = false; lastMessage = ""; pendingRecord = null;
@@ -569,6 +573,7 @@
   }
 
   function showSetup() {
+    cancelAutoPass();
     botToken++; botBusy = false;
     game = null; reviewing = false;
     $("gameCard").classList.add("hidden");
@@ -665,7 +670,7 @@
     } else if (game.turn === "player" && !game.visitDone) {
       line.append(el("strong", "", "Your turn"), document.createTextNode(" · dart " + (game.visitDarts.length + 1) + " of 3. Tap where it landed."));
     } else if (game.turn === "player") {
-      line.append(el("strong", "", game.winner ? "You won the game!" : "Visit finished"), document.createTextNode(game.winner ? " Check the darts, then finish." : ". Check the darts, then pass to the bot."));
+      line.append(el("strong", "", game.winner ? "You won the game!" : "Visit finished"), document.createTextNode(game.winner ? " Check the darts, then finish." : passTimer ? ". The bot is up next. Undo to change a dart." : ". Pass to the bot when you are ready."));
     } else {
       line.append(el("strong", "", "Bot's turn"), document.createTextNode(" · " + (botBusy ? "throwing…" : "waiting")));
     }
@@ -884,7 +889,9 @@
     if (!game || reviewing || game.turn !== "player" || game.visitDone || game.winner || botBusy) return;
     const result = E.throwDart(game, position);
     lastMessage = visitText(result);
-    persistGame(); render();
+    persistGame();
+    if (game.visitDone && !game.winner) scheduleAutoPass();
+    render();
   }
 
   function onBoardTap(event) {
@@ -902,13 +909,27 @@
   }
 
   function undo() {
-    if (!game || game.turn !== "player" || botBusy || !E.undoDart(game)) return;
+    if (!game || game.turn !== "player" || botBusy) return;
+    cancelAutoPass();
+    if (!E.undoDart(game)) return;
     lastMessage = "Taken back.";
     kpText = ""; kpAsking = false;
     persistGame(); render();
   }
 
+  function cancelAutoPass() {
+    if (passTimer) { clearTimeout(passTimer); passTimer = null; }
+  }
+
+  // A visit that ends without a win hands over on its own. A win waits for "Finish game".
+  function scheduleAutoPass() {
+    cancelAutoPass();
+    if (!game || !game.visitDone || game.winner || game.turn !== "player") return;
+    passTimer = setTimeout(() => { passTimer = null; passTurn(); }, game.visitBust ? PASS_DELAY_BUST : PASS_DELAY);
+  }
+
   function passTurn() {
+    cancelAutoPass();
     if (!game || !game.visitDone || game.turn !== "player") return;
     E.endVisit(game);
     lastMessage = ""; kpText = ""; kpAsking = false;
@@ -986,6 +1007,7 @@
   }
 
   function finishGame(result) {
+    cancelAutoPass();
     botToken++; botBusy = false;
     store.remove(GAME_KEY);
     reviewing = true;
