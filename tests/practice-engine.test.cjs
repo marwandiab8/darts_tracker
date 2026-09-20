@@ -653,3 +653,32 @@ test("a visit typed on the keypad can be corrected too, and games with unrecorde
   assert.equal(E.lastPlayerVisit(old), -1);
   assert.match(E.replayVisits(E.gameOptions(old), old.visits).error, /cannot be replayed/);
 });
+
+test("a game saved before entries were recorded can often be upgraded so it can be corrected", () => {
+  const game = playVisits({ kind: "x01", startScore: 501 }, [["T20", "T20", "S5"], ["S20", "S5", "S1"], ["T19", "S1", "S1"]]);
+  const old = JSON.parse(JSON.stringify(game));
+  old.visits.forEach((v) => delete v.input);
+  delete old.visitInput;
+  assert.equal(E.lastPlayerVisit(old), -1);
+  assert.equal(E.upgradeGame(old), true);
+  assert.equal(E.lastPlayerVisit(old), 2);
+  const replay = E.replayVisits(E.gameOptions(old), old.visits);
+  assert.equal(replay.dropped, 0);
+  assert.deepEqual(replay.game.remaining, game.remaining);
+});
+
+test("upgrading rebuilds typed totals, but not a typed bust", () => {
+  const game = E.createGame({ kind: "x01", startScore: 501 });
+  E.enterVisit(game, 100); E.endVisit(game);
+  visit(game, ["S20", "S1", "S1"]);
+  const old = JSON.parse(JSON.stringify(game));
+  old.visits.forEach((v) => delete v.input);
+  assert.equal(E.upgradeGame(old), true);
+  assert.equal(E.replayVisits(E.gameOptions(old), old.visits).game.remaining.player, 401);
+
+  const bust = E.createGame({ kind: "x01", startScore: 201 });
+  bust.remaining.player = 40; bust.visitStart = 40;
+  E.enterVisit(bust, 60); E.endVisit(bust);
+  bust.visits.forEach((v) => delete v.input);
+  assert.equal(E.upgradeGame(bust), false, "the total of a typed bust was not kept");
+});

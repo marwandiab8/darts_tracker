@@ -637,6 +637,7 @@
     const saved = store.get(GAME_KEY);
     if (!saved || !looksLikeGame(saved.game)) { checkResume(); return; }
     game = saved.game; startedAt = Number(saved.startedAt) || Date.now();
+    E.upgradeGame(game);
     if (saved.settings && RANK_IDS.includes(saved.settings.rank)) settings = Object.assign(settings, saved.settings);
     reviewing = false; lastMessage = "Game resumed."; pendingRecord = null;
     showGame(); render();
@@ -729,7 +730,7 @@
     const pending = game.turn === "player" && game.visitDone && !reviewing;
     $("nextBtn").classList.toggle("hidden", !pending || keypadActive());
     $("nextBtn").textContent = editing ? "Save change" : game.winner ? "Finish game" : settings.confirm && !keypadActive() ? "Enter" : "Bot's turn";
-    $("editBtn").classList.toggle("hidden", !canEdit());
+    $("editBtn").classList.toggle("hidden", !showEdit());
     $("cancelEditBtn").classList.toggle("hidden", !editing);
     $("undoBtn").classList.toggle("hidden", reviewing || keypadActive());
     $("undoBtn").textContent = keypadActive() ? "Undo score" : "Undo dart";
@@ -999,11 +1000,17 @@
   }
 
   // --- correcting your previous visit -------------------------------------------------------------------
-  const canEdit = () => !!game && !reviewing && !editing && !botBusy && !game.winner && game.turn === "player" && !game.visitDone && !game.visitDarts.length && E.lastPlayerVisit(game) >= 0;
+  // Shown whenever you have a visit behind you and it is your turn to start a new one.
+  const showEdit = () => !!game && !reviewing && !editing && !botBusy && !game.winner && game.turn === "player" && !game.visitDone && !game.visitDarts.length && game.visits.some((v) => v.who === "player");
 
   function startEdit() {
-    if (!canEdit()) return;
+    if (!showEdit()) return;
     const index = E.lastPlayerVisit(game);
+    if (index < 0) {
+      lastMessage = "This game was started before editing was added, and part of it was not recorded in a way that can be replayed. Games you start from now on can be edited.";
+      render();
+      return;
+    }
     // Back to the start of that visit; the visits after it are kept aside and put back afterwards.
     const base = E.replayVisits(E.gameOptions(game), game.visits.slice(0, index));
     if (base.error) { lastMessage = "That visit cannot be edited: " + base.error; render(); return; }

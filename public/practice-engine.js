@@ -418,6 +418,26 @@
     return { game, dropped: visits.length - used };
   }
 
+  // A game saved before visits recorded what was entered can still be corrected when the entries can
+  // be worked out: board visits from the darts' positions, and typed totals from the score. A typed
+  // bust cannot be (its total was not kept). Returns true when every visit can be replayed.
+  function upgradeGame(game) {
+    const taken = { player: 0, bot: 0 };
+    for (const visit of game.visits) {
+      const count = Array.isArray(visit.darts) ? visit.darts.length : 0;
+      const slice = game.darts[visit.who].slice(taken[visit.who], taken[visit.who] + count);
+      taken[visit.who] += count;
+      if (visit.input) continue;
+      if (count && slice.length === count && slice.every((d) => Number.isFinite(d.x) && Number.isFinite(d.y))) {
+        visit.input = { t: "b", pts: slice.map((d) => ({ x: d.x, y: d.y })) };
+      } else if (game.kind === "x01" && count && slice.length === count && visit.scored > 0 && !visit.bust) {
+        visit.input = { t: "v", score: visit.scored, n: count };
+      }
+    }
+    if (game.visitInput === undefined) game.visitInput = null;
+    return game.visits.every((visit) => visit.input);
+  }
+
   const gameOptions = (game) => ({ kind: game.kind, startScore: game.startScore, doubleOut: game.doubleOut, first: game.first });
 
   // The position of your latest visit, or -1. A game can only be corrected if every visit was recorded.
@@ -571,6 +591,7 @@
     undoDart,
     endVisit,
     replayVisits,
+    upgradeGame,
     gameOptions,
     lastPlayerVisit,
     summarize,
