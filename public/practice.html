@@ -11,9 +11,9 @@
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; }
-  .shell { background: radial-gradient(1200px 600px at 20% 0%, rgba(245, 158, 11, .12), transparent 55%), var(--bg); min-height: 100vh; padding: 16px; }
+  .shell { background: radial-gradient(1200px 600px at 20% 0%, rgba(245, 158, 11, .12), transparent 55%), var(--bg); min-height: 100vh; padding: 12px 16px 16px; }
   .wrap { max-width: 1000px; margin: 0 auto; }
-  header { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+  header { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
   header h1 { margin: 0; font-size: 22px; }
   .head-left { display: flex; align-items: center; gap: 12px; min-width: 0; flex-wrap: wrap; }
   a.back { color: var(--accent); text-decoration: none; font-weight: 700; font-size: 14px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 999px; }
@@ -104,8 +104,23 @@
   .kp-key.back { background: linear-gradient(#facc15, #a16207); border-color: #854d0e; font-size: 18px; }
   .kp-key.miss { background: linear-gradient(#991b1b, #450a0a); color: #fff; border-color: #450a0a; font-size: 18px; }
   .kp-key:disabled { opacity: .45; }
-  .kp-finish { margin-top: 8px; padding: 10px; border: 1px solid rgba(34,197,94,.5); border-radius: 10px; background: rgba(34,197,94,.08); text-align: center; }
-  .kp-finish .actions { justify-content: center; }
+  /* A checkout, a bust or a win replaces the number keys, so the question is where the eye already is. */
+  .kp-confirm { padding: 14px 10px; border: 1px solid rgba(34,197,94,.5); border-radius: 10px; background: rgba(34,197,94,.08); text-align: center; min-height: 200px; display: flex; flex-direction: column; justify-content: center; }
+  .kp-confirm.bust { border-color: rgba(239,68,68,.5); background: rgba(239,68,68,.08); }
+  .kp-confirm-text { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+  .kp-confirm .actions { justify-content: center; }
+  .kp-confirm button { min-width: 120px; min-height: 52px; font-size: 18px; }
+  /* Keypad mode has to fit a phone screen without scrolling, or ENTER ends up below the fold. */
+  .compact .side .big { font-size: 38px; }
+  .compact .side { padding: 8px; }
+  .compact .status { min-height: 0; padding: 6px 10px; margin-bottom: 8px; font-size: 14px; }
+  .compact .boards { margin-bottom: 8px; gap: 8px; }
+  .compact .kp-key { min-height: 48px; font-size: 22px; }
+  .compact .kp-display { min-height: 60px; }
+  .compact .kp-value { min-height: 32px; font-size: 30px; }
+  .compact .kp-value.darts { font-size: 22px; }
+  .compact.card, .compact .card { padding: 12px; }
+  .entry-toggle.below { margin: 10px 0 0; }
   @media (max-width: 800px) {
     .play-grid { grid-template-columns: 1fr; }
     .form-grid { grid-template-columns: 1fr; }
@@ -188,10 +203,6 @@
         <div class="card" style="margin-bottom:0;">
           <div id="scoreboard"></div>
           <div class="status" id="status" aria-live="polite"></div>
-          <div class="entry-toggle hidden" id="entryToggle" role="group" aria-label="How you enter your darts">
-            <button type="button" class="secondary" id="entryBoard" aria-pressed="true">Board</button>
-            <button type="button" class="secondary" id="entryKeypad" aria-pressed="false">Keypad</button>
-          </div>
           <div class="canvas-wrap" id="boardWrap"><canvas id="board" width="640" height="640" aria-label="Dartboard. Tap where your dart landed."></canvas></div>
           <div class="keypad hidden" id="keypad" aria-label="Score keypad">
             <div class="kp-top">
@@ -200,11 +211,15 @@
               <button type="button" class="kp-key miss" id="kpMiss">MISS</button>
             </div>
             <div class="kp-grid" id="kpGrid"></div>
-            <div class="kp-finish hidden" id="kpFinish">
-              <div id="kpFinishText"></div>
-              <div class="actions" id="kpFinishButtons"></div>
+            <div class="kp-confirm hidden" id="kpConfirm">
+              <div class="kp-confirm-text" id="kpConfirmText"></div>
+              <div class="actions" id="kpConfirmButtons"></div>
             </div>
             <p class="muted" style="font-size:12px;text-align:center;margin:8px 0 0;">Type a total, or use + to enter each dart (20 + 15 + 3). Scores typed here are not on the heat map.</p>
+          </div>
+          <div class="entry-toggle below hidden" id="entryToggle" role="group" aria-label="How you enter your darts">
+            <button type="button" class="secondary" id="entryBoard" aria-pressed="true">Board</button>
+            <button type="button" class="secondary" id="entryKeypad" aria-pressed="false">Keypad</button>
           </div>
           <div class="controls">
             <button type="button" class="secondary" id="undoBtn">Undo dart</button>
@@ -689,9 +704,9 @@
     $("undoBtn").disabled = !(game.turn === "player" && game.undo.length > 0 && !botBusy && !game.winner) ;
     $("missBtn").disabled = !canThrow;
     const pending = game.turn === "player" && game.visitDone && !reviewing;
-    $("nextBtn").classList.toggle("hidden", !pending);
+    $("nextBtn").classList.toggle("hidden", !pending || keypadActive());
     $("nextBtn").textContent = game.winner ? "Finish game" : "Bot's turn";
-    $("undoBtn").classList.toggle("hidden", reviewing);
+    $("undoBtn").classList.toggle("hidden", reviewing || keypadActive());
     $("undoBtn").textContent = keypadActive() ? "Undo score" : "Undo dart";
     $("missBtn").classList.toggle("hidden", reviewing || keypadActive());
     $("quitBtn").classList.toggle("hidden", reviewing);
@@ -707,7 +722,7 @@
   const kpButtons = [];
 
   function keypadActive() {
-    return !!game && !reviewing && game.kind === "x01" && settings.entry === "keypad" && game.turn === "player" && !game.winner;
+    return !!game && !reviewing && game.kind === "x01" && settings.entry === "keypad" && game.turn === "player";
   }
 
   function buildKeypad() {
@@ -848,16 +863,28 @@
     $("kpBack").disabled = false;
     $("kpMiss").disabled = locked || kpAsking;
     $("kpEnter").disabled = locked || kpAsking || !kpValid();
-    const box = $("kpFinish"); box.classList.toggle("hidden", !kpAsking);
+    renderConfirm();
+  }
+
+  // The panel that stands in for the keys while a checkout asks for its dart count, or while a bust
+  // or a win waits to be confirmed.
+  function renderConfirm() {
+    const panel = $("kpConfirm"), show = kpAsking || game.visitDone;
+    $("kpGrid").classList.toggle("hidden", show);
+    panel.classList.toggle("hidden", !show);
+    panel.classList.toggle("bust", show && !kpAsking && !!game.visitBust);
+    if (!show) return;
+    const buttons = $("kpConfirmButtons"); buttons.textContent = "";
+    const add = (label, className, onPress) => { const b = el("button", className, label); b.type = "button"; b.addEventListener("click", onPress); buttons.append(b); };
     if (kpAsking) {
       const route = E.checkoutRoute(game.remaining.player, 3, game.doubleOut);
-      $("kpFinishText").textContent = "Checkout from " + game.remaining.player + ". How many darts did it take?";
-      const buttons = $("kpFinishButtons"); buttons.textContent = "";
-      for (let n = route.length; n <= 3; n++) {
-        const b = el("button", "", n + (n === 1 ? " dart" : " darts")); b.type = "button";
-        b.addEventListener("click", () => kpFinish(n));
-        buttons.append(b);
-      }
+      $("kpConfirmText").textContent = "Checkout from " + game.remaining.player + "! How many darts did it take?";
+      for (let n = route.length; n <= 3; n++) add(n + (n === 1 ? " dart" : " darts"), "", () => kpFinish(n));
+      add("Back", "secondary", () => { kpAsking = false; renderKeypad(); });
+    } else {
+      $("kpConfirmText").textContent = game.visitBust ? "Bust! Your score stays " + game.remaining.player + "." : game.winner ? "Checkout! You won the game." : "Scored.";
+      add("Undo score", "secondary", undo);
+      add(game.winner ? "Finish game" : "Bot's turn", "", passTurn);
     }
   }
 
@@ -865,6 +892,7 @@
     const keypad = keypadActive();
     $("boardWrap").classList.toggle("hidden", keypad);
     $("keypad").classList.toggle("hidden", !keypad);
+    $("gameCard").classList.toggle("compact", keypad);
     const canSwitch = game.kind === "x01" && !reviewing && game.turn === "player" && !game.visitDone && !game.visitDarts.length && !game.winner && !botBusy;
     $("entryToggle").classList.toggle("hidden", !canSwitch);
     $("entryBoard").setAttribute("aria-pressed", String(settings.entry !== "keypad"));
@@ -1056,6 +1084,22 @@
 
   // --- start up -----------------------------------------------------------------------------------------------------
   buildSetup(); buildKeypad();
+  // The computer keyboard works on the keypad too: digits, +, Backspace and Enter.
+  document.addEventListener("keydown", (event) => {
+    if (!keypadActive() || event.ctrlKey || event.metaKey || event.altKey) return;
+    const target = event.target, onKeypad = target === document.body || (target.closest && target.closest("#keypad"));
+    if (!onKeypad) return;
+    const key = event.key;
+    if (/^[0-9]$/.test(key)) kpDigit(key);
+    else if (key === "+") kpPlus();
+    else if (key === "Backspace") kpBack();
+    else if (key === "Enter") {
+      if (target.closest && target.closest("#kpConfirm")) return;   // let the focused button do its own job
+      if (game.visitDone) passTurn(); else kpEnter();
+    }
+    else return;
+    event.preventDefault();
+  });
   $("entryBoard").addEventListener("click", () => setEntry("board"));
   $("entryKeypad").addEventListener("click", () => setEntry("keypad"));
   $("startBtn").addEventListener("click", startGame);
