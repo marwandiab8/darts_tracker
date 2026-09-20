@@ -120,7 +120,10 @@
   .compact .kp-value { min-height: 32px; font-size: 30px; }
   .compact .kp-value.darts { font-size: 22px; }
   .compact.card, .compact .card { padding: 12px; }
-  .entry-toggle.below { margin: 10px 0 0; }
+  .entry-toggle.below { margin: 10px 0 0; flex-wrap: wrap; }
+  /* The Press Enter switch is a setting, so it is outlined; the Enter button below is the solid one. */
+  .entry-toggle #confirmToggle[aria-pressed="true"] { background: transparent; color: var(--accent); border-color: var(--accent); }
+  #nextBtn { min-width: 170px; min-height: 52px; font-size: 19px; }
   @media (max-width: 800px) {
     .play-grid { grid-template-columns: 1fr; }
     .form-grid { grid-template-columns: 1fr; }
@@ -187,6 +190,13 @@
           <div class="muted" id="rankBlurb" style="font-size:13px;margin-top:4px;"></div>
         </div>
         <div>
+          <label for="handover">After my third dart</label>
+          <select id="handover">
+            <option value="auto">Pass to the bot automatically</option>
+            <option value="enter">Wait for me to press Enter</option>
+          </select>
+        </div>
+        <div>
           <label for="first">Who throws first</label>
           <select id="first">
             <option value="player">You</option>
@@ -220,6 +230,7 @@
           <div class="entry-toggle below hidden" id="entryToggle" role="group" aria-label="How you enter your darts">
             <button type="button" class="secondary" id="entryBoard" aria-pressed="true">Board</button>
             <button type="button" class="secondary" id="entryKeypad" aria-pressed="false">Keypad</button>
+            <button type="button" class="secondary" id="confirmToggle" aria-pressed="false" title="When on, your turn only passes to the bot when you press Enter">Press Enter: off</button>
           </div>
           <div class="controls">
             <button type="button" class="secondary" id="undoBtn">Undo dart</button>
@@ -313,7 +324,7 @@
   };
 
   let user = null;
-  let settings = Object.assign({ kind: "x01", startScore: 501, doubleOut: true, rank: "club", first: "player", entry: "board" }, store.get(SETTINGS_KEY) || {});
+  let settings = Object.assign({ kind: "x01", startScore: 501, doubleOut: true, rank: "club", first: "player", entry: "board", confirm: false }, store.get(SETTINGS_KEY) || {});
   let kpText = "", kpAsking = false, passTimer = null;
   // After your third dart the turn passes to the bot by itself. This is the pause first, long enough
   // to see the dart land and to press Undo, and longer after a bust so the message can be read.
@@ -516,7 +527,7 @@
     const rank = $("rank");
     E.RANKS.forEach((r) => { const o = el("option", "", r.name); o.value = r.id; rank.append(o); });
     applySettingsToForm();
-    for (const id of ["startScore", "outRule", "rank", "first", "entry"]) $(id).addEventListener("change", readForm);
+    for (const id of ["startScore", "outRule", "rank", "first", "entry", "handover"]) $(id).addEventListener("change", readForm);
     document.querySelectorAll('input[name="kind"]').forEach((r) => r.addEventListener("change", readForm));
   }
 
@@ -530,12 +541,13 @@
     $("rank").value = settings.rank;
     $("first").value = settings.first === "bot" ? "bot" : "player";
     $("entry").value = settings.entry === "keypad" ? "keypad" : "board";
+    $("handover").value = settings.confirm ? "enter" : "auto";
     syncSetupVisibility();
   }
 
   function readForm() {
     const kind = document.querySelector('input[name="kind"]:checked');
-    settings = { kind: kind ? kind.value : "x01", startScore: Number($("startScore").value), doubleOut: $("outRule").value !== "straight", rank: $("rank").value, first: $("first").value, entry: $("entry").value };
+    settings = { kind: kind ? kind.value : "x01", startScore: Number($("startScore").value), doubleOut: $("outRule").value !== "straight", rank: $("rank").value, first: $("first").value, entry: $("entry").value, confirm: $("handover").value === "enter" };
     store.set(SETTINGS_KEY, settings);
     syncSetupVisibility();
   }
@@ -685,7 +697,7 @@
     } else if (game.turn === "player" && !game.visitDone) {
       line.append(el("strong", "", "Your turn"), document.createTextNode(" · dart " + (game.visitDarts.length + 1) + " of 3. Tap where it landed."));
     } else if (game.turn === "player") {
-      line.append(el("strong", "", game.winner ? "You won the game!" : "Visit finished"), document.createTextNode(game.winner ? " Check the darts, then finish." : passTimer ? ". The bot is up next. Undo to change a dart." : ". Pass to the bot when you are ready."));
+      line.append(el("strong", "", game.winner ? "You won the game!" : "Visit finished"), document.createTextNode(game.winner ? " Check the darts, then finish." : passTimer ? ". The bot is up next. Undo to change a dart." : settings.confirm && !keypadActive() ? ". Check your darts. Press Enter when they are right, or Undo to change one." : ". Pass to the bot when you are ready."));
     } else {
       line.append(el("strong", "", "Bot's turn"), document.createTextNode(" · " + (botBusy ? "throwing…" : "waiting")));
     }
@@ -705,7 +717,7 @@
     $("missBtn").disabled = !canThrow;
     const pending = game.turn === "player" && game.visitDone && !reviewing;
     $("nextBtn").classList.toggle("hidden", !pending || keypadActive());
-    $("nextBtn").textContent = game.winner ? "Finish game" : "Bot's turn";
+    $("nextBtn").textContent = game.winner ? "Finish game" : settings.confirm && !keypadActive() ? "Enter" : "Bot's turn";
     $("undoBtn").classList.toggle("hidden", reviewing || keypadActive());
     $("undoBtn").textContent = keypadActive() ? "Undo score" : "Undo dart";
     $("missBtn").classList.toggle("hidden", reviewing || keypadActive());
@@ -894,10 +906,27 @@
     $("keypad").classList.toggle("hidden", !keypad);
     $("gameCard").classList.toggle("compact", keypad);
     const canSwitch = game.kind === "x01" && !reviewing && game.turn === "player" && !game.visitDone && !game.visitDarts.length && !game.winner && !botBusy;
-    $("entryToggle").classList.toggle("hidden", !canSwitch);
+    const showConfirm = !keypad && !reviewing && game.turn === "player" && !botBusy;
+    $("confirmToggle").classList.toggle("hidden", !showConfirm);
+    $("confirmToggle").setAttribute("aria-pressed", String(!!settings.confirm));
+    $("confirmToggle").textContent = "Press Enter: " + (settings.confirm ? "on" : "off");
+    $("entryToggle").classList.toggle("hidden", !canSwitch && !showConfirm);
+    $("entryBoard").classList.toggle("hidden", !canSwitch);
+    $("entryKeypad").classList.toggle("hidden", !canSwitch);
     $("entryBoard").setAttribute("aria-pressed", String(settings.entry !== "keypad"));
     $("entryKeypad").setAttribute("aria-pressed", String(settings.entry === "keypad"));
     if (keypad) renderKeypad();
+  }
+
+  // "Press Enter" on: a finished visit waits for Enter. Off: it passes to the bot by itself.
+  function setConfirm(on) {
+    settings.confirm = on; store.set(SETTINGS_KEY, settings);
+    $("handover").value = on ? "enter" : "auto";
+    if (game) {
+      if (on) cancelAutoPass();
+      else if (game.visitDone && !game.winner && game.turn === "player" && !keypadActive()) scheduleAutoPass();
+      render();
+    }
   }
 
   function setEntry(mode) {
@@ -918,7 +947,7 @@
     const result = E.throwDart(game, position);
     lastMessage = visitText(result);
     persistGame();
-    if (game.visitDone && !game.winner) scheduleAutoPass();
+    if (game.visitDone && !game.winner && !settings.confirm) scheduleAutoPass();
     render();
   }
 
@@ -1086,7 +1115,12 @@
   buildSetup(); buildKeypad();
   // The computer keyboard works on the keypad too: digits, +, Backspace and Enter.
   document.addEventListener("keydown", (event) => {
-    if (!keypadActive() || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    // Board entry: Enter hands over a finished visit that is waiting for it.
+    if (game && !keypadActive() && !reviewing && event.key === "Enter" && event.target === document.body && game.turn === "player" && game.visitDone) {
+      event.preventDefault(); passTurn(); return;
+    }
+    if (!keypadActive()) return;
     const target = event.target, onKeypad = target === document.body || (target.closest && target.closest("#keypad"));
     if (!onKeypad) return;
     const key = event.key;
@@ -1100,6 +1134,7 @@
     else return;
     event.preventDefault();
   });
+  $("confirmToggle").addEventListener("click", () => setConfirm(!settings.confirm));
   $("entryBoard").addEventListener("click", () => setEntry("board"));
   $("entryKeypad").addEventListener("click", () => setEntry("keypad"));
   $("startBtn").addEventListener("click", startGame);
