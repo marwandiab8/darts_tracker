@@ -85,6 +85,8 @@ npm --prefix functions ci
 npm test   # function tests, then Firestore rules tests (Java needed for the emulator)
 ```
 
+The same checks run on GitHub for every push to `main` and every pull request (`.github/workflows/ci.yml`): the function and app-script syntax checks and the function tests in one job, and the Firestore rules tests in the emulator in another. CI only tests; it does not deploy.
+
 ## Deploy
 
 Deploy the rules, the functions and the app together, and check the app afterwards:

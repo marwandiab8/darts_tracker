@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch or PR makes the older run pointless.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Keep in step with the version used for local development.
+  FIREBASE_TOOLS_VERSION: 15.29.0
+  # A demo- project ID makes the emulator run without any Google credentials and
+  # guarantees it cannot touch a real project. `npm run test:rules` already uses it.
+  EMULATOR_PROJECT: demo-darts
+
+jobs:
+  functions:
+    name: Functions and app script
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            functions/package-lock.json
+
+      - name: Install function dependencies
+        run: npm --prefix functions ci
+
+      # Parses the function and every inline script in public/index.html without running them.
+      - name: Syntax check
+        run: |
+          npm --prefix functions run check
+          node scripts/check-app.cjs
+
+      - name: Function tests
+        run: npm run test:functions
+
+  rules:
+    name: Firestore rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            functions/package-lock.json
+
+      # The Firestore emulator needs a recent JDK.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm install --global firebase-tools@${{ env.FIREBASE_TOOLS_VERSION }}
+
+      - name: Cache emulator downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firebase-emulators-${{ runner.os }}-${{ env.FIREBASE_TOOLS_VERSION }}
+
+      - name: Firestore rules tests
+        run: npm run test:rules

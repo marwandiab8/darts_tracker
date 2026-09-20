@@ -2,7 +2,9 @@
   "name": "darts-tracker",
   "private": true,
   "scripts": {
-    "test": "npm run test:functions && npm run test:rules",
+    "test": "npm run check && npm run test:functions && npm run test:rules",
+    "check": "npm run check:app && npm --prefix functions run check",
+    "check:app": "node scripts/check-app.cjs",
     "test:functions": "npm --prefix functions test",
     "test:rules": "firebase emulators:exec --only firestore --project demo-darts \"node --test tests/firestore.rules.test.cjs\""
   },
