@@ -81,6 +81,31 @@
   .won { color: var(--good); font-weight: 800; } .lost { color: #fca5a5; font-weight: 800; } .abandoned { color: var(--muted); }
   .empty { padding: 18px; text-align: center; color: var(--muted); }
   #authScreen { text-align: center; padding: 60px 0; }
+  .entry-toggle { display: flex; gap: 6px; justify-content: center; margin-bottom: 12px; }
+  .entry-toggle button { min-height: 38px; padding: 6px 16px; }
+  .entry-toggle button[aria-pressed="true"] { background: var(--accent); color: #111; border-color: var(--accent); }
+  /* The score keypad: type a three-dart total or pick a common one. */
+  .keypad { max-width: 520px; margin: 0 auto; user-select: none; -webkit-user-select: none; }
+  .kp-top { display: grid; grid-template-columns: 80px minmax(0, 1fr) 80px; gap: 6px; margin-bottom: 6px; }
+  .kp-display { background: #000; border: 1px solid var(--border); border-radius: 10px; text-align: center; padding: 6px 8px; min-height: 68px; min-width: 0; }
+  .kp-value { font-size: 34px; font-weight: 900; color: #facc15; line-height: 1.1; min-height: 38px; overflow-wrap: anywhere; }
+  .kp-value.darts { font-size: 22px; padding-top: 7px; white-space: nowrap; overflow-wrap: normal; }
+  .kp-hint { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+  .kp-hint.bad { color: #fca5a5; }
+  .kp-hint.good { color: #86efac; }
+  .kp-grid { display: grid; grid-template-columns: minmax(0, .8fr) repeat(3, minmax(0, 1fr)) minmax(0, .8fr); gap: 5px; }
+  .kp-key { min-height: 58px; padding: 0; font-size: 26px; font-weight: 800; border-radius: 8px; border: 1px solid #6b7280; background: linear-gradient(#f3f4f6, #9ca3af); color: #111; }
+  .kp-key.side { background: transparent; border: 0; color: #94a3b8; font-size: 24px; font-weight: 700; }
+  .kp-key.side:disabled { color: #475569; }
+  .kp-key.green { background: linear-gradient(#15803d, #14532d); color: #fff; border-color: #14532d; }
+  .kp-key.red { background: linear-gradient(#991b1b, #450a0a); color: #fff; border-color: #450a0a; }
+  .kp-key.plus { background: linear-gradient(#93c5fd, #3b82f6); border-color: #1d4ed8; color: #0b1220; font-size: 30px; }
+  .kp-key.enter { grid-column: span 2; background: linear-gradient(#fbbf24, #d97706); border-color: #b45309; font-size: 22px; }
+  .kp-key.back { background: linear-gradient(#facc15, #a16207); border-color: #854d0e; font-size: 18px; }
+  .kp-key.miss { background: linear-gradient(#991b1b, #450a0a); color: #fff; border-color: #450a0a; font-size: 18px; }
+  .kp-key:disabled { opacity: .45; }
+  .kp-finish { margin-top: 8px; padding: 10px; border: 1px solid rgba(34,197,94,.5); border-radius: 10px; background: rgba(34,197,94,.08); text-align: center; }
+  .kp-finish .actions { justify-content: center; }
   @media (max-width: 800px) {
     .play-grid { grid-template-columns: 1fr; }
     .form-grid { grid-template-columns: 1fr; }
@@ -134,6 +159,13 @@
             <option value="straight">Straight out (any dart)</option>
           </select>
         </div>
+        <div id="entryBox">
+          <label for="entry">Entering your darts</label>
+          <select id="entry">
+            <option value="board">Tap the board</option>
+            <option value="keypad">Score keypad</option>
+          </select>
+        </div>
         <div>
           <label for="rank">Bot level</label>
           <select id="rank"></select>
@@ -156,7 +188,24 @@
         <div class="card" style="margin-bottom:0;">
           <div id="scoreboard"></div>
           <div class="status" id="status" aria-live="polite"></div>
-          <div class="canvas-wrap"><canvas id="board" width="640" height="640" aria-label="Dartboard. Tap where your dart landed."></canvas></div>
+          <div class="entry-toggle hidden" id="entryToggle" role="group" aria-label="How you enter your darts">
+            <button type="button" class="secondary" id="entryBoard" aria-pressed="true">Board</button>
+            <button type="button" class="secondary" id="entryKeypad" aria-pressed="false">Keypad</button>
+          </div>
+          <div class="canvas-wrap" id="boardWrap"><canvas id="board" width="640" height="640" aria-label="Dartboard. Tap where your dart landed."></canvas></div>
+          <div class="keypad hidden" id="keypad" aria-label="Score keypad">
+            <div class="kp-top">
+              <button type="button" class="kp-key back" id="kpBack">BACK</button>
+              <div class="kp-display" aria-live="polite"><div class="kp-value" id="kpValue"></div><div class="kp-hint" id="kpHint"></div></div>
+              <button type="button" class="kp-key miss" id="kpMiss">MISS</button>
+            </div>
+            <div class="kp-grid" id="kpGrid"></div>
+            <div class="kp-finish hidden" id="kpFinish">
+              <div id="kpFinishText"></div>
+              <div class="actions" id="kpFinishButtons"></div>
+            </div>
+            <p class="muted" style="font-size:12px;text-align:center;margin:8px 0 0;">Type a total, or use + to enter each dart (20 + 15 + 3). Scores typed here are not on the heat map.</p>
+          </div>
           <div class="controls">
             <button type="button" class="secondary" id="undoBtn">Undo dart</button>
             <button type="button" class="secondary" id="missBtn">Missed the board</button>
@@ -169,6 +218,7 @@
             <div class="over">
               <h2 id="overTitle"></h2>
               <div class="muted" id="overSub"></div>
+              <div class="muted" id="overNote" style="font-size:13px;"></div>
               <div class="stats" id="overStats"></div>
               <div class="saved" id="saveNote" role="status"></div>
               <div class="actions">
@@ -248,7 +298,8 @@
   };
 
   let user = null;
-  let settings = Object.assign({ kind: "x01", startScore: 501, doubleOut: true, rank: "club", first: "player" }, store.get(SETTINGS_KEY) || {});
+  let settings = Object.assign({ kind: "x01", startScore: 501, doubleOut: true, rank: "club", first: "player", entry: "board" }, store.get(SETTINGS_KEY) || {});
+  let kpText = "", kpAsking = false;
   let game = null, startedAt = 0, botToken = 0, botBusy = false;
   let lastMessage = "", reviewing = false, pendingRecord = null, savedGames = [];
 
@@ -310,6 +361,8 @@
   }
 
   const YOU = "#f59e0b", BOT = "#38bdf8";
+  // Darts entered as a total on the keypad have no landing point.
+  const hasPosition = (dart) => Number.isFinite(dart.x) && Number.isFinite(dart.y);
 
   function drawGameBoard() {
     const canvas = $("board");
@@ -317,13 +370,13 @@
     if (!game) return;
     const ctx = canvas.getContext("2d");
     if (reviewing) {
-      game.darts.bot.forEach((p) => drawDot(ctx, canvas, p, BOT, false, true));
-      game.darts.player.forEach((p) => drawDot(ctx, canvas, p, YOU, false, true));
+      game.darts.bot.filter(hasPosition).forEach((p) => drawDot(ctx, canvas, p, BOT, false, true));
+      game.darts.player.filter(hasPosition).forEach((p) => drawDot(ctx, canvas, p, YOU, false, true));
       return;
     }
     // Only the darts of the visit in progress, so the board is clear for each new turn.
     const mine = game.darts[game.turn], count = game.visitDarts.length;
-    mine.slice(mine.length - count).forEach((p, i, list) => drawDot(ctx, canvas, p, game.turn === "player" ? YOU : BOT, i === list.length - 1, false));
+    mine.slice(mine.length - count).filter(hasPosition).forEach((p, i, list) => drawDot(ctx, canvas, p, game.turn === "player" ? YOU : BOT, i === list.length - 1, false));
   }
 
   // --- the heat map ----------------------------------------------------------------------------------
@@ -445,7 +498,7 @@
     const rank = $("rank");
     E.RANKS.forEach((r) => { const o = el("option", "", r.name); o.value = r.id; rank.append(o); });
     applySettingsToForm();
-    for (const id of ["startScore", "outRule", "rank", "first"]) $(id).addEventListener("change", readForm);
+    for (const id of ["startScore", "outRule", "rank", "first", "entry"]) $(id).addEventListener("change", readForm);
     document.querySelectorAll('input[name="kind"]').forEach((r) => r.addEventListener("change", readForm));
   }
 
@@ -458,12 +511,13 @@
     $("outRule").value = settings.doubleOut === false ? "straight" : "double";
     $("rank").value = settings.rank;
     $("first").value = settings.first === "bot" ? "bot" : "player";
+    $("entry").value = settings.entry === "keypad" ? "keypad" : "board";
     syncSetupVisibility();
   }
 
   function readForm() {
     const kind = document.querySelector('input[name="kind"]:checked');
-    settings = { kind: kind ? kind.value : "x01", startScore: Number($("startScore").value), doubleOut: $("outRule").value !== "straight", rank: $("rank").value, first: $("first").value };
+    settings = { kind: kind ? kind.value : "x01", startScore: Number($("startScore").value), doubleOut: $("outRule").value !== "straight", rank: $("rank").value, first: $("first").value, entry: $("entry").value };
     store.set(SETTINGS_KEY, settings);
     syncSetupVisibility();
   }
@@ -472,6 +526,7 @@
     const x01 = settings.kind === "x01";
     $("startScoreBox").classList.toggle("hidden", !x01);
     $("outBox").classList.toggle("hidden", !x01);
+    $("entryBox").classList.toggle("hidden", !x01);
     $("rankBlurb").textContent = E.rankById(settings.rank).blurb;
   }
 
@@ -509,6 +564,7 @@
     $("setupCard").classList.add("hidden");
     $("gameCard").classList.remove("hidden");
     $("overCard").hidden = true;
+    kpText = ""; kpAsking = false;
     showRecord(false);
   }
 
@@ -604,7 +660,9 @@
     const box = $("status"); box.textContent = "";
     if (reviewing) return;
     const line = el("div");
-    if (game.turn === "player" && !game.visitDone) {
+    if (game.turn === "player" && !game.visitDone && keypadActive()) {
+      line.append(el("strong", "", "Your turn"), document.createTextNode(" · enter your three-dart score."));
+    } else if (game.turn === "player" && !game.visitDone) {
       line.append(el("strong", "", "Your turn"), document.createTextNode(" · dart " + (game.visitDarts.length + 1) + " of 3. Tap where it landed."));
     } else if (game.turn === "player") {
       line.append(el("strong", "", game.winner ? "You won the game!" : "Visit finished"), document.createTextNode(game.winner ? " Check the darts, then finish." : ". Check the darts, then pass to the bot."));
@@ -629,13 +687,190 @@
     $("nextBtn").classList.toggle("hidden", !pending);
     $("nextBtn").textContent = game.winner ? "Finish game" : "Bot's turn";
     $("undoBtn").classList.toggle("hidden", reviewing);
-    $("missBtn").classList.toggle("hidden", reviewing);
+    $("undoBtn").textContent = keypadActive() ? "Undo score" : "Undo dart";
+    $("missBtn").classList.toggle("hidden", reviewing || keypadActive());
     $("quitBtn").classList.toggle("hidden", reviewing);
   }
 
   function render() {
     if (!game) return;
-    renderScoreboard(); renderLog(); renderStatus(); renderControls(); drawGameBoard();
+    renderScoreboard(); renderLog(); renderStatus(); renderControls(); renderEntry(); drawGameBoard();
+  }
+
+  // --- the score keypad -------------------------------------------------------------------------------
+  const QUICK_LEFT = [26, 40, 41, 43], QUICK_RIGHT = [45, 60, 81, 85];
+  const kpButtons = [];
+
+  function keypadActive() {
+    return !!game && !reviewing && game.kind === "x01" && settings.entry === "keypad" && game.turn === "player" && !game.winner;
+  }
+
+  function buildKeypad() {
+    const grid = $("kpGrid");
+    const key = (label, className, onPress, aria) => {
+      const b = el("button", "kp-key" + (className ? " " + className : ""), String(label)); b.type = "button";
+      if (aria) b.setAttribute("aria-label", aria);
+      b.addEventListener("click", onPress); kpButtons.push(b); return b;
+    };
+    const preset = (n, className) => key(n, className, () => { if (!kpLocked()) { kpText = String(n); kpAsking = false; renderKeypad(); } }, "Score " + n);
+    const digit = (n) => key(n, "", () => kpDigit(String(n)));
+    const cells = [
+      [preset(26, "side"), digit(1), digit(2), digit(3), preset(45, "side")],
+      [preset(40, "side"), digit(4), digit(5), digit(6), preset(60, "side")],
+      [preset(41, "side"), digit(7), digit(8), digit(9), preset(81, "side")],
+      [preset(43, "side"), preset(100, "green"), preset(180, "red"), preset(140, "green"), preset(85, "side")],
+    ];
+    cells.forEach((row) => row.forEach((b) => grid.append(b)));
+    grid.append(el("span"));
+    grid.append(digit(0));
+    const enter = key("ENTER", "enter", kpEnter, "Enter score"); enter.id = "kpEnter"; grid.append(enter);
+    grid.append(key("+", "plus", kpPlus, "Plus, to enter the next dart"));
+    $("kpBack").addEventListener("click", kpBack);
+    $("kpMiss").addEventListener("click", kpMiss);
+  }
+
+  // While a bust or a win waits to be confirmed, the keys are locked; Undo and the button below work.
+  const kpLocked = () => !game || game.visitDone;
+
+  // What is typed is either one total ("140") or, once + is pressed, one score per dart ("20+15+3").
+  const kpTerms = () => kpText.split("+");
+  const kpDartMode = () => kpText.includes("+");
+  function kpScores() {
+    const terms = kpTerms();
+    return terms.every((t) => t !== "") ? terms.map(Number) : null;
+  }
+
+  function kpDigit(d) {
+    if (kpLocked()) return;
+    kpAsking = false;
+    const terms = kpTerms(), limit = terms.length > 1 ? 2 : 3;
+    const next = (terms[terms.length - 1] + d).replace(/^0+(?=\d)/, "");
+    if (next.length > limit) return;
+    terms[terms.length - 1] = next;
+    kpText = terms.join("+");
+    renderKeypad();
+  }
+
+  function kpPlus() {
+    if (kpLocked() || kpAsking) return;
+    const terms = kpTerms();
+    if (!kpText || terms[terms.length - 1] === "" || terms.length >= 3) return;
+    kpText += "+";
+    renderKeypad();
+  }
+
+  function kpMiss() {
+    if (kpLocked() || kpAsking) return;
+    const terms = kpTerms();
+    if (kpDartMode() && terms[terms.length - 1] === "") kpText += "0"; else kpText = "0";
+    renderKeypad();
+  }
+
+  function kpBack() {
+    if (!game) return;
+    if (kpAsking) { kpAsking = false; renderKeypad(); return; }
+    if (kpText) { kpText = kpText.slice(0, -1); renderKeypad(); return; }
+    if (game.visitDone && game.undo.length) undo();
+  }
+
+  function kpEnter() {
+    if (kpLocked() || !kpText) return;
+    if (kpDartMode()) {
+      const scores = kpScores();
+      if (!scores || E.evaluateDarts(game.remaining.player, game.doubleOut, scores).error) { renderKeypad(); return; }
+      kpSubmit(E.enterDarts(game, scores));
+      return;
+    }
+    const score = Number(kpText);
+    if (!E.canScoreVisit(score)) { renderKeypad(); return; }
+    const left = game.remaining.player, route = score === left ? E.checkoutRoute(left, 3, game.doubleOut) : null;
+    if (route) { kpAsking = true; renderKeypad(); return; }   // a finish: ask how many darts it took
+    kpSubmit(E.enterVisit(game, score, 3));
+  }
+
+  function kpFinish(darts) {
+    kpSubmit(E.enterVisit(game, game.remaining.player, darts));
+  }
+
+  function kpSubmit(result) {
+    kpText = ""; kpAsking = false;
+    lastMessage = result.event === "bust" ? "Bust! Your score stays " + game.remaining.player + "." : result.event === "win" ? "Checkout!" : "Scored " + result.score + ".";
+    persistGame();
+    // A normal visit goes straight to the bot. A bust or a win waits, so it can be undone.
+    if (result.event === "ok") passTurn(); else render();
+  }
+
+  function kpValid() {
+    if (!kpText) return false;
+    if (kpDartMode()) { const scores = kpScores(); return !!scores && !E.evaluateDarts(game.remaining.player, game.doubleOut, scores).error; }
+    return E.canScoreVisit(Number(kpText));
+  }
+
+  function keypadHint() {
+    if (!game || game.visitDone) return { text: lastMessage, cls: game && game.visitBust ? "bad" : "good" };
+    const left = game.remaining.player;
+    if (!kpText) {
+      const route = left <= 170 ? E.checkoutRoute(left, 3, game.doubleOut) : null;
+      return { text: route ? left + " left. Checkout: " + route.map((d) => short(d.label)).join(" · ") : left + " left", cls: "" };
+    }
+    if (kpDartMode()) {
+      const terms = kpTerms(), typed = terms.filter((t) => t !== "").map(Number);
+      const partial = terms[terms.length - 1] === "";
+      const so = typed.reduce((sum, v) => sum + v, 0);
+      if (partial) return { text: "So far " + so + ". Type the next dart.", cls: "" };
+      const outcome = E.evaluateDarts(left, game.doubleOut, typed);
+      if (outcome.error) return { text: outcome.error, cls: "bad" };
+      if (outcome.event === "bust") return { text: "= " + outcome.total + ". Bust, your score stays " + left, cls: "bad" };
+      if (outcome.event === "win") return { text: "= " + outcome.total + ". Checkout in " + outcome.darts + (outcome.darts === 1 ? " dart!" : " darts!"), cls: "good" };
+      return { text: "= " + outcome.total + ". Leaves " + outcome.left + (typed.length < 3 ? " (darts not entered count as misses)" : ""), cls: "" };
+    }
+    const score = Number(kpText);
+    if (!E.canScoreVisit(score)) return { text: "Three darts cannot score " + score, cls: "bad" };
+    const after = left - score;
+    if (after < 0 || (game.doubleOut && after === 1)) return { text: "Bust. Your score stays " + left, cls: "bad" };
+    if (after === 0) return E.checkoutRoute(left, 3, game.doubleOut) ? { text: "Checkout!", cls: "good" } : { text: "No way to finish on " + left + ". That is a bust", cls: "bad" };
+    return { text: "Leaves " + after, cls: "" };
+  }
+
+  function renderKeypad() {
+    if (!game) return;
+    const locked = kpLocked();
+    $("kpValue").textContent = kpText;
+    $("kpValue").classList.toggle("darts", kpDartMode());
+    const hint = keypadHint();
+    $("kpHint").textContent = hint.text; $("kpHint").className = "kp-hint" + (hint.cls ? " " + hint.cls : "");
+    kpButtons.forEach((b) => { b.disabled = locked || kpAsking; });
+    $("kpBack").disabled = false;
+    $("kpMiss").disabled = locked || kpAsking;
+    $("kpEnter").disabled = locked || kpAsking || !kpValid();
+    const box = $("kpFinish"); box.classList.toggle("hidden", !kpAsking);
+    if (kpAsking) {
+      const route = E.checkoutRoute(game.remaining.player, 3, game.doubleOut);
+      $("kpFinishText").textContent = "Checkout from " + game.remaining.player + ". How many darts did it take?";
+      const buttons = $("kpFinishButtons"); buttons.textContent = "";
+      for (let n = route.length; n <= 3; n++) {
+        const b = el("button", "", n + (n === 1 ? " dart" : " darts")); b.type = "button";
+        b.addEventListener("click", () => kpFinish(n));
+        buttons.append(b);
+      }
+    }
+  }
+
+  function renderEntry() {
+    const keypad = keypadActive();
+    $("boardWrap").classList.toggle("hidden", keypad);
+    $("keypad").classList.toggle("hidden", !keypad);
+    const canSwitch = game.kind === "x01" && !reviewing && game.turn === "player" && !game.visitDone && !game.visitDarts.length && !game.winner && !botBusy;
+    $("entryToggle").classList.toggle("hidden", !canSwitch);
+    $("entryBoard").setAttribute("aria-pressed", String(settings.entry !== "keypad"));
+    $("entryKeypad").setAttribute("aria-pressed", String(settings.entry === "keypad"));
+    if (keypad) renderKeypad();
+  }
+
+  function setEntry(mode) {
+    settings.entry = mode; store.set(SETTINGS_KEY, settings);
+    kpText = ""; kpAsking = false;
+    if (game) render();
   }
 
   function visitText(result) {
@@ -668,14 +903,15 @@
 
   function undo() {
     if (!game || game.turn !== "player" || botBusy || !E.undoDart(game)) return;
-    lastMessage = "Dart taken back.";
+    lastMessage = "Taken back.";
+    kpText = ""; kpAsking = false;
     persistGame(); render();
   }
 
   function passTurn() {
     if (!game || !game.visitDone || game.turn !== "player") return;
     E.endVisit(game);
-    lastMessage = "";
+    lastMessage = ""; kpText = ""; kpAsking = false;
     if (game.winner) { finishGame("won"); return; }
     persistGame(); render(); runBot();
   }
@@ -711,14 +947,17 @@
   function pad(n) { return String(n).padStart(2, "0"); }
   function localStamp(ms) { const d = new Date(ms); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes()); }
 
+  // A dart entered as a total has no landing point, so it is saved as { s: "?" } and only counts.
+  const dartRecord = (d) => (hasPosition(d) ? { x: d.x, y: d.y, s: d.s } : { s: "?" });
+
   function buildRecord(result) {
     const s = E.summarize(game);
     const record = {
       uid: user.uid, timestamp: localStamp(startedAt), kind: game.kind, rank: settings.rank, first: game.first, result,
       durationSec: Math.max(0, Math.min(86400, Math.round((Date.now() - startedAt) / 1000))),
       rounds: game.round, playerAvg: s.player.avg, botAvg: s.bot.avg, playerScore: s.player.score, botScore: s.bot.score,
-      playerDarts: game.darts.player.map((d) => ({ x: d.x, y: d.y, s: d.s })),
-      botDarts: game.darts.bot.map((d) => ({ x: d.x, y: d.y, s: d.s })),
+      playerDarts: game.darts.player.map(dartRecord),
+      botDarts: game.darts.bot.map(dartRecord),
     };
     if (game.kind === "x01") { record.startScore = game.startScore; record.doubleOut = game.doubleOut; }
     return record;
@@ -764,6 +1003,8 @@
     add(Math.max(1, Math.round((Date.now() - startedAt) / 60000)) + " min", "time");
     add(game.round, "rounds");
     lastMessage = "";
+    const typed = game.darts.player.filter((d) => !hasPosition(d)).length;
+    $("overNote").textContent = typed ? typed + " of your darts were entered as scores, so they are not on the board or the heat map." : "";
     render();
     $("status").textContent = "Game over. Every dart is shown on the board.";
     saveRecord(buildRecord(result));
@@ -792,7 +1033,9 @@
   }
 
   // --- start up -----------------------------------------------------------------------------------------------------
-  buildSetup();
+  buildSetup(); buildKeypad();
+  $("entryBoard").addEventListener("click", () => setEntry("board"));
+  $("entryKeypad").addEventListener("click", () => setEntry("keypad"));
   $("startBtn").addEventListener("click", startGame);
   $("resumeBtn").addEventListener("click", resumeGame);
   $("discardBtn").addEventListener("click", () => { store.remove(GAME_KEY); checkResume(); });

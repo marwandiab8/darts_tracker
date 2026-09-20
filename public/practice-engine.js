@@ -182,6 +182,7 @@
   function snapshot(game) {
     const copy = {};
     for (const field of SNAPSHOT_FIELDS) if (game[field] !== undefined) copy[field] = JSON.parse(JSON.stringify(game[field]));
+    copy._dartCount = game.darts[game.turn].length;
     return JSON.stringify(copy);
   }
 
@@ -239,6 +240,106 @@
     return { hit, event, visitDone: game.visitDone, winner: game.winner };
   }
 
+  // Every total three darts can make, 0 (three misses) to 180. Not all of them can: 179, 178, 176,
+  // 175, 173, 172, 169, 166 and 163 cannot.
+  const VISIT_SCORES = (() => {
+    const values = [0, ...DART_OPTIONS.map((dart) => dart.points)];
+    const totals = new Set();
+    for (const a of values) for (const b of values) for (const c of values) totals.add(a + b + c);
+    return totals;
+  })();
+
+  function canScoreVisit(score) {
+    return Number.isInteger(score) && VISIT_SCORES.has(score);
+  }
+
+  // Scoring a whole visit from its total, for when the darts are not tapped on the board. Only for
+  // x01. A total above what is left, or one that leaves 1 on a double out, is a bust; a total equal
+  // to what is left finishes if a legal finish exists, and needs to say how many darts it took.
+  // The darts have no positions, so they are stored as { s: "?" } and keep the counts right.
+  function enterVisit(game, score, dartsUsed) {
+    if (game.kind !== "x01") throw new Error("Score entry is only for x01.");
+    if (game.winner) throw new Error("The game is over.");
+    if (game.visitDone || game.visitDarts.length) throw new Error("This visit has already started.");
+    if (!canScoreVisit(score)) throw new Error("Three darts cannot score " + score + ".");
+    const who = game.turn;
+    const left = game.remaining[who];
+    const after = left - score;
+    const route = after === 0 ? checkoutRoute(left, 3, game.doubleOut) : null;
+    const bust = after < 0 || (game.doubleOut && after === 1) || (after === 0 && !route);
+    let count = 3;
+    if (after === 0 && route) {
+      count = Number(dartsUsed);
+      if (!Number.isInteger(count) || count < route.length || count > 3) throw new Error("A finish from " + left + " takes " + route.length + " to 3 darts.");
+    }
+    game.undo.push(snapshot(game));
+    for (let i = 0; i < count; i += 1) game.darts[who].push({ s: "?" });
+    game.visitDarts = Array(count).fill("?");
+    game.visitDone = true;
+    let event = "ok";
+    if (bust) {
+      game.visitBust = true;
+      event = "bust";
+    } else {
+      game.remaining[who] = after;
+      if (after === 0) {
+        game.winner = who;
+        event = "win";
+      }
+    }
+    return { event, score, darts: count, visitDone: true, winner: game.winner };
+  }
+
+  // What one dart can score: a miss, 1 to 20, doubles, trebles, 25 and 50.
+  const DART_SCORES = new Set([0, ...DART_OPTIONS.map((dart) => dart.points)]);
+  const canScoreDart = (value) => Number.isInteger(value) && DART_SCORES.has(value);
+  // A dart that scored this much could have been a double (so it can finish a double-out game).
+  const couldBeDouble = (value) => (value >= 2 && value <= 40 && value % 2 === 0) || value === 50;
+
+  // What entering these darts, one score each, would do from `remaining`. Nothing is changed.
+  // Returns { event: "ok" | "bust" | "win", total, left, darts } or { error }. Darts the visit did
+  // not need (an ordinary visit with fewer than three entered) count as misses, so `darts` is 3;
+  // a finish or a bust stops on the dart that ended it.
+  function evaluateDarts(remaining, doubleOut, scores) {
+    if (!Array.isArray(scores) || scores.length < 1 || scores.length > 3) return { error: "Enter one to three darts." };
+    for (const value of scores) if (!canScoreDart(value)) return { error: value + " is not a score one dart can make." };
+    const total = scores.reduce((sum, value) => sum + value, 0);
+    let left = remaining;
+    for (let i = 0; i < scores.length; i += 1) {
+      const after = left - scores[i];
+      const bust = after < 0 || (doubleOut && after === 1) || (after === 0 && doubleOut && !couldBeDouble(scores[i]));
+      if (bust) return { event: "bust", total, left: remaining, darts: scores.length };
+      if (after === 0) {
+        if (i < scores.length - 1) return { error: "The game is over after dart " + (i + 1) + "." };
+        return { event: "win", total, left: 0, darts: scores.length };
+      }
+      left = after;
+    }
+    return { event: "ok", total, left, darts: 3 };
+  }
+
+  // Enter a visit dart by dart (20 + 15 + 3), for when the darts are not tapped on the board. Like
+  // enterVisit, the darts have no positions and are stored as { s: "?" }.
+  function enterDarts(game, scores) {
+    if (game.kind !== "x01") throw new Error("Score entry is only for x01.");
+    if (game.winner) throw new Error("The game is over.");
+    if (game.visitDone || game.visitDarts.length) throw new Error("This visit has already started.");
+    const who = game.turn;
+    const outcome = evaluateDarts(game.remaining[who], game.doubleOut, scores);
+    if (outcome.error) throw new Error(outcome.error);
+    game.undo.push(snapshot(game));
+    for (let i = 0; i < outcome.darts; i += 1) game.darts[who].push({ s: "?" });
+    game.visitDarts = Array(outcome.darts).fill("?");
+    game.visitDone = true;
+    if (outcome.event === "bust") {
+      game.visitBust = true;
+    } else {
+      game.remaining[who] = outcome.left;
+      if (outcome.event === "win") game.winner = who;
+    }
+    return { event: outcome.event, score: outcome.event === "bust" ? 0 : outcome.total, darts: outcome.darts, visitDone: true, winner: game.winner };
+  }
+
   // Take back the last dart of the visit that is still open.
   function undoDart(game) {
     if (!game.undo.length) return false;
@@ -247,7 +348,7 @@
       if (before[field] !== undefined) game[field] = before[field];
       else delete game[field];
     }
-    game.darts[game.turn].pop();
+    game.darts[game.turn].length = before._dartCount;
     return true;
   }
 
@@ -417,6 +518,11 @@
     checkoutRoute,
     createGame,
     throwDart,
+    enterVisit,
+    enterDarts,
+    evaluateDarts,
+    canScoreVisit,
+    canScoreDart,
     undoDart,
     endVisit,
     summarize,

@@ -6,6 +6,7 @@
 
 - **Games:** x01 with a start score of 201, 301, 401, 501, 601 or 701, either double out (the default) or straight out, and Cricket (15 to 20 and the bull).
 - **Your darts:** tap the board where each dart landed, as in the tracker. "Missed the board" records a dart that missed, and so does tapping the dark ring outside the board. "Undo dart" takes back a dart until you pass the turn. After your third dart (or a bust, or a win) press the button to hand over.
+- **Score keypad (x01 only):** choose "Score keypad" under "Entering your darts" when you set up a game, or switch with the Board / Keypad buttons at the start of any turn. Type your three-dart total, or tap a common one (26, 40, 41, 43, 45, 60, 81, 85, 100, 140, 180), and press ENTER. The display shows what the score leaves, or that it is a bust; totals three darts cannot make (179, 178, 176, 175, 173, 172, 169, 166, 163) are refused. MISS enters 0 and BACK deletes a digit. To enter each dart instead, press + between them: 20 + 15 + 3 shows `20+15+3`, the total (38) and what it leaves. Each part must be a score one dart can make (a miss, 1 to 20, a double, a treble, 25 or 50), with up to three parts. Darts you leave out count as misses. Because every dart is known, a checkout is checked exactly: with a double out the last dart must be one that could be a double (an even score up to 40, or 50), and the game ends on that dart. MISS adds a 0 dart. A total that equals what is left is a checkout and asks how many darts it took (a checkout needs a legal finish, so 159 with a double out is a bust). A normal score goes straight to the bot; a bust or a win waits so BACK or "Undo score" can take it back. Darts entered this way have no landing point, so they count for the averages and dart totals but not for the board or the heat map, and the two ways of entering can be mixed in one game.
 - **The bot** throws one dart at a time, drawn in blue. It aims for a checkout when it has one and treble 20 otherwise (Cricket: the highest number it has not closed, then points on numbers you have open).
 - **Levels:** Beginner, Casual, Club, League and Pro. A level is the spread of the bot's throws around its aim, as a fraction of the board radius: 0.30, 0.18, 0.12, 0.085 and 0.062. In a 501 game they average roughly 30, 42, 55, 72 and 95 per three darts, and `tests/practice-engine.test.cjs` checks the order and a sane range. Change `RANKS` in `public/practice-engine.js` to adjust them. There is no language model involved; it is all local and free.
 - An unfinished game is kept in the browser, and the setup card offers to resume it. "Quit game" saves it as unfinished if you have thrown a dart.
@@ -21,7 +22,8 @@ result ("won", "lost" or "abandoned"), durationSec, rounds,
 playerAvg and botAvg (three-dart average, or marks per round in Cricket),
 playerScore and botScore (score left, or Cricket points),
 playerDarts and botDarts: [{ x, y, s }] where x and y are the landing point as fractions of the
-board radius (see dart-positions.md) and s is what it scored ("T20", "D16", "SB", "DB", "S5", "MISS")
+board radius (see dart-positions.md) and s is what it scored ("T20", "D16", "SB", "DB", "S5", "MISS").
+A dart entered on the keypad is just { s: "?" }: it counts, but has no position.
 ```
 
 A saved game is never edited. Rules for the collection are in `firestore.rules` (`validBotGame`): the owner reads, creates and deletes; nothing updates. If saving fails the page says so, keeps the game on the device and offers "Try saving again". It tries again on the next visit too.

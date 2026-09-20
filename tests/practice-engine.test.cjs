@@ -372,3 +372,185 @@ test("stored darts are cleaned before use", () => {
   assert.equal(cleaned[1].s.startsWith("<"), false);
   assert.deepEqual(E.cleanDarts("nope"), []);
 });
+
+// --- entering a whole visit by its total ---------------------------------------------------------
+
+test("only totals that three darts can make are allowed", () => {
+  for (const impossible of [163, 166, 169, 172, 173, 175, 176, 178, 179, 181, -1, 1.5]) {
+    assert.equal(E.canScoreVisit(impossible), false, String(impossible));
+  }
+  for (const possible of [0, 1, 26, 41, 45, 60, 81, 85, 100, 140, 171, 174, 177, 180]) {
+    assert.equal(E.canScoreVisit(possible), true, String(possible));
+  }
+});
+
+test("a typed visit counts down, stores unpositioned darts and hands over like a thrown one", () => {
+  const game = E.createGame({ kind: "x01", startScore: 501 });
+  const result = E.enterVisit(game, 140);
+  assert.equal(result.event, "ok");
+  assert.equal(game.remaining.player, 361);
+  assert.equal(game.darts.player.length, 3);
+  assert.deepEqual(game.darts.player[0], { s: "?" });
+  assert.equal(game.visitDone, true);
+  const visit = E.endVisit(game);
+  assert.equal(visit.scored, 140);
+  assert.equal(game.turn, "bot");
+  assert.equal(E.summarize(game).player.avg, 140);
+});
+
+test("a typed total above what is left, or leaving 1 on a double out, is a bust", () => {
+  const game = E.createGame({ kind: "x01", startScore: 201 });
+  game.remaining.player = 40;
+  game.visitStart = 40;
+  assert.equal(E.enterVisit(game, 60).event, "bust");
+  assert.equal(game.remaining.player, 40);
+  assert.equal(E.endVisit(game).bust, true);
+
+  const one = E.createGame({ kind: "x01", startScore: 201 });
+  one.remaining.player = 41;
+  one.visitStart = 41;
+  assert.equal(E.enterVisit(one, 40).event, "bust", "leaves 1");
+
+  const straight = E.createGame({ kind: "x01", startScore: 201, doubleOut: false });
+  straight.remaining.player = 41;
+  straight.visitStart = 41;
+  assert.equal(E.enterVisit(straight, 40).event, "ok", "1 is fine when any dart may finish");
+});
+
+test("a typed total equal to what is left finishes, with the number of darts it took", () => {
+  const game = E.createGame({ kind: "x01", startScore: 201 });
+  game.remaining.player = 40;
+  game.visitStart = 40;
+  assert.throws(() => E.enterVisit(game, 40, 0), /1 to 3 darts/);
+  const result = E.enterVisit(game, 40, 2);
+  assert.equal(result.event, "win");
+  assert.equal(game.winner, "player");
+  assert.equal(game.darts.player.length, 2);
+  E.endVisit(game);
+  assert.equal(game.remaining.player, 0);
+  assert.equal(E.summarize(game).player.avg, 60, "40 in two darts is 60 a round");
+});
+
+test("a finish cannot take fewer darts than the route needs, and one with no legal finish is a bust", () => {
+  const game = E.createGame({ kind: "x01", startScore: 201 });
+  game.remaining.player = 100;
+  game.visitStart = 100;
+  assert.throws(() => E.enterVisit(game, 100, 1), /2 to 3 darts/);
+  assert.equal(E.enterVisit(game, 100, 3).event, "win");
+
+  const nofinish = E.createGame({ kind: "x01", startScore: 201 });
+  nofinish.remaining.player = 159;
+  nofinish.visitStart = 159;
+  assert.equal(E.enterVisit(nofinish, 159, 3).event, "bust", "159 has no double-out finish");
+  const twoStraight = E.createGame({ kind: "x01", startScore: 201, doubleOut: false });
+  twoStraight.remaining.player = 159;
+  twoStraight.visitStart = 159;
+  assert.equal(E.enterVisit(twoStraight, 159, 3).event, "win");
+});
+
+test("typed totals are checked and only work at the start of a visit", () => {
+  const game = E.createGame({ kind: "x01", startScore: 501 });
+  assert.throws(() => E.enterVisit(game, 179), /cannot score/);
+  assert.throws(() => E.enterVisit(game, "abc"), /cannot score/);
+  throwLabel(game, "T20");
+  assert.throws(() => E.enterVisit(game, 60), /already started/);
+  assert.throws(() => E.enterVisit(E.createGame({ kind: "cricket" }), 60), /only for x01/);
+});
+
+test("undo takes back a typed visit completely", () => {
+  const game = E.createGame({ kind: "x01", startScore: 501 });
+  E.enterVisit(game, 100);
+  assert.equal(E.undoDart(game), true);
+  assert.equal(game.remaining.player, 501);
+  assert.equal(game.darts.player.length, 0);
+  assert.equal(game.visitDone, false);
+  E.enterVisit(game, 60);
+  assert.equal(game.remaining.player, 441);
+
+  const win = E.createGame({ kind: "x01", startScore: 201 });
+  win.remaining.player = 32;
+  win.visitStart = 32;
+  E.enterVisit(win, 32, 1);
+  E.undoDart(win);
+  assert.equal(win.winner, null);
+  assert.equal(win.remaining.player, 32);
+});
+
+test("typed and thrown visits can be mixed in one game", () => {
+  const game = E.createGame({ kind: "x01", startScore: 301 });
+  E.enterVisit(game, 100);
+  E.endVisit(game);
+  visit(game, ["MISS", "MISS", "MISS"]); // the bot's turn, thrown
+  throwLabel(game, "T20");
+  assert.equal(game.remaining.player, 141);
+  assert.equal(game.darts.player.length, 4);
+  assert.equal(E.cleanDarts(game.darts.player).length, 1, "only the thrown dart has a position");
+});
+
+// --- entering a visit one dart at a time (20 + 15 + 3) ----------------------------------------------
+
+test("which scores one dart can make", () => {
+  for (const ok of [0, 1, 20, 21, 22, 25, 40, 50, 57, 60]) assert.equal(E.canScoreDart(ok), true, String(ok));
+  for (const no of [23, 41, 43, 52, 53, 55, 56, 58, 59, 61, 100, -1, 2.5]) assert.equal(E.canScoreDart(no), false, String(no));
+});
+
+test("dart by dart adds up, and unentered darts count as misses", () => {
+  const three = E.evaluateDarts(501, true, [20, 15, 3]);
+  assert.deepEqual(three, { event: "ok", total: 38, left: 463, darts: 3 });
+  const two = E.evaluateDarts(501, true, [60, 60]);
+  assert.deepEqual(two, { event: "ok", total: 120, left: 381, darts: 3 });
+  assert.match(E.evaluateDarts(501, true, [20, 23]).error, /23 is not a score/);
+  assert.match(E.evaluateDarts(501, true, []).error, /one to three/);
+  assert.match(E.evaluateDarts(501, true, [1, 1, 1, 1]).error, /one to three/);
+});
+
+test("entering darts one by one plays the visit", () => {
+  const game = E.createGame({ kind: "x01", startScore: 501 });
+  const result = E.enterDarts(game, [20, 15, 3]);
+  assert.equal(result.event, "ok");
+  assert.equal(result.score, 38);
+  assert.equal(game.remaining.player, 463);
+  assert.equal(game.darts.player.length, 3);
+  E.endVisit(game);
+  assert.equal(game.visits[0].scored, 38);
+  assert.equal(game.turn, "bot");
+});
+
+test("a finish needs its last dart to be a double, and stops on that dart", () => {
+  assert.deepEqual(E.evaluateDarts(40, true, [20, 20]), { event: "win", total: 40, left: 0, darts: 2 }, "20 could have been a double 10");
+  assert.equal(E.evaluateDarts(40, true, [25, 15]).event, "bust", "15 is not a double");
+  assert.equal(E.evaluateDarts(40, true, [40]).event, "win");
+  assert.equal(E.evaluateDarts(60, true, [60]).event, "bust", "a treble cannot finish a double-out game");
+  assert.deepEqual(E.evaluateDarts(60, false, [60]), { event: "win", total: 60, left: 0, darts: 1 });
+  assert.equal(E.evaluateDarts(50, true, [50]).event, "win", "the bull is a double");
+  assert.match(E.evaluateDarts(40, true, [40, 5]).error, /over after dart 1/);
+});
+
+test("a dart that busts ends the visit, and the score stays", () => {
+  assert.equal(E.evaluateDarts(40, true, [60]).event, "bust");
+  assert.equal(E.evaluateDarts(40, true, [39]).event, "bust", "leaves 1");
+  assert.equal(E.evaluateDarts(100, true, [60, 39, 1]).event, "bust");
+  const game = E.createGame({ kind: "x01", startScore: 201 });
+  game.remaining.player = 40;
+  game.visitStart = 40;
+  const result = E.enterDarts(game, [60]);
+  assert.equal(result.event, "bust");
+  assert.equal(game.remaining.player, 40);
+  assert.equal(game.darts.player.length, 1);
+  assert.equal(E.endVisit(game).scored, 0);
+});
+
+test("winning dart by dart, and taking it back", () => {
+  const game = E.createGame({ kind: "x01", startScore: 201 });
+  game.remaining.player = 100;
+  game.visitStart = 100;
+  const result = E.enterDarts(game, [60, 40]);
+  assert.equal(result.event, "win");
+  assert.equal(game.winner, "player");
+  assert.equal(game.darts.player.length, 2);
+  E.undoDart(game);
+  assert.equal(game.winner, null);
+  assert.equal(game.remaining.player, 100);
+  assert.equal(game.darts.player.length, 0);
+  assert.throws(() => E.enterDarts(E.createGame({ kind: "cricket" }), [20]), /only for x01/);
+});
