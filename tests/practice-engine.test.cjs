@@ -709,3 +709,17 @@ test("a visit is announced by its total, a bust, or a win", () => {
   assert.equal(E.visitSpeech({ marks: 5, points: 40 }, "cricket", false), "five marks and forty points");
   assert.equal(E.visitSpeech({ marks: 0, points: 0 }, "cricket", false), "No marks");
 });
+
+test("either side's latest visit can be found, for two people sharing the phone", () => {
+  const game = playVisits({ kind: "x01", startScore: 501 }, [["T20", "T20", "T20"], ["S20", "S5", "S1"], ["T19", "S1", "S1"]]);
+  assert.equal(E.lastVisitOf(game, "player"), 2);
+  assert.equal(E.lastVisitOf(game, "bot"), 1);
+  assert.equal(E.lastVisitOf(E.createGame({ kind: "x01" }), "bot"), -1);
+  // Correct the second side's visit: the first side's later visit stays as entered.
+  const base = E.replayVisits(E.gameOptions(game), game.visits.slice(0, 1)).game;
+  throwLabel(base, "T20"); throwLabel(base, "T20"); throwLabel(base, "MISS");
+  E.endVisit(base);
+  const corrected = E.replayVisits(E.gameOptions(game), [...base.visits, ...game.visits.slice(2)]);
+  assert.equal(corrected.game.remaining.bot, 501 - 120);
+  assert.deepEqual(corrected.game.remaining.player, game.remaining.player);
+});

@@ -1,8 +1,9 @@
-const { onDocumentWritten } = require("firebase-functions/v2/firestore");
+const { onDocumentCreated, onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { onRequest } = require("firebase-functions/v2/https");
 const { defineSecret, defineString } = require("firebase-functions/params");
 const logger = require("firebase-functions/logger");
 const admin = require("firebase-admin");
+const nodemailer = require("nodemailer");
 
 if (!admin.apps.length) admin.initializeApp();
 
@@ -19,6 +20,15 @@ const DARTS_ALLOWED_SOURCE_PROJECT_IDS = defineString("DARTS_ALLOWED_SOURCE_PROJ
 // Anyone with a Google account can sign in to the app and save sessions of their own, so only
 // this user's sessions are forwarded to Time Left. Leave it empty and nothing is forwarded.
 const DARTS_OWNER_UID = defineString("DARTS_OWNER_UID", { default: "" });
+// Emailing the result of a game between two players. The password is a secret; the rest is plain config.
+const SMTP_PASS = defineSecret("SMTP_PASS");
+const SMTP_HOST = defineString("SMTP_HOST", { default: "smtp.gmail.com" });
+const SMTP_PORT = defineString("SMTP_PORT", { default: "465" });
+const SMTP_USER = defineString("SMTP_USER", { default: "" });
+const MAIL_FROM = defineString("MAIL_FROM", { default: "" });
+// The app lets anyone with a Google account sign in, so it must never become a way to send email to
+// strangers: only the owner's games are emailed, and at most this many games a day.
+const MAX_EMAILED_GAMES_PER_DAY = 20;
 const DARTS_SOURCE_PROJECT_ID = "1:151826966768:web:a409ac8d409bf0f796ba35";
 
 const TARGETS = [...Array.from({ length: 20 }, (_, index) => String(20 - index)), "BULL"];
@@ -264,6 +274,136 @@ function mapBotGameToTimeLeft(game, gameId, syncStatus = "active") {
   };
 }
 
+// --- emailing the result of a game between two players ---------------------------------------------
+
+const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+function escapeHtml(value) {
+  return String(value === undefined || value === null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function isEmail(value) {
+  return typeof value === "string" && value.length <= 254 && EMAIL_PATTERN.test(value) && !/[\r\n,;<>"]/.test(value);
+}
+
+// Who gets the email: the two players, once each, and only addresses that look like real ones.
+function versusRecipients(game) {
+  const first = { email: String(game.playerEmail || "").trim(), name: cleanString(game.playerName, 60) || "Player 1" };
+  const second = { email: String(game.opponentEmail || "").trim(), name: cleanString(game.opponentName, 60) || "Player 2" };
+  const seen = new Set();
+  return [first, second].filter((person) => {
+    const key = person.email.toLowerCase();
+    if (!isEmail(person.email) || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function versusSummary(game) {
+  const kind = game.kind === "cricket" ? "cricket" : "x01";
+  const startScore = kind === "x01" && Number.isInteger(game.startScore) ? game.startScore : null;
+  const gameName = kind === "cricket" ? "Cricket" : `${startScore || 501}${game.doubleOut === false ? " straight out" : ""}`;
+  const names = [cleanString(game.playerName, 60) || "Player 1", cleanString(game.opponentName, 60) || "Player 2"];
+  const result = ["won", "lost", "abandoned"].includes(game.result) ? game.result : "abandoned";
+  const winner = result === "won" ? names[0] : result === "lost" ? names[1] : null;
+  const loser = result === "won" ? names[1] : result === "lost" ? names[0] : null;
+  const average = (value) => (Number.isFinite(Number(value)) ? (Math.round(Number(value) * 10) / 10).toFixed(1) : "-");
+  const count = (list) => (Array.isArray(list) ? Math.min(list.length, 600) : 0);
+  const rows = [
+    { name: names[0], average: average(game.playerAvg), darts: count(game.playerDarts), score: cleanNumber(game.playerScore, 0, 100000, 0) },
+    { name: names[1], average: average(game.opponentAvg), darts: count(game.opponentDarts), score: cleanNumber(game.opponentScore, 0, 100000, 0) },
+  ];
+  const log = (Array.isArray(game.log) ? game.log : []).slice(0, 400).map((entry) => ({
+    first: entry && entry.w === "p",
+    text: cleanString(entry && entry.t, 30),
+  }));
+  const best = [0, 0];
+  if (kind === "x01") {
+    for (const entry of log) {
+      const value = Number(entry.text);
+      if (Number.isFinite(value)) best[entry.first ? 0 : 1] = Math.max(best[entry.first ? 0 : 1], value);
+    }
+  }
+  return { kind, gameName, names, result, winner, loser, rows, log, best, timestamp: cleanString(game.timestamp, 20), durationSec: cleanNumber(game.durationSec, 0, 86400, 0), rounds: cleanNumber(game.rounds, 0, 1000, 0) };
+}
+
+function buildVersusEmail(game, appUrl = "") {
+  const info = versusSummary(game);
+  const averageName = info.kind === "cricket" ? "Marks per round" : "3-dart average";
+  const scoreName = info.kind === "cricket" ? "Points" : "Left";
+  const headline = info.winner ? `${info.winner} won` : "Game ended";
+  const subject = info.winner ? `Darts: ${info.winner} beat ${info.loser} at ${info.gameName}` : `Darts: ${info.gameName} between ${info.names[0]} and ${info.names[1]}`;
+
+  const minutes = info.durationSec ? Math.max(1, Math.round(info.durationSec / 60)) : 0;
+  const facts = [`${info.gameName}${info.timestamp ? `, ${info.timestamp}` : ""}`, info.rounds ? `${info.rounds} rounds` : "", minutes ? `${minutes} min` : ""].filter(Boolean).join(" · ");
+
+  const lines = [`${headline}!`, facts, ""];
+  info.rows.forEach((row, index) => {
+    lines.push(`${row.name}: ${averageName.toLowerCase()} ${row.average}, ${row.darts} darts, ${scoreName.toLowerCase()} ${row.score}${info.kind === "x01" && info.best[index] ? `, best visit ${info.best[index]}` : ""}`);
+  });
+  if (info.log.length) {
+    lines.push("", "Visit by visit:");
+    let round = 0;
+    for (let i = 0; i < info.log.length; i += 2) {
+      round += 1;
+      const pair = [info.log[i], info.log[i + 1]];
+      lines.push(`${round}. ${info.names[0]} ${pair[0] ? pair[0].text : "-"} · ${info.names[1]} ${pair[1] ? pair[1].text : "-"}`);
+    }
+  }
+  if (appUrl) lines.push("", `Play again: ${appUrl}/practice.html`);
+  const text = lines.join("\n");
+
+  const cell = (value, extra = "") => `<td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;${extra}">${escapeHtml(value)}</td>`;
+  const head = (value) => `<th style="padding:6px 10px;text-align:left;color:#6b7280;font-size:12px;border-bottom:2px solid #e5e7eb">${escapeHtml(value)}</th>`;
+  const stats = info.rows.map((row, index) => `<tr>${cell(row.name, "font-weight:700")}${cell(row.average)}${cell(row.darts)}${cell(row.score)}${info.kind === "x01" ? cell(info.best[index] || "-") : ""}</tr>`).join("");
+  let visitRows = "";
+  for (let i = 0; i < info.log.length; i += 2) {
+    visitRows += `<tr>${cell(i / 2 + 1)}${cell(info.log[i] ? info.log[i].text : "-")}${cell(info.log[i + 1] ? info.log[i + 1].text : "-")}</tr>`;
+  }
+  const html = [
+    `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:560px;margin:auto;color:#111827">`,
+    `<h2 style="margin:0 0 4px">${escapeHtml(headline)}!</h2>`,
+    `<p style="margin:0 0 16px;color:#6b7280">${escapeHtml(facts)}</p>`,
+    `<table style="border-collapse:collapse;width:100%"><tr>${head("Player")}${head(averageName)}${head("Darts")}${head(scoreName)}${info.kind === "x01" ? head("Best visit") : ""}</tr>${stats}</table>`,
+    info.log.length ? `<h3 style="margin:20px 0 6px;font-size:15px">Visit by visit</h3><table style="border-collapse:collapse;width:100%"><tr>${head("Round")}${head(info.names[0])}${head(info.names[1])}</tr>${visitRows}</table>` : "",
+    appUrl ? `<p style="margin-top:20px"><a href="${escapeHtml(appUrl)}/practice.html">Play again</a></p>` : "",
+    `</div>`,
+  ].join("");
+  return { subject: cleanString(subject, 150), text, html };
+}
+
+// Send the result to both players, each in a message of their own so the addresses are not shared.
+// Returns { status, sent } where status is "sent", "unfinished", "not-configured" or "failed".
+async function sendVersusResults({ game, config, transport, appUrl }) {
+  if (game.result === "abandoned") return { status: "unfinished", sent: [] };
+  if (!config.user || !config.pass) return { status: "not-configured", sent: [] };
+  const recipients = versusRecipients(game);
+  if (recipients.length < 1) return { status: "failed", sent: [], error: "No valid email address." };
+  const message = buildVersusEmail(game, appUrl);
+  const sent = [];
+  try {
+    for (const person of recipients) {
+      await transport.sendMail({
+        from: config.from || config.user,
+        to: person.email,
+        subject: message.subject,
+        text: message.text,
+        html: message.html,
+      });
+      sent.push(person.email);
+    }
+  } catch (error) {
+    const reason = String((error && error.message) || error).split(config.pass).join("***").slice(0, 200);
+    return { status: "failed", sent, error: reason };
+  }
+  return { status: "sent", sent };
+}
+
 function readConfig() {
   return {
     calendarId: TIME_LEFT_CALENDAR_ID.value(),
@@ -385,6 +525,78 @@ exports.syncBotGameToTimeLeft = onDocumentWritten(
   (event) => forwardOwnerDocument({ event, collectionName: "botGames", idParam: "gameId", mapItem: mapBotGameToTimeLeft })
 );
 
+// What happens when a two-player game is saved: who may have it emailed, the daily cap, the send, and
+// the status written back to the game. `countRecent` and `send` are passed in so it can be tested.
+async function processVersusGame({ game, ref, ownerUid, countRecent, send }) {
+  if (game.emailStatus) return "already-done";
+  const finish = async (fields) => {
+    try {
+      await ref.update(fields);
+    } catch (error) {
+      logger.warn("could not record the email status", { message: String((error && error.message) || error).slice(0, 200) });
+    }
+  };
+  if (!isOwnerSession(game, ownerUid)) {
+    logger.warn("versus email skipped: not the owner's game", { path: ref.path, ownerConfigured: Boolean(ownerUid) });
+    await finish({ emailStatus: "not-allowed" });
+    return "not-allowed";
+  }
+  if (game.result === "abandoned") {
+    await finish({ emailStatus: "unfinished" });
+    return "unfinished";
+  }
+  try {
+    if ((await countRecent()) >= MAX_EMAILED_GAMES_PER_DAY) {
+      await finish({ emailStatus: "rate-limited" });
+      return "rate-limited";
+    }
+  } catch (error) {
+    logger.warn("versus email daily count failed", { message: String((error && error.message) || error).slice(0, 200) });
+  }
+  const result = await send();
+  logger.info("versus email finished", { path: ref.path, status: result.status, recipients: result.sent.length });
+  const update = { emailStatus: result.status };
+  if (result.status === "sent") update.emailedAt = admin.firestore.FieldValue.serverTimestamp();
+  if (result.error) update.emailError = result.error;
+  await finish(update);
+  return result.status;
+}
+
+exports.emailVersusGameResults = onDocumentCreated(
+  {
+    region: "northamerica-northeast1",
+    document: "versusGames/{gameId}",
+    timeoutSeconds: 60,
+    memory: "256MiB",
+    retry: false,
+    secrets: [SMTP_PASS],
+  },
+  async (event) => {
+    const snapshot = event.data;
+    if (!snapshot) return null;
+    const port = Number(SMTP_PORT.value()) || 465;
+    const config = { user: SMTP_USER.value(), pass: SMTP_PASS.value(), from: MAIL_FROM.value() };
+    const appUrl = String(DARTS_APP_BASE_URL.value() || "").replace(/\/+$/, "");
+    await processVersusGame({
+      game: snapshot.data() || {},
+      ref: snapshot.ref,
+      ownerUid: DARTS_OWNER_UID.value(),
+      countRecent: async () => {
+        const since = admin.firestore.Timestamp.fromMillis(Date.now() - 24 * 60 * 60 * 1000);
+        const recent = await admin.firestore().collection("versusGames").where("emailedAt", ">=", since).count().get();
+        return recent.data().count;
+      },
+      send: async () => {
+        const transport = config.user && config.pass
+          ? nodemailer.createTransport({ host: SMTP_HOST.value() || "smtp.gmail.com", port, secure: port === 465, auth: { user: config.user, pass: config.pass } })
+          : null;
+        return sendVersusResults({ game: snapshot.data() || {}, config, transport, appUrl });
+      },
+    });
+    return null;
+  }
+);
+
 exports.backfillDartsPracticeSummariesToTimeLeft = onRequest(
   {
     region: "northamerica-northeast1",
@@ -436,7 +648,12 @@ exports.backfillDartsPracticeSummariesToTimeLeft = onRequest(
 
 module.exports._test = {
   authorizeBackfill,
+  buildVersusEmail,
+  escapeHtml,
   forwardOwnerDocument,
+  processVersusGame,
+  sendVersusResults,
+  versusRecipients,
   clampTotal,
   isOwnerSession,
   normalizeDarts,

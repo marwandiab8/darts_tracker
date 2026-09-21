@@ -467,12 +467,14 @@
 
   const gameOptions = (game) => ({ kind: game.kind, startScore: game.startScore, doubleOut: game.doubleOut, first: game.first });
 
-  // The position of your latest visit, or -1. A game can only be corrected if every visit was recorded.
-  function lastPlayerVisit(game) {
+  // The position of a side's latest visit, or -1. A game can only be corrected if every visit was
+  // recorded.
+  function lastVisitOf(game, who) {
     if (!game.visits.every((visit) => visit.input)) return -1;
-    for (let i = game.visits.length - 1; i >= 0; i -= 1) if (game.visits[i].who === "player") return i;
+    for (let i = game.visits.length - 1; i >= 0; i -= 1) if (game.visits[i].who === who) return i;
     return -1;
   }
+  const lastPlayerVisit = (game) => lastVisitOf(game, "player");
 
   function summarize(game) {
     const result = {};
@@ -622,6 +624,7 @@
     replayVisits,
     upgradeGame,
     gameOptions,
+    lastVisitOf,
     lastPlayerVisit,
     summarize,
     heatGrid,

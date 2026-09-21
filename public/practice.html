@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Practice vs Bot - Darts Tracker</title>
+<title>Practice - Darts Tracker</title>
 <style>
   :root {
     --bg: #0b0f17; --muted: #94a3b8; --text: #e5e7eb; --accent: #f59e0b; --bot: #38bdf8;
@@ -84,6 +84,10 @@
   .won { color: var(--good); font-weight: 800; } .lost { color: #fca5a5; font-weight: 800; } .abandoned { color: var(--muted); }
   .empty { padding: 18px; text-align: center; color: var(--muted); }
   #authScreen { text-align: center; padding: 60px 0; }
+  input[type="text"], input[type="email"] { width: 100%; background: var(--chip); color: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 12px; min-height: 44px; font: inherit; }
+  input[type="text"]:focus-visible, input[type="email"]:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+  .field-note { font-size: 13px; margin-top: 6px; }
+  .field-note.bad { color: #fca5a5; }
   .entry-toggle { display: flex; gap: 6px; justify-content: center; margin-bottom: 12px; }
   .entry-toggle button { min-height: 38px; padding: 6px 16px; }
   .entry-toggle button[aria-pressed="true"] { background: var(--accent); color: #111; border-color: var(--accent); }
@@ -139,7 +143,7 @@
   <header>
     <div class="head-left">
       <a class="back" href="./">&larr; Tracker</a>
-      <h1>Practice vs Bot</h1>
+      <h1>Practice</h1>
     </div>
     <div class="head-right">
       <button type="button" class="secondary hidden" id="soundBtn" aria-pressed="true" title="Announce each visit's score out loud">Sound: on</button>
@@ -172,6 +176,26 @@
             <label><input type="radio" name="kind" value="cricket"><span>Cricket</span></label>
           </div>
         </div>
+        <div class="wide">
+          <label id="oppLabel">Play against</label>
+          <div class="segmented" role="radiogroup" aria-labelledby="oppLabel">
+            <label><input type="radio" name="opp" value="bot" checked><span>The bot</span></label>
+            <label><input type="radio" name="opp" value="human"><span>Another player</span></label>
+          </div>
+        </div>
+        <div class="wide hidden" id="humanBox">
+          <div class="form-grid">
+            <div>
+              <label for="oppName">Their name</label>
+              <input type="text" id="oppName" maxlength="40" autocomplete="off" placeholder="Optional">
+            </div>
+            <div>
+              <label for="oppEmail">Their email address (needed)</label>
+              <input type="email" id="oppEmail" inputmode="email" maxlength="254" autocomplete="off" placeholder="name@example.com" aria-describedby="oppHint">
+            </div>
+          </div>
+          <div class="muted field-note" id="oppHint"></div>
+        </div>
         <div id="startScoreBox">
           <label for="startScore">Start score</label>
           <select id="startScore"></select>
@@ -190,7 +214,7 @@
             <option value="keypad">Score keypad</option>
           </select>
         </div>
-        <div>
+        <div id="rankBox">
           <label for="rank">Bot level</label>
           <select id="rank"></select>
           <div class="muted" id="rankBlurb" style="font-size:13px;margin-top:4px;"></div>
@@ -245,6 +269,7 @@
           </div>
           <div class="controls">
             <button type="button" class="secondary hidden" id="editBtn">Edit my last visit</button>
+            <button type="button" class="secondary hidden" id="editOtherBtn">Edit their last visit</button>
             <button type="button" class="secondary hidden" id="cancelEditBtn">Cancel edit</button>
             <button type="button" class="danger" id="quitBtn">Quit game</button>
           </div>
@@ -257,6 +282,7 @@
               <div class="muted" id="overNote" style="font-size:13px;"></div>
               <div class="stats" id="overStats"></div>
               <div class="saved" id="saveNote" role="status"></div>
+              <div class="saved" id="emailNote" role="status"></div>
               <div class="actions">
                 <button type="button" id="retryBtn" class="hidden">Try saving again</button>
                 <button type="button" id="againBtn">Play again</button>
@@ -295,7 +321,7 @@
       <h2>Your practice games</h2>
       <div class="muted hidden" id="historyNote"></div>
       <div class="scroll-x"><table>
-        <thead><tr><th class="left">When</th><th class="left">Game</th><th>Bot</th><th>Result</th><th>Avg</th><th>Darts</th><th></th></tr></thead>
+        <thead><tr><th class="left">When</th><th class="left">Game</th><th>Against</th><th>Result</th><th>Avg</th><th>Darts</th><th></th></tr></thead>
         <tbody id="historyBody"></tbody>
       </table></div>
     </section>
@@ -334,7 +360,20 @@
   };
 
   let user = null;
-  let settings = Object.assign({ kind: "x01", startScore: 501, doubleOut: true, rank: "club", first: "player", entry: "board", confirm: false, mute: false }, store.get(SETTINGS_KEY) || {});
+  let settings = Object.assign({ kind: "x01", startScore: 501, doubleOut: true, rank: "club", first: "player", entry: "board", confirm: false, mute: false, opponent: "bot", oppName: "", oppEmail: "" }, store.get(SETTINGS_KEY) || {});
+  // Who is playing the running game. Against the bot the two sides are "You" and the bot; with another
+  // player they are two people sharing the phone, and the email address of the second one is kept
+  // here so the result can be sent to both.
+  let match = { human: false, names: { player: "You", bot: "Bot" }, opponentEmail: "" };
+  const versus = () => match.human;
+  const nameOf = (who) => match.names[who];
+  // Whether the phone is in a person's hands: always your turn, and both turns with another player.
+  const humanTurn = () => !!game && (game.turn === "player" || versus());
+  const turnWord = () => (versus() ? nameOf(game.turn) + "'s turn" : "Your turn");
+  const scoreWord = (who) => (versus() ? nameOf(who) + "'s score" : who === "player" ? "Your score" : "Its score");
+  const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+  const looksLikeEmail = (value) => typeof value === "string" && value.length <= 254 && EMAIL_PATTERN.test(value) && !/[\r\n,;<>"]/.test(value);
+  const firstWord = (text) => String(text || "").trim().split(/\s+/)[0];
   let kpText = "", kpAsking = false, passTimer = null;
   // While you re-enter an earlier visit: where it was, the visits that came after it, and a copy of
   // the game to go back to.
@@ -368,7 +407,7 @@
     if (!canSpeak || settings.mute || !visit || !game) return;
     try {
       const u = new SpeechSynthesisUtterance(E.visitSpeech(visit, game.kind, game.winner === visit.who));
-      u.rate = 0.95; u.pitch = visit.who === "bot" ? 0.75 : 1; u.lang = "en-GB";
+      u.rate = 0.95; u.pitch = visit.who === "bot" && !versus() ? 0.75 : 1; u.lang = "en-GB";
       window.speechSynthesis.cancel();
       window.speechSynthesis.speak(u);
     } catch (_) { /* no voice available: the score is on the screen anyway */ }
@@ -498,6 +537,8 @@
     const points = [];
     for (const item of savedGames) {
       if (kind !== "all" && item.data.kind !== kind) continue;
+      // The bot's darts only exist in games against the bot; a two-player game's second side is a person.
+      if (who === "bot" && item.coll === "versusGames") continue;
       const list = E.cleanDarts(who === "bot" ? item.data.botDarts : item.data.playerDarts);
       for (const p of list) points.push(p);
     }
@@ -533,9 +574,9 @@
     for (const item of rows) {
       const d = item.data, tr = el("tr");
       const avg = (v) => (typeof v === "number" ? String(Math.round(v * 10) / 10) : "-");
-      tr.append(el("td", "left", String(d.timestamp || "").slice(0, 16)), el("td", "left", gameName(d)), el("td", "", rankName(d.rank)),
+      tr.append(el("td", "left", String(d.timestamp || "").slice(0, 16)), el("td", "left", gameName(d)), el("td", "", item.coll === "versusGames" ? String(d.opponentName || "Player").slice(0, 40) : rankName(d.rank)),
         el("td", ["won", "lost", "abandoned"].includes(d.result) ? d.result : "", d.result === "won" ? "Won" : d.result === "lost" ? "Lost" : "Unfinished"),
-        el("td", "", avg(d.playerAvg) + " v " + avg(d.botAvg)),
+        el("td", "", avg(d.playerAvg) + " v " + avg(item.coll === "versusGames" ? d.opponentAvg : d.botAvg)),
         el("td", "", String((d.playerDarts || []).length)));
       const cell = el("td"), del = el("button", "danger", "Delete");
       del.type = "button"; del.style.minHeight = "36px"; del.style.padding = "6px 10px";
@@ -545,9 +586,9 @@
   }
 
   async function deleteGame(item) {
-    if (!window.confirm("Delete this game from your record? It is also removed from Time Left.")) return;
+    if (!window.confirm(item.coll === "versusGames" ? "Delete this game from your record? The emails already sent stay in the inboxes." : "Delete this game from your record? It is also removed from Time Left.")) return;
     try {
-      await db.collection("botGames").doc(item.id).delete();
+      await db.collection(item.coll || "botGames").doc(item.id).delete();
       savedGames = savedGames.filter((g) => g.id !== item.id);
       renderHistory(); renderHeat();
     } catch (error) {
@@ -558,8 +599,12 @@
   async function loadGames() {
     const note = $("historyNote");
     try {
-      const snap = await db.collection("botGames").where("uid", "==", user.uid).get();
-      savedGames = snap.docs.map((doc) => ({ id: doc.id, data: doc.data() }));
+      const [bots, people] = await Promise.all([
+        db.collection("botGames").where("uid", "==", user.uid).get(),
+        db.collection("versusGames").where("uid", "==", user.uid).get().catch(() => ({ docs: [] })),
+      ]);
+      savedGames = bots.docs.map((doc) => ({ id: doc.id, coll: "botGames", data: doc.data() }))
+        .concat(people.docs.map((doc) => ({ id: doc.id, coll: "versusGames", data: doc.data() })));
       note.classList.add("hidden");
     } catch (error) {
       note.textContent = "Could not load your games: " + (error && error.message ? error.message : error);
@@ -576,7 +621,8 @@
     E.RANKS.forEach((r) => { const o = el("option", "", r.name); o.value = r.id; rank.append(o); });
     applySettingsToForm();
     for (const id of ["startScore", "outRule", "rank", "first", "entry", "handover"]) $(id).addEventListener("change", readForm);
-    document.querySelectorAll('input[name="kind"]').forEach((r) => r.addEventListener("change", readForm));
+    for (const id of ["oppName", "oppEmail"]) { $(id).addEventListener("input", readForm); $(id).addEventListener("change", readForm); }
+    document.querySelectorAll('input[name="kind"], input[name="opp"]').forEach((r) => r.addEventListener("change", readForm));
   }
 
   function applySettingsToForm() {
@@ -590,22 +636,47 @@
     $("first").value = settings.first === "bot" ? "bot" : "player";
     $("entry").value = settings.entry === "keypad" ? "keypad" : "board";
     $("handover").value = settings.confirm ? "enter" : "auto";
+    document.querySelectorAll('input[name="opp"]').forEach((r) => { r.checked = r.value === (settings.opponent === "human" ? "human" : "bot"); });
+    $("oppName").value = String(settings.oppName || "");
+    $("oppEmail").value = String(settings.oppEmail || "");
     syncSetupVisibility();
   }
 
   function readForm() {
     const kind = document.querySelector('input[name="kind"]:checked');
-    settings = { kind: kind ? kind.value : "x01", startScore: Number($("startScore").value), doubleOut: $("outRule").value !== "straight", rank: $("rank").value, first: $("first").value, entry: $("entry").value, confirm: $("handover").value === "enter" };
+    settings = { kind: kind ? kind.value : "x01", startScore: Number($("startScore").value), doubleOut: $("outRule").value !== "straight", rank: $("rank").value, first: $("first").value, entry: $("entry").value, confirm: $("handover").value === "enter",
+      opponent: (document.querySelector('input[name="opp"]:checked') || {}).value === "human" ? "human" : "bot", oppName: $("oppName").value.trim().slice(0, 40), oppEmail: $("oppEmail").value.trim(), mute: settings.mute };
     store.set(SETTINGS_KEY, settings);
     syncSetupVisibility();
   }
 
+  // Whether a game against another player can start: their email is needed, and yours has to exist so
+  // the result can be sent to both of you.
+  function setupProblem() {
+    const email = String(settings.oppEmail || "").trim();
+    if (!user || !looksLikeEmail(String(user.email || ""))) return { ok: false, text: "Your account has no email address, so the result cannot be sent to you." };
+    if (!email) return { ok: false, text: "Type their email address to add them.", quiet: true };
+    if (!looksLikeEmail(email)) return { ok: false, text: "That does not look like an email address." };
+    if (email.toLowerCase() === String(user.email).toLowerCase()) return { ok: false, text: "Use their email, not yours." };
+    return { ok: true, text: "When the game is finished, the result is emailed to you (" + user.email + ") and to " + email + "." };
+  }
+
   function syncSetupVisibility() {
-    const x01 = settings.kind === "x01";
+    const x01 = settings.kind === "x01", human = settings.opponent === "human";
     $("startScoreBox").classList.toggle("hidden", !x01);
     $("outBox").classList.toggle("hidden", !x01);
     $("entryBox").classList.toggle("hidden", !x01);
+    $("humanBox").classList.toggle("hidden", !human);
+    $("rankBox").classList.toggle("hidden", human);
     $("rankBlurb").textContent = E.rankById(settings.rank).blurb;
+    // "Who throws first" names the other player when there is one.
+    $("first").options[1].textContent = human ? (String(settings.oppName || "").trim() || "The other player") : "The bot";
+    $("handover").options[0].textContent = human ? "Pass to the other player automatically" : "Pass to the bot automatically";
+    const problem = human ? setupProblem() : { ok: true };
+    $("startBtn").disabled = human && !problem.ok;
+    const hint = $("oppHint");
+    hint.textContent = human ? problem.text : "";
+    hint.className = "muted field-note" + (human && !problem.ok && !problem.quiet ? " bad" : "");
   }
 
   // --- a game ------------------------------------------------------------------------------------------------
@@ -619,18 +690,31 @@
   const short = (label) => (label === "SB" ? "25" : label === "DB" ? "Bull" : label[0] === "S" ? label.slice(1) : label);
 
   function persistGame() {
-    if (game && !game.winner && !editing) store.set(GAME_KEY, { game, startedAt, settings });
+    if (game && !game.winner && !editing) store.set(GAME_KEY, { game, startedAt, settings, match });
+  }
+
+  // The two names for a new game. With another player, names that would be the same are told apart.
+  function buildMatch() {
+    if (settings.opponent !== "human") return { human: false, names: { player: "You", bot: rankName(settings.rank) + " bot" }, opponentEmail: "" };
+    const email = String(settings.oppEmail || "").trim();
+    const mine = firstWord(user && (user.displayName || user.email)) || "Player 1";
+    const fromEmail = email.split("@")[0].slice(0, 40).replace(/^./, (c) => c.toUpperCase());
+    let theirs = String(settings.oppName || "").trim().slice(0, 40) || fromEmail || "Player 2";
+    if (theirs.toLowerCase() === mine.toLowerCase()) theirs += " 2";
+    return { human: true, names: { player: mine, bot: theirs }, opponentEmail: email };
   }
 
   function startGame() {
     cancelAutoPass(); editing = null;
     readForm();
+    if (settings.opponent === "human" && !setupProblem().ok) { syncSetupVisibility(); return; }
+    match = buildMatch();
     game = E.createGame({ kind: settings.kind, startScore: settings.startScore, doubleOut: settings.doubleOut, first: settings.first });
     startedAt = Date.now(); reviewing = false; lastMessage = ""; pendingRecord = null;
-    store.set(GAME_KEY, { game, startedAt, settings });
+    store.set(GAME_KEY, { game, startedAt, settings, match });
     showGame();
     render();
-    if (game.turn === "bot") runBot();
+    if (game.turn === "bot" && !versus()) runBot();
   }
 
   // The record and the heat map are for between games; they only get in the way while playing.
@@ -670,7 +754,8 @@
     $("resumeBox").classList.toggle("hidden", !ok);
     if (ok) {
       const g = saved.game, when = new Date(Number(saved.startedAt) || Date.now());
-      $("resumeText").textContent = "You have an unfinished " + (g.kind === "cricket" ? "Cricket" : g.startScore) + " game from " + when.toLocaleString() + ".";
+      const against = saved.match && saved.match.human ? " against " + saved.match.names.bot : "";
+      $("resumeText").textContent = "You have an unfinished " + (g.kind === "cricket" ? "Cricket" : g.startScore) + " game" + against + " from " + when.toLocaleString() + ".";
     }
   }
 
@@ -678,11 +763,12 @@
     const saved = store.get(GAME_KEY);
     if (!saved || !looksLikeGame(saved.game)) { checkResume(); return; }
     game = saved.game; startedAt = Number(saved.startedAt) || Date.now();
+    match = saved.match && saved.match.names && typeof saved.match.human === "boolean" ? saved.match : { human: false, names: { player: "You", bot: rankName(settings.rank) + " bot" }, opponentEmail: "" };
     E.upgradeGame(game);
     if (saved.settings && RANK_IDS.includes(saved.settings.rank)) settings = Object.assign(settings, saved.settings);
     reviewing = false; lastMessage = "Game resumed."; pendingRecord = null;
     showGame(); render();
-    if (game.turn === "bot") {
+    if (game.turn === "bot" && !versus()) {
       // A bot turn was interrupted: start it over from the beginning of the visit.
       while (game.visitDarts.length && E.undoDart(game)) { /* take back its unfinished darts */ }
       runBot();
@@ -692,7 +778,7 @@
   function scoreBlock(who) {
     const s = E.summarize(game)[who];
     const side = el("div", "side " + who + (game.turn === who && !game.winner ? " turn" : ""));
-    side.append(el("div", "who", who === "player" ? "You" : rankName(settings.rank) + " bot"));
+    side.append(el("div", "who", nameOf(who)));
     if (game.kind === "x01") {
       side.append(el("div", "big", String(game.remaining[who])));
       const last = game.visits.filter((v) => v.who === who).slice(-1)[0];
@@ -715,7 +801,7 @@
       for (const n of E.CRICKET_NUMBERS) {
         const tr = el("tr", game.marks.player[n] >= 3 && game.marks.bot[n] >= 3 ? "closed" : "");
         const a = el("td", "mark you", symbol(game.marks.player[n])), c = el("td", "num", n === 25 ? "Bull" : String(n)), b = el("td", "mark bot", symbol(game.marks.bot[n]));
-        a.setAttribute("aria-label", game.marks.player[n] + " marks for you"); b.setAttribute("aria-label", game.marks.bot[n] + " marks for the bot");
+        a.setAttribute("aria-label", game.marks.player[n] + " marks for " + nameOf("player")); b.setAttribute("aria-label", game.marks.bot[n] + " marks for " + nameOf("bot"));
         tr.append(a, c, b); body.append(tr);
       }
       table.append(body); wrap.append(table); box.append(wrap);
@@ -726,7 +812,7 @@
     const head = $("log").tHead, body = $("log").tBodies[0];
     head.textContent = ""; body.textContent = "";
     const hr = el("tr");
-    hr.append(el("th", "", "Round"), el("th", "", "You"), el("th", "", "Bot"));
+    hr.append(el("th", "", "Round"), el("th", "", nameOf("player")), el("th", "", nameOf("bot")));
     head.append(hr);
     const cell = (v) => (v ? (game.kind === "x01" ? (v.bust ? "Bust" : String(v.scored)) : v.marks + " marks" + (v.points ? ", +" + v.points : "")) : "");
     const rounds = new Map();
@@ -742,36 +828,40 @@
     if (reviewing) return;
     if (editing) {
       const was = editing.original, what = game.kind === "x01" ? (was.bust ? "a bust" : was.scored) : was.marks + " marks" + (was.points ? ", +" + was.points : "");
-      box.append(el("div", "hint", "Editing your visit in round " + was.round + " (it was " + what + "). Enter it again."));
+      box.append(el("div", "hint", "Editing " + (versus() ? nameOf(editing.who) + "'s" : "your") + " visit in round " + was.round + " (it was " + what + "). Enter it again."));
     }
     const line = el("div");
-    if (game.turn === "player" && !game.visitDone && keypadActive()) {
-      line.append(el("strong", "", "Your turn"), document.createTextNode(" · enter your three-dart score."));
-    } else if (game.turn === "player" && !game.visitDone) {
-      line.append(el("strong", "", "Your turn"), document.createTextNode(" · dart " + (game.visitDarts.length + 1) + " of 3. Tap where it landed."));
-    } else if (game.turn === "player") {
-      line.append(el("strong", "", game.winner ? "You won the game!" : "Visit finished"), document.createTextNode(game.winner ? " Check the darts, then finish." : editing ? ". Saving your change. Undo to change a dart." : passTimer ? ". The bot is up next. Undo to change a dart." : settings.confirm && !keypadActive() ? ". Check your darts. Press Enter when they are right, or Undo to change one." : ". Pass to the bot when you are ready."));
+    if (humanTurn() && !game.visitDone && keypadActive()) {
+      line.append(el("strong", "", turnWord()), document.createTextNode(" · enter " + (versus() ? "the" : "your") + " three-dart score."));
+    } else if (humanTurn() && !game.visitDone) {
+      line.append(el("strong", "", turnWord()), document.createTextNode(" · dart " + (game.visitDarts.length + 1) + " of 3. Tap where it landed."));
+    } else if (humanTurn()) {
+      line.append(el("strong", "", game.winner ? (versus() ? nameOf(game.winner) + " won the game!" : "You won the game!") : "Visit finished"), document.createTextNode(game.winner ? " Check the darts, then finish." : editing ? ". Saving your change. Undo to change a dart." : passTimer ? ". " + (versus() ? nameOf(game.turn === "player" ? "bot" : "player") : "The bot") + " is up next. Undo to change a dart." : settings.confirm && !keypadActive() ? ". Check the darts. Press Enter when they are right, or Undo to change one." : ". Pass to " + (versus() ? nameOf(game.turn === "player" ? "bot" : "player") : "the bot") + " when you are ready."));
     } else {
       line.append(el("strong", "", "Bot's turn"), document.createTextNode(" · " + (botBusy ? "throwing…" : "waiting")));
     }
     box.append(line);
     if (lastMessage) box.append(el("div", "muted", lastMessage));
-    if (game.kind === "x01" && game.turn === "player" && !game.visitDone && game.remaining.player <= 170) {
-      const route = E.checkoutRoute(game.remaining.player, 3 - game.visitDarts.length, game.doubleOut);
+    if (game.kind === "x01" && humanTurn() && !game.visitDone && game.remaining[game.turn] <= 170) {
+      const route = E.checkoutRoute(game.remaining[game.turn], 3 - game.visitDarts.length, game.doubleOut);
       if (route) box.append(el("div", "hint", "Checkout: " + route.map((d) => short(d.label)).join(" · ")));
     }
   }
 
   function renderControls() {
-    const mine = game.turn === "player" && !reviewing && !game.winner;
+    const mine = humanTurn() && !reviewing && !game.winner;
     const canThrow = mine && !game.visitDone && !botBusy;
     $("board").classList.toggle("tappable", canThrow);
-    $("undoBtn").disabled = !(game.turn === "player" && game.undo.length > 0 && !botBusy && !game.winner) ;
+    $("undoBtn").disabled = !(humanTurn() && game.undo.length > 0 && !botBusy && !game.winner) ;
     $("missBtn").disabled = !canThrow;
-    const pending = game.turn === "player" && game.visitDone && !reviewing;
+    const pending = humanTurn() && game.visitDone && !reviewing;
     $("nextBtn").classList.toggle("hidden", !pending || keypadActive());
     $("nextBtn").textContent = editing ? "Save change" : game.winner ? "Finish game" : settings.confirm && !keypadActive() ? "Enter" : "Bot's turn";
-    $("editBtn").classList.toggle("hidden", !showEdit());
+    const me = game.turn, them = otherSide(game.turn);
+    $("editBtn").classList.toggle("hidden", !showEdit(me));
+    $("editBtn").textContent = versus() ? "Edit " + nameOf(me) + "'s last visit" : "Edit my last visit";
+    $("editOtherBtn").classList.toggle("hidden", !(versus() && showEdit(them)));
+    $("editOtherBtn").textContent = "Edit " + nameOf(them) + "'s last visit";
     $("cancelEditBtn").classList.toggle("hidden", !editing);
     $("undoBtn").classList.toggle("hidden", reviewing || keypadActive());
     $("undoBtn").textContent = keypadActive() ? "Undo score" : "Undo dart";
@@ -789,7 +879,7 @@
   const kpButtons = [];
 
   function keypadActive() {
-    return !!game && !reviewing && game.kind === "x01" && settings.entry === "keypad" && game.turn === "player";
+    return !!game && !reviewing && game.kind === "x01" && settings.entry === "keypad" && humanTurn();
   }
 
   function buildKeypad() {
@@ -864,24 +954,24 @@
     if (kpLocked() || !kpText) return;
     if (kpDartMode()) {
       const scores = kpScores();
-      if (!scores || E.evaluateDarts(game.remaining.player, game.doubleOut, scores).error) { renderKeypad(); return; }
+      if (!scores || E.evaluateDarts(game.remaining[game.turn], game.doubleOut, scores).error) { renderKeypad(); return; }
       kpSubmit(E.enterDarts(game, scores));
       return;
     }
     const score = Number(kpText);
     if (!E.canScoreVisit(score)) { renderKeypad(); return; }
-    const left = game.remaining.player, route = score === left ? E.checkoutRoute(left, 3, game.doubleOut) : null;
+    const left = game.remaining[game.turn], route = score === left ? E.checkoutRoute(left, 3, game.doubleOut) : null;
     if (route) { kpAsking = true; renderKeypad(); return; }   // a finish: ask how many darts it took
     kpSubmit(E.enterVisit(game, score, 3));
   }
 
   function kpFinish(darts) {
-    kpSubmit(E.enterVisit(game, game.remaining.player, darts));
+    kpSubmit(E.enterVisit(game, game.remaining[game.turn], darts));
   }
 
   function kpSubmit(result) {
     kpText = ""; kpAsking = false;
-    lastMessage = result.event === "bust" ? "Bust! Your score stays " + game.remaining.player + "." : result.event === "win" ? "Checkout!" : "Scored " + result.score + ".";
+    lastMessage = result.event === "bust" ? "Bust! " + scoreWord(game.turn) + " stays " + game.remaining[game.turn] + "." : result.event === "win" ? "Checkout!" : "Scored " + result.score + ".";
     persistGame();
     // A normal visit goes straight to the bot. A bust or a win waits, so it can be undone.
     if (result.event === "ok") passTurn(); else render();
@@ -889,13 +979,13 @@
 
   function kpValid() {
     if (!kpText) return false;
-    if (kpDartMode()) { const scores = kpScores(); return !!scores && !E.evaluateDarts(game.remaining.player, game.doubleOut, scores).error; }
+    if (kpDartMode()) { const scores = kpScores(); return !!scores && !E.evaluateDarts(game.remaining[game.turn], game.doubleOut, scores).error; }
     return E.canScoreVisit(Number(kpText));
   }
 
   function keypadHint() {
     if (!game || game.visitDone) return { text: lastMessage, cls: game && game.visitBust ? "bad" : "good" };
-    const left = game.remaining.player;
+    const left = game.remaining[game.turn];
     if (!kpText) {
       const route = left <= 170 ? E.checkoutRoute(left, 3, game.doubleOut) : null;
       return { text: route ? left + " left. Checkout: " + route.map((d) => short(d.label)).join(" · ") : left + " left", cls: "" };
@@ -907,14 +997,14 @@
       if (partial) return { text: "So far " + so + ". Type the next dart.", cls: "" };
       const outcome = E.evaluateDarts(left, game.doubleOut, typed);
       if (outcome.error) return { text: outcome.error, cls: "bad" };
-      if (outcome.event === "bust") return { text: "= " + outcome.total + ". Bust, your score stays " + left, cls: "bad" };
+      if (outcome.event === "bust") return { text: "= " + outcome.total + ". Bust, " + scoreWord(game.turn).toLowerCase() + " stays " + left, cls: "bad" };
       if (outcome.event === "win") return { text: "= " + outcome.total + ". Checkout in " + outcome.darts + (outcome.darts === 1 ? " dart!" : " darts!"), cls: "good" };
       return { text: "= " + outcome.total + ". Leaves " + outcome.left + (typed.length < 3 ? " (darts not entered count as misses)" : ""), cls: "" };
     }
     const score = Number(kpText);
     if (!E.canScoreVisit(score)) return { text: "Three darts cannot score " + score, cls: "bad" };
     const after = left - score;
-    if (after < 0 || (game.doubleOut && after === 1)) return { text: "Bust. Your score stays " + left, cls: "bad" };
+    if (after < 0 || (game.doubleOut && after === 1)) return { text: "Bust. " + scoreWord(game.turn) + " stays " + left, cls: "bad" };
     if (after === 0) return E.checkoutRoute(left, 3, game.doubleOut) ? { text: "Checkout!", cls: "good" } : { text: "No way to finish on " + left + ". That is a bust", cls: "bad" };
     return { text: "Leaves " + after, cls: "" };
   }
@@ -944,12 +1034,12 @@
     const buttons = $("kpConfirmButtons"); buttons.textContent = "";
     const add = (label, className, onPress) => { const b = el("button", className, label); b.type = "button"; b.addEventListener("click", onPress); buttons.append(b); };
     if (kpAsking) {
-      const route = E.checkoutRoute(game.remaining.player, 3, game.doubleOut);
-      $("kpConfirmText").textContent = "Checkout from " + game.remaining.player + "! How many darts did it take?";
+      const route = E.checkoutRoute(game.remaining[game.turn], 3, game.doubleOut);
+      $("kpConfirmText").textContent = "Checkout from " + game.remaining[game.turn] + "! How many darts did it take?";
       for (let n = route.length; n <= 3; n++) add(n + (n === 1 ? " dart" : " darts"), "", () => kpFinish(n));
       add("Back", "secondary", () => { kpAsking = false; renderKeypad(); });
     } else {
-      $("kpConfirmText").textContent = game.visitBust ? "Bust! Your score stays " + game.remaining.player + "." : game.winner ? "Checkout! You won the game." : "Scored.";
+      $("kpConfirmText").textContent = game.visitBust ? "Bust! " + scoreWord(game.turn) + " stays " + game.remaining[game.turn] + "." : game.winner ? "Checkout! " + (versus() ? nameOf(game.winner) : "You") + " won the game." : "Scored.";
       add("Undo score", "secondary", undo);
       add(editing ? "Save change" : game.winner ? "Finish game" : "Bot's turn", "", passTurn);
     }
@@ -960,8 +1050,8 @@
     $("boardWrap").classList.toggle("hidden", keypad);
     $("keypad").classList.toggle("hidden", !keypad);
     $("gameCard").classList.toggle("compact", keypad);
-    const canSwitch = game.kind === "x01" && !reviewing && game.turn === "player" && !game.visitDone && !game.visitDarts.length && !game.winner && !botBusy;
-    const showConfirm = !keypad && !reviewing && game.turn === "player" && !botBusy;
+    const canSwitch = game.kind === "x01" && !reviewing && humanTurn() && !game.visitDone && !game.visitDarts.length && !game.winner && !botBusy;
+    const showConfirm = !keypad && !reviewing && humanTurn() && !botBusy;
     $("confirmToggle").classList.toggle("hidden", !showConfirm);
     $("confirmToggle").setAttribute("aria-pressed", String(!!settings.confirm));
     $("confirmToggle").textContent = "Press Enter: " + (settings.confirm ? "on" : "off");
@@ -979,7 +1069,7 @@
     $("handover").value = on ? "enter" : "auto";
     if (game) {
       if (on) cancelAutoPass();
-      else if (game.visitDone && !game.winner && game.turn === "player" && !keypadActive()) scheduleAutoPass();
+      else if (game.visitDone && !game.winner && humanTurn() && !keypadActive()) scheduleAutoPass();
       render();
     }
   }
@@ -992,13 +1082,13 @@
 
   function visitText(result) {
     const hit = result.hit, name = describe(hit.label);
-    if (result.event === "bust") return name + ": bust. Your score goes back to " + (game.turn === "player" ? game.remaining.player : game.remaining.bot) + ".";
+    if (result.event === "bust") return name + ": bust. " + scoreWord(game.turn) + " goes back to " + game.remaining[game.turn] + ".";
     if (game.kind === "x01") return name + (hit.points ? " · " + hit.points : "");
     return name;
   }
 
   function playerThrow(position) {
-    if (!game || reviewing || game.turn !== "player" || game.visitDone || game.winner || botBusy) return;
+    if (!game || reviewing || !humanTurn() || game.visitDone || game.winner || botBusy) return;
     const result = E.throwDart(game, position);
     lastMessage = visitText(result);
     persistGame();
@@ -1021,7 +1111,7 @@
   }
 
   function undo() {
-    if (!game || game.turn !== "player" || botBusy) return;
+    if (!game || !humanTurn() || botBusy) return;
     cancelAutoPass();
     if (!E.undoDart(game)) return;
     lastMessage = "Taken back.";
@@ -1036,17 +1126,20 @@
   // A visit that ends without a win hands over on its own. A win waits for "Finish game".
   function scheduleAutoPass() {
     cancelAutoPass();
-    if (!game || !game.visitDone || game.winner || game.turn !== "player") return;
+    if (!game || !game.visitDone || game.winner || !humanTurn()) return;
     passTimer = setTimeout(() => { passTimer = null; passTurn(); }, game.visitBust ? PASS_DELAY_BUST : PASS_DELAY);
   }
 
-  // --- correcting your previous visit -------------------------------------------------------------------
-  // Shown whenever you have a visit behind you and it is your turn to start a new one.
-  const showEdit = () => !!game && !reviewing && !editing && !botBusy && !game.winner && game.turn === "player" && !game.visitDone && !game.visitDarts.length && game.visits.some((v) => v.who === "player");
+  // --- correcting a previous visit -------------------------------------------------------------------
+  // Shown whenever there is a visit to go back to and it is time to start a new one. With two people on
+  // the phone either player's latest visit can be corrected.
+  const canEditNow = () => !!game && !reviewing && !editing && !botBusy && !game.winner && humanTurn() && !game.visitDone && !game.visitDarts.length;
+  const showEdit = (who) => canEditNow() && game.visits.some((v) => v.who === who);
+  const otherSide = (who) => (who === "player" ? "bot" : "player");
 
-  function startEdit() {
-    if (!showEdit()) return;
-    const index = E.lastPlayerVisit(game);
+  function startEdit(who) {
+    if (!showEdit(who)) return;
+    const index = E.lastVisitOf(game, who);
     if (index < 0) {
       lastMessage = "This game was started before editing was added, and part of it was not recorded in a way that can be replayed. Games you start from now on can be edited.";
       render();
@@ -1055,7 +1148,7 @@
     // Back to the start of that visit; the visits after it are kept aside and put back afterwards.
     const base = E.replayVisits(E.gameOptions(game), game.visits.slice(0, index));
     if (base.error) { lastMessage = "That visit cannot be edited: " + base.error; render(); return; }
-    editing = { index, later: game.visits.slice(index + 1), backup: JSON.stringify(game), original: game.visits[index] };
+    editing = { index, who, later: game.visits.slice(index + 1), backup: JSON.stringify(game), original: game.visits[index] };
     cancelAutoPass();
     game = base.game;
     kpText = ""; kpAsking = false; lastMessage = "";
@@ -1067,7 +1160,7 @@
     cancelAutoPass();
     game = JSON.parse(editing.backup);
     editing = null; kpText = ""; kpAsking = false;
-    lastMessage = "Edit cancelled. Your visit is as it was.";
+    lastMessage = "Edit cancelled. The visit is as it was.";
     render();
   }
 
@@ -1086,17 +1179,18 @@
     if (game.winner) { finishGame(game.winner === "player" ? "won" : "lost"); return; }
     lastMessage = "Visit corrected.";
     persistGame(); render();
-    if (game.turn === "bot") runBot();
+    if (game.turn === "bot" && !versus()) runBot();
   }
 
   function passTurn() {
     cancelAutoPass();
-    if (!game || !game.visitDone || game.turn !== "player") return;
+    if (!game || !game.visitDone || !humanTurn()) return;
     announce(E.endVisit(game));
     if (editing) { finishEdit(); return; }
-    lastMessage = ""; kpText = ""; kpAsking = false;
-    if (game.winner) { finishGame("won"); return; }
-    persistGame(); render(); runBot();
+    lastMessage = versus() ? "Now " + nameOf(game.turn) + "." : ""; kpText = ""; kpAsking = false;
+    if (game.winner) { finishGame(game.winner === "player" ? "won" : "lost"); return; }
+    persistGame(); render();
+    if (!versus()) runBot();
   }
 
   // The bot throws one dart at a time so the darts can be watched landing.
@@ -1119,7 +1213,7 @@
         return;
       }
       const result = E.throwDart(game, E.botThrow(E.botAim(game), settings.rank, rng));
-      lastMessage = "Bot: " + visitText(result).replace("Your score", "Its score");
+      lastMessage = "Bot: " + visitText(result);
       persistGame(); render();
       setTimeout(step, BOT_DELAY);
     };
@@ -1146,21 +1240,71 @@
     return record;
   }
 
-  async function saveRecord(record) {
+  // One entry per visit, so the email can show the game round by round.
+  function visitLog() {
+    return game.visits.slice(0, 400).map((v) => ({
+      w: v.who === "player" ? "p" : "o",
+      t: game.kind === "x01" ? (v.bust ? "Bust" : String(v.scored)) : v.marks + (v.marks === 1 ? " mark" : " marks") + (v.points ? " +" + v.points : ""),
+    }));
+  }
+
+  // A game between two people. The result is from the first player's side, as in a game against the bot.
+  function buildVersusRecord(result) {
+    const s = E.summarize(game);
+    const record = {
+      uid: user.uid, timestamp: localStamp(startedAt), kind: game.kind, first: game.first, result,
+      durationSec: Math.max(0, Math.min(86400, Math.round((Date.now() - startedAt) / 1000))),
+      rounds: game.round, playerName: nameOf("player"), playerEmail: String(user.email), opponentName: nameOf("bot"), opponentEmail: match.opponentEmail,
+      playerAvg: s.player.avg, opponentAvg: s.bot.avg, playerScore: s.player.score, opponentScore: s.bot.score,
+      playerDarts: game.darts.player.map(dartRecord), opponentDarts: game.darts.bot.map(dartRecord), log: visitLog(),
+    };
+    if (game.kind === "x01") { record.startScore = game.startScore; record.doubleOut = game.doubleOut; }
+    return record;
+  }
+
+  // The server emails the result and writes how that went onto the saved game; this shows it.
+  function watchEmail(ref, record) {
+    const note = $("emailNote");
+    if (record.result === "abandoned") { note.className = "saved"; note.textContent = "Unfinished games are not emailed."; return; }
+    note.className = "saved"; note.textContent = "Emailing the result to " + record.playerEmail + " and " + record.opponentEmail + "…";
+    let stop = () => {}, settled = false;
+    const messages = {
+      sent: ["ok", "Result emailed to " + record.playerEmail + " and " + record.opponentEmail + "."],
+      "not-configured": ["", "Saved. Email is not set up yet, so nothing was sent."],
+      "not-allowed": ["", "Saved. Emails are only sent for the account that owns this app."],
+      "rate-limited": ["bad", "Saved. The daily email limit was reached, so nothing was sent."],
+      failed: ["bad", "Saved, but the email could not be sent."],
+      unfinished: ["", "Unfinished games are not emailed."],
+    };
+    stop = ref.onSnapshot((snap) => {
+      const data = snap && snap.exists ? snap.data() : null;
+      const status = data && data.emailStatus;
+      if (!status || settled) return;
+      settled = true; stop();
+      const [cls, text] = messages[status] || ["", "Saved."];
+      note.className = "saved " + cls; note.textContent = text + (status === "failed" && data.emailError ? " (" + data.emailError + ")" : "");
+    }, () => {});
+    setTimeout(() => { if (!settled) { settled = true; stop(); note.className = "saved"; note.textContent = "Saved. The email has not been confirmed yet; it may still arrive."; } }, 45000);
+  }
+
+  async function saveRecord(record, collectionName) {
+    collectionName = collectionName || "botGames";
     const note = $("saveNote");
     note.className = "saved"; note.textContent = "Saving…";
     $("retryBtn").classList.add("hidden");
-    store.set(UNSAVED_KEY, record);
+    store.set(UNSAVED_KEY, { coll: collectionName, record });
     try {
-      const ref = await db.collection("botGames").add(record);
+      const ref = await db.collection(collectionName).add(record);
       store.remove(UNSAVED_KEY);
       pendingRecord = null;
-      savedGames.push({ id: ref.id, data: record });
-      note.className = "saved ok"; note.textContent = "Saved to your practice record. It will show up in Time Left.";
+      savedGames.push({ id: ref.id, coll: collectionName, data: record });
+      note.className = "saved ok";
+      note.textContent = collectionName === "versusGames" ? "Saved to your record." : "Saved to your practice record. It will show up in Time Left.";
+      if (collectionName === "versusGames") watchEmail(ref, record);
       renderHistory(); renderHeat();
       return true;
     } catch (error) {
-      pendingRecord = record;
+      pendingRecord = { coll: collectionName, record };
       note.className = "saved bad";
       note.textContent = "Could not save this game: " + (error && error.message ? error.message : error) + ". It is kept on this device.";
       $("retryBtn").classList.remove("hidden");
@@ -1174,30 +1318,44 @@
     store.remove(GAME_KEY);
     reviewing = true;
     const s = E.summarize(game), won = result === "won", abandoned = result === "abandoned";
+    const gameLabel = gameName({ kind: game.kind, startScore: game.startScore, doubleOut: game.doubleOut });
     $("overCard").hidden = false;
     showRecord(true);
-    $("overTitle").textContent = abandoned ? "Game ended" : won ? "You won!" : "The " + rankName(settings.rank) + " bot won";
-    $("overSub").textContent = gameName({ kind: game.kind, startScore: game.startScore, doubleOut: game.doubleOut }) + " against the " + rankName(settings.rank) + " bot";
+    $("emailNote").textContent = ""; $("emailNote").className = "saved";
+    if (versus()) {
+      $("overTitle").textContent = abandoned ? "Game ended" : nameOf(won ? "player" : "bot") + " won!";
+      $("overSub").textContent = gameLabel + ": " + nameOf("player") + " against " + nameOf("bot");
+    } else {
+      $("overTitle").textContent = abandoned ? "Game ended" : won ? "You won!" : "The " + rankName(settings.rank) + " bot won";
+      $("overSub").textContent = gameLabel + " against the " + rankName(settings.rank) + " bot";
+    }
     const stats = $("overStats"); stats.textContent = "";
     const add = (value, label) => { const c = el("div", "stat"); c.append(el("b", "", String(value)), el("span", "", label)); stats.append(c); };
     const unit = game.kind === "x01" ? "3-dart avg" : "marks/round";
-    add(s.player.avg.toFixed(1), "you, " + unit); add(s.bot.avg.toFixed(1), "bot, " + unit);
-    add(s.player.darts, "your darts");
-    if (game.kind === "x01") add(s.player.best, "your best visit");
+    if (versus()) {
+      add(s.player.avg.toFixed(1), nameOf("player") + ", " + unit); add(s.bot.avg.toFixed(1), nameOf("bot") + ", " + unit);
+      add(s.player.darts + " / " + s.bot.darts, "darts thrown");
+      if (game.kind === "x01") add(s.player.best + " / " + s.bot.best, "best visits");
+    } else {
+      add(s.player.avg.toFixed(1), "you, " + unit); add(s.bot.avg.toFixed(1), "bot, " + unit);
+      add(s.player.darts, "your darts");
+      if (game.kind === "x01") add(s.player.best, "your best visit");
+    }
     add(Math.max(1, Math.round((Date.now() - startedAt) / 60000)) + " min", "time");
     add(game.round, "rounds");
     lastMessage = "";
-    const typed = game.darts.player.filter((d) => !hasPosition(d)).length;
-    $("overNote").textContent = typed ? typed + " of your darts were entered as scores, so they are not on the board or the heat map." : "";
+    const typed = game.darts.player.filter((d) => !hasPosition(d)).length + (versus() ? game.darts.bot.filter((d) => !hasPosition(d)).length : 0);
+    $("overNote").textContent = typed ? typed + " of the darts were entered as scores, so they are not on the board or the heat map." : "";
     render();
     $("status").textContent = "Game over. Every dart is shown on the board.";
-    saveRecord(buildRecord(result));
+    if (versus()) saveRecord(buildVersusRecord(result), "versusGames");
+    else saveRecord(buildRecord(result));
   }
 
   function quitGame() {
     if (!game || game.winner) return;
     if (editing) cancelEdit();
-    const thrown = game.darts.player.length;
+    const thrown = game.darts.player.length + (versus() ? game.darts.bot.length : 0);
     const message = thrown ? "End this game? It is saved as unfinished, with the darts you have thrown." : "Leave this game? Nothing has been thrown, so nothing is saved.";
     if (!window.confirm(message)) return;
     if (!thrown) { store.remove(GAME_KEY); showSetup(); return; }
@@ -1207,12 +1365,15 @@
   }
 
   async function retryUnsavedFromEarlier() {
-    const record = store.get(UNSAVED_KEY);
-    if (!record || record.uid !== user.uid) return;
+    const saved = store.get(UNSAVED_KEY);
+    if (!saved) return;
+    // Older versions stored the record itself; newer ones say which collection it belongs to.
+    const record = saved.record || saved, collectionName = saved.record ? saved.coll : "botGames";
+    if (!record || record.uid !== user.uid || !["botGames", "versusGames"].includes(collectionName)) return;
     try {
-      const ref = await db.collection("botGames").add(record);
+      const ref = await db.collection(collectionName).add(record);
       store.remove(UNSAVED_KEY);
-      savedGames.push({ id: ref.id, data: record });
+      savedGames.push({ id: ref.id, coll: collectionName, data: record });
       renderHistory(); renderHeat();
     } catch (_) { /* still offline or refused: it stays on the device for the next visit */ }
   }
@@ -1223,7 +1384,7 @@
   document.addEventListener("keydown", (event) => {
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     // Board entry: Enter hands over a finished visit that is waiting for it.
-    if (game && !keypadActive() && !reviewing && event.key === "Enter" && event.target === document.body && game.turn === "player" && game.visitDone) {
+    if (game && !keypadActive() && !reviewing && event.key === "Enter" && event.target === document.body && humanTurn() && game.visitDone) {
       event.preventDefault(); passTurn(); return;
     }
     if (!keypadActive()) return;
@@ -1255,11 +1416,12 @@
   $("missBtn").addEventListener("click", missDart);
   $("nextBtn").addEventListener("click", passTurn);
   $("quitBtn").addEventListener("click", quitGame);
-  $("editBtn").addEventListener("click", startEdit);
+  $("editBtn").addEventListener("click", () => startEdit(game && game.turn));
+  $("editOtherBtn").addEventListener("click", () => startEdit(game && otherSide(game.turn)));
   $("cancelEditBtn").addEventListener("click", cancelEdit);
   $("againBtn").addEventListener("click", startGame);
   $("changeBtn").addEventListener("click", showSetup);
-  $("retryBtn").addEventListener("click", () => { if (pendingRecord) saveRecord(pendingRecord); });
+  $("retryBtn").addEventListener("click", () => { if (pendingRecord) saveRecord(pendingRecord.record, pendingRecord.coll); });
   $("heatKind").addEventListener("change", renderHeat);
   $("heatWho").addEventListener("change", renderHeat);
   $("signInBtn").addEventListener("click", () => auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()));
@@ -1269,7 +1431,7 @@
     $("authScreen").classList.toggle("hidden", !!u);
     $("app").classList.toggle("hidden", !u);
     $("userPill").classList.toggle("hidden", !u);
-    renderSound();
+    renderSound(); syncSetupVisibility();
     if (!u) { botToken++; return; }
     const name = u.displayName || u.email || "Signed in";
     $("userName").textContent = name; $("userName").title = name;

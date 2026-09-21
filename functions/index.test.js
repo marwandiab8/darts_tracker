@@ -262,3 +262,140 @@ test("saved sessions still go through the same path", async () => {
   assert.equal(sent.length, 1);
   assert.equal(sent[0].body.item.sourceDocumentPath, "sessions/g1");
 });
+
+// --- emailing the result of a game between two players ----------------------------------------------
+
+const versusGame = (overrides = {}) => ({
+  uid: "owner-1", timestamp: "2026-09-20 19:30", kind: "x01", startScore: 501, doubleOut: true, first: "player", result: "won",
+  durationSec: 905, rounds: 14, playerName: "Alex", playerEmail: "alex@example.com", opponentName: "Sam", opponentEmail: "sam@example.org",
+  playerAvg: 55.55, opponentAvg: 48.1, playerScore: 0, opponentScore: 96,
+  playerDarts: new Array(40).fill({ x: 0, y: 0, s: "T20" }), opponentDarts: new Array(39).fill({ x: 0, y: 0, s: "S5" }),
+  log: [{ w: "p", t: "60" }, { w: "o", t: "45" }, { w: "p", t: "180" }, { w: "o", t: "Bust" }], ...overrides,
+});
+
+function fakeTransport(failOn) {
+  const sent = [];
+  return { sent, sendMail: async (message) => { if (failOn && message.to === failOn) throw new Error("550 mailbox unavailable hunter2"); sent.push(message); return {}; } };
+}
+const mailConfig = { user: "me@gmail.com", pass: "hunter2", from: "Darts <me@gmail.com>" };
+
+test("the result email names the winner, the game and each player's numbers", () => {
+  const mail = _test.buildVersusEmail(versusGame(), "https://dartstracker2026.web.app");
+  assert.equal(mail.subject, "Darts: Alex beat Sam at 501");
+  assert.match(mail.text, /^Alex won!/);
+  assert.match(mail.text, /501, 2026-09-20 19:30 · 14 rounds · 15 min/);
+  assert.match(mail.text, /Alex: 3-dart average 55\.6, 40 darts, left 0, best visit 180/);
+  assert.match(mail.text, /Sam: 3-dart average 48\.1, 39 darts, left 96, best visit 45/);
+  assert.match(mail.text, /1\. Alex 60 · Sam 45/);
+  assert.match(mail.text, /2\. Alex 180 · Sam Bust/);
+  assert.match(mail.text, /Play again: https:\/\/dartstracker2026\.web\.app\/practice\.html/);
+  assert.match(mail.html, /<h2[^>]*>Alex won!<\/h2>/);
+});
+
+test("the result email works for a lost game, a straight-out game and cricket", () => {
+  assert.equal(_test.buildVersusEmail(versusGame({ result: "lost" })).subject, "Darts: Sam beat Alex at 501");
+  assert.equal(_test.buildVersusEmail(versusGame({ doubleOut: false, startScore: 301 })).subject, "Darts: Alex beat Sam at 301 straight out");
+  const cricket = _test.buildVersusEmail(versusGame({ kind: "cricket", startScore: undefined, doubleOut: undefined, playerAvg: 2.4, opponentAvg: 1.9, log: [{ w: "p", t: "3 marks" }] }));
+  assert.equal(cricket.subject, "Darts: Alex beat Sam at Cricket");
+  assert.match(cricket.text, /marks per round 2\.4/);
+  assert.doesNotMatch(cricket.text, /best visit/);
+});
+
+test("names and scores in the email are escaped, so a name cannot inject markup", () => {
+  const mail = _test.buildVersusEmail(versusGame({ opponentName: '<img src=x onerror="alert(1)">', log: [{ w: "p", t: "<b>1</b>" }] }));
+  assert.equal(mail.html.includes("<img"), false);
+  assert.equal(mail.html.includes("<b>1</b>"), false);
+  assert.match(mail.html, /&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt;/);
+  assert.equal(_test.escapeHtml("a&b<c>\"'"), "a&amp;b&lt;c&gt;&quot;&#39;");
+});
+
+test("both players get their own email, once, and only real addresses are used", () => {
+  assert.deepEqual(_test.versusRecipients(versusGame()).map((p) => p.email), ["alex@example.com", "sam@example.org"]);
+  assert.deepEqual(_test.versusRecipients(versusGame({ opponentEmail: "ALEX@example.com" })).map((p) => p.email), ["alex@example.com"], "the same person twice");
+  assert.deepEqual(_test.versusRecipients(versusGame({ opponentEmail: "not an email" })).map((p) => p.email), ["alex@example.com"]);
+  assert.deepEqual(_test.versusRecipients(versusGame({ opponentEmail: "a@b.co\r\nBcc: victim@x.com" })).map((p) => p.email), ["alex@example.com"], "no header injection");
+  assert.deepEqual(_test.versusRecipients(versusGame({ opponentEmail: "a@b.co, c@d.co" })).map((p) => p.email), ["alex@example.com"], "one address only");
+});
+
+test("a finished game is emailed to each player separately, from the configured account", async () => {
+  const transport = fakeTransport();
+  const result = await _test.sendVersusResults({ game: versusGame(), config: mailConfig, transport, appUrl: "https://dartstracker2026.web.app" });
+  assert.equal(result.status, "sent");
+  assert.deepEqual(transport.sent.map((m) => m.to), ["alex@example.com", "sam@example.org"]);
+  assert.equal(transport.sent[0].from, "Darts <me@gmail.com>");
+  assert.equal(transport.sent[0].subject, "Darts: Alex beat Sam at 501");
+  assert.ok(transport.sent.every((m) => typeof m.to === "string" && !m.to.includes(",")), "each message goes to one address");
+});
+
+test("nothing is sent for an unfinished game, or when email is not configured", async () => {
+  const transport = fakeTransport();
+  assert.equal((await _test.sendVersusResults({ game: versusGame({ result: "abandoned" }), config: mailConfig, transport })).status, "unfinished");
+  assert.equal((await _test.sendVersusResults({ game: versusGame(), config: { user: "", pass: "" }, transport })).status, "not-configured");
+  assert.equal((await _test.sendVersusResults({ game: versusGame(), config: { user: "me@gmail.com", pass: "" }, transport })).status, "not-configured");
+  assert.equal((await _test.sendVersusResults({ game: versusGame({ playerEmail: "x", opponentEmail: "y" }), config: mailConfig, transport })).status, "failed");
+  assert.equal(transport.sent.length, 0);
+});
+
+test("a send failure is reported without leaking the password", async () => {
+  const transport = fakeTransport("sam@example.org");
+  const result = await _test.sendVersusResults({ game: versusGame(), config: mailConfig, transport });
+  assert.equal(result.status, "failed");
+  assert.deepEqual(result.sent, ["alex@example.com"], "the first player's email had already gone");
+  assert.match(result.error, /550 mailbox unavailable/);
+  assert.equal(result.error.includes("hunter2"), false);
+});
+
+// --- what happens when a two-player game is saved -----------------------------------------------------
+
+function fakeRef() {
+  const updates = [];
+  return { path: "versusGames/g1", updates, update: async (fields) => { updates.push(fields); } };
+}
+const okSend = async () => ({ status: "sent", sent: ["alex@example.com", "sam@example.org"] });
+
+test("the owner's finished game is emailed and marked sent", async () => {
+  const ref = fakeRef();
+  let sends = 0;
+  const status = await _test.processVersusGame({ game: versusGame(), ref, ownerUid: "owner-1", countRecent: async () => 0, send: async () => { sends += 1; return okSend(); } });
+  assert.equal(status, "sent");
+  assert.equal(sends, 1);
+  assert.equal(ref.updates[0].emailStatus, "sent");
+  assert.ok("emailedAt" in ref.updates[0]);
+});
+
+test("someone else's game is never emailed, so the app cannot be used to send mail to strangers", async () => {
+  const ref = fakeRef();
+  let sends = 0;
+  const send = async () => { sends += 1; return okSend(); };
+  assert.equal(await _test.processVersusGame({ game: versusGame({ uid: "stranger" }), ref, ownerUid: "owner-1", countRecent: async () => 0, send }), "not-allowed");
+  assert.equal(await _test.processVersusGame({ game: versusGame(), ref: fakeRef(), ownerUid: "", countRecent: async () => 0, send }), "not-allowed", "no owner configured: fail closed");
+  assert.equal(sends, 0);
+  assert.deepEqual(ref.updates, [{ emailStatus: "not-allowed" }]);
+});
+
+test("unfinished games are not emailed, and a game is only ever processed once", async () => {
+  let sends = 0;
+  const send = async () => { sends += 1; return okSend(); };
+  assert.equal(await _test.processVersusGame({ game: versusGame({ result: "abandoned" }), ref: fakeRef(), ownerUid: "owner-1", countRecent: async () => 0, send }), "unfinished");
+  const ref = fakeRef();
+  assert.equal(await _test.processVersusGame({ game: versusGame({ emailStatus: "sent" }), ref, ownerUid: "owner-1", countRecent: async () => 0, send }), "already-done");
+  assert.equal(sends, 0);
+  assert.equal(ref.updates.length, 0);
+});
+
+test("no more than 20 games a day are emailed", async () => {
+  let sends = 0;
+  const send = async () => { sends += 1; return okSend(); };
+  const ref = fakeRef();
+  assert.equal(await _test.processVersusGame({ game: versusGame(), ref, ownerUid: "owner-1", countRecent: async () => 20, send }), "rate-limited");
+  assert.equal(sends, 0);
+  assert.equal(await _test.processVersusGame({ game: versusGame(), ref: fakeRef(), ownerUid: "owner-1", countRecent: async () => 19, send }), "sent");
+  assert.equal(await _test.processVersusGame({ game: versusGame(), ref: fakeRef(), ownerUid: "owner-1", countRecent: async () => { throw new Error("index"); }, send }), "sent", "a failed count does not block the email");
+});
+
+test("a failed send is recorded on the game with the reason", async () => {
+  const ref = fakeRef();
+  const status = await _test.processVersusGame({ game: versusGame(), ref, ownerUid: "owner-1", countRecent: async () => 0, send: async () => ({ status: "failed", sent: [], error: "535 bad login" }) });
+  assert.equal(status, "failed");
+  assert.deepEqual(ref.updates[0], { emailStatus: "failed", emailError: "535 bad login" });
+});

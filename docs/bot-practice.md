@@ -1,5 +1,7 @@
 # Practice against a bot
 
+(To play against another person, see [two-players.md](two-players.md).)
+
 `practice.html` (the "Play the bot" button in the tracker's header) is a separate page for playing 501-style and Cricket games against a bot, keeping a record of every game, and showing a heat map of where your darts land.
 
 ## Playing

@@ -282,3 +282,63 @@ test("a saved bot game cannot be edited", async () => {
   await assertFails(updateDoc(ref, { playerAvg: 200 }));
   await assertFails(setDoc(ref, botGame({ result: "lost" })));
 });
+
+// --- games between two people sharing the phone ---------------------------------------------------
+
+const versusGame = (overrides = {}) => ({
+  uid: me, timestamp: "2026-09-20 19:30", kind: "x01", startScore: 501, doubleOut: true, first: "player", result: "won",
+  durationSec: 900, rounds: 14, playerName: "Alex", playerEmail: `${me}@example.com`, opponentName: "Sam", opponentEmail: "sam@example.org",
+  playerAvg: 55.5, opponentAvg: 48.1, playerScore: 0, opponentScore: 96,
+  playerDarts: dartList(40), opponentDarts: dartList(39), log: [{ w: "p", t: "60" }, { w: "o", t: "45" }], ...overrides,
+});
+
+test("a signed-in user can save, list and delete their own two-player games, and nobody else can read them", async () => {
+  const db = asUser(me);
+  const ref = await assertSucceeds(addDoc(collection(db, "versusGames"), versusGame()));
+  await assertSucceeds(getDoc(ref));
+  const listed = await assertSucceeds(getDocs(query(collection(db, "versusGames"), where("uid", "==", me))));
+  assert.equal(listed.size, 1);
+  await assertFails(getDoc(doc(asUser(other), "versusGames", ref.id)));
+  await assertFails(getDocs(query(collection(asUser(other), "versusGames"), where("uid", "==", me))));
+  await assertFails(deleteDoc(doc(asUser(other), "versusGames", ref.id)));
+  await assertFails(getDoc(doc(env.unauthenticatedContext().firestore(), "versusGames", ref.id)));
+  await assertSucceeds(deleteDoc(ref));
+});
+
+test("a two-player game needs a real opponent email, and the first player's must be their own", async () => {
+  const db = asUser(me);
+  for (const opponentEmail of ["", "sam", "sam@", "@example.org", "sam@example", "sam smith@example.org", 5, "a@b".padEnd(300, "c") + ".com"]) {
+    await assertFails(addDoc(collection(db, "versusGames"), versusGame({ opponentEmail })));
+  }
+  await assertFails(addDoc(collection(db, "versusGames"), versusGame({ playerEmail: "someone.else@example.com" })));
+  await assertFails(addDoc(collection(db, "versusGames"), versusGame({ playerEmail: "not an email" })));
+  const missing = versusGame();
+  delete missing.opponentEmail;
+  await assertFails(addDoc(collection(db, "versusGames"), missing));
+  await assertSucceeds(addDoc(collection(db, "versusGames"), versusGame({ opponentEmail: "first.last+darts@mail.example.co.uk" })));
+});
+
+test("two-player games with the wrong shape are refused, and cricket has no start score", async () => {
+  const db = asUser(me);
+  const refused = [
+    versusGame({ uid: other }), versusGame({ result: "draw" }), versusGame({ kind: "bullseye" }), versusGame({ startScore: 150 }),
+    versusGame({ playerName: "x".repeat(61) }), versusGame({ opponentName: 5 }), versusGame({ playerDarts: dartList(601) }),
+    versusGame({ opponentDarts: "many" }), versusGame({ log: "text" }), versusGame({ playerAvg: -1 }), versusGame({ extra: "field" }),
+    versusGame({ emailStatus: "sent" }),
+  ];
+  for (const data of refused) await assertFails(addDoc(collection(db, "versusGames"), data));
+  const cricket = versusGame({ kind: "cricket", playerAvg: 2.1, opponentAvg: 1.7 });
+  delete cricket.startScore;
+  delete cricket.doubleOut;
+  await assertSucceeds(addDoc(collection(db, "versusGames"), cricket));
+  await assertFails(addDoc(collection(db, "versusGames"), versusGame({ kind: "cricket" })));
+  await assertSucceeds(addDoc(collection(db, "versusGames"), versusGame({ result: "abandoned", playerDarts: [], opponentDarts: [] })));
+});
+
+test("a saved two-player game cannot be edited, so the email status is only ever set by the server", async () => {
+  const db = asUser(me);
+  const ref = await assertSucceeds(addDoc(collection(db, "versusGames"), versusGame()));
+  await assertFails(updateDoc(ref, { emailStatus: "sent" }));
+  await assertFails(updateDoc(ref, { opponentEmail: "victim@example.org" }));
+  await assertFails(setDoc(ref, versusGame({ result: "lost" })));
+});

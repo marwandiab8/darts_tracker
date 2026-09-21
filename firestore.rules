@@ -78,6 +78,46 @@ service cloud.firestore {
         && optionalNumber(data, 'botScore', 0, 100000);
     }
 
+    function validEmail(value) {
+      return value is string && value.size() >= 5 && value.size() <= 254
+        && value.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$');
+    }
+
+    // A finished (or abandoned) game between two people sharing the phone, as practice.html saves it.
+    // The first player is the signed-in user, so their email must be the one on their account. Once
+    // saved, a Cloud Function emails the result to both players; it writes the email status itself,
+    // so a game is never edited by the app after it is saved.
+    function validVersusGame(data) {
+      return data.keys().hasOnly(['uid', 'timestamp', 'kind', 'startScore', 'doubleOut', 'first', 'result',
+          'durationSec', 'rounds', 'playerName', 'playerEmail', 'opponentName', 'opponentEmail',
+          'playerAvg', 'opponentAvg', 'playerScore', 'opponentScore', 'playerDarts', 'opponentDarts', 'log'])
+        && data.keys().hasAll(['uid', 'timestamp', 'kind', 'result', 'playerName', 'playerEmail', 'opponentName',
+          'opponentEmail', 'playerDarts', 'opponentDarts'])
+        && data.uid == request.auth.uid
+        && data.timestamp is string && data.timestamp.size() >= 10 && data.timestamp.size() <= 20
+        && data.kind in ['x01', 'cricket']
+        && (data.kind == 'x01'
+            ? (data.keys().hasAll(['startScore', 'doubleOut'])
+                && data.startScore is int && data.startScore >= 201 && data.startScore <= 701
+                && data.startScore % 100 == 1 && data.doubleOut is bool)
+            : !data.keys().hasAny(['startScore', 'doubleOut']))
+        && (!data.keys().hasAny(['first']) || data.first in ['player', 'bot'])
+        && data.result in ['won', 'lost', 'abandoned']
+        && data.playerName is string && data.playerName.size() <= 60
+        && data.opponentName is string && data.opponentName.size() <= 60
+        && validEmail(data.playerEmail) && data.playerEmail == request.auth.token.email
+        && validEmail(data.opponentEmail)
+        && data.playerDarts is list && data.playerDarts.size() <= 600
+        && data.opponentDarts is list && data.opponentDarts.size() <= 600
+        && (!data.keys().hasAny(['log']) || (data.log is list && data.log.size() <= 400))
+        && optionalNumber(data, 'durationSec', 0, 86400)
+        && optionalNumber(data, 'rounds', 0, 1000)
+        && optionalNumber(data, 'playerAvg', 0, 300)
+        && optionalNumber(data, 'opponentAvg', 0, 300)
+        && optionalNumber(data, 'playerScore', 0, 100000)
+        && optionalNumber(data, 'opponentScore', 0, 100000);
+    }
+
     // Live typing sync per user.
     match /liveDrafts/{uid} {
       allow read, delete: if signedIn() && request.auth.uid == uid;
@@ -98,6 +138,14 @@ service cloud.firestore {
     match /botGames/{gameId} {
       allow read: if signedIn() && resource.data.uid == request.auth.uid;
       allow create: if signedIn() && validBotGame(request.resource.data);
+      allow update: if false;
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    // Games between two people on one phone. Read and delete your own; never edited by the app.
+    match /versusGames/{gameId} {
+      allow read: if signedIn() && resource.data.uid == request.auth.uid;
+      allow create: if signedIn() && validVersusGame(request.resource.data);
       allow update: if false;
       allow delete: if signedIn() && resource.data.uid == request.auth.uid;
     }
