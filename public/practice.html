@@ -233,6 +233,20 @@
             <option value="bot">The bot</option>
           </select>
         </div>
+        <div>
+          <label for="seriesTarget">Play</label>
+          <select id="seriesTarget">
+            <option value="1">Single game</option>
+            <option value="2">First to win 2 games</option>
+            <option value="3">First to win 3 games</option>
+            <option value="4">First to win 4 games</option>
+            <option value="5">First to win 5 games</option>
+            <option value="7">First to win 7 games</option>
+            <option value="9">First to win 9 games</option>
+            <option value="11">First to win 11 games</option>
+          </select>
+          <div class="muted" style="font-size:13px;margin-top:4px;">Who throws first alternates each game after the first.</div>
+        </div>
       </div>
       <div class="actions"><button type="button" id="startBtn">Start game</button></div>
     </section>
@@ -279,12 +293,14 @@
             <div class="over">
               <h2 id="overTitle"></h2>
               <div class="muted" id="overSub"></div>
+              <div class="muted" id="overSeries" style="font-weight:700;"></div>
               <div class="muted" id="overNote" style="font-size:13px;"></div>
               <div class="stats" id="overStats"></div>
               <div class="saved" id="saveNote" role="status"></div>
               <div class="saved" id="emailNote" role="status"></div>
               <div class="actions">
                 <button type="button" id="retryBtn" class="hidden">Try saving again</button>
+                <button type="button" class="hidden" id="nextGameBtn">Next game</button>
                 <button type="button" id="againBtn">Play again</button>
                 <button type="button" class="secondary" id="changeBtn">Change setup</button>
               </div>
@@ -348,7 +364,8 @@
   const auth = firebase.auth(), db = firebase.firestore();
 
   const $ = (id) => document.getElementById(id);
-  const SETTINGS_KEY = "dt_practice_settings", GAME_KEY = "dt_practice_game", UNSAVED_KEY = "dt_practice_unsaved";
+  const SETTINGS_KEY = "dt_practice_settings", GAME_KEY = "dt_practice_game", UNSAVED_KEY = "dt_practice_unsaved", SERIES_KEY = "dt_practice_series";
+  const SERIES_TARGETS = E.SERIES_TARGETS;
   const BOT_DELAY = 800, BOT_PAUSE = 1300;
   const RANK_IDS = E.RANKS.map((r) => r.id);
 
@@ -360,7 +377,7 @@
   };
 
   let user = null;
-  let settings = Object.assign({ kind: "x01", startScore: 501, doubleOut: true, rank: "club", first: "player", entry: "board", confirm: false, mute: false, opponent: "bot", oppName: "", oppEmail: "" }, store.get(SETTINGS_KEY) || {});
+  let settings = Object.assign({ kind: "x01", startScore: 501, doubleOut: true, rank: "club", first: "player", entry: "board", confirm: false, mute: false, opponent: "bot", oppName: "", oppEmail: "", seriesTarget: 1 }, store.get(SETTINGS_KEY) || {});
   // Who is playing the running game. Against the bot the two sides are "You" and the bot; with another
   // player they are two people sharing the phone, and the email address of the second one is kept
   // here so the result can be sent to both.
@@ -382,6 +399,9 @@
   // to see the dart land and to press Undo, and longer after a bust so the message can be read.
   const PASS_DELAY = 1200, PASS_DELAY_BUST = 2400;
   let game = null, startedAt = 0, botToken = 0, botBusy = false;
+  // A best-of/first-to series of games. null for a single game. Not to be confused with `match`
+  // above, which just holds the two sides' names - this tracks the running score across games.
+  let series = null;
   let lastMessage = "", reviewing = false, pendingRecord = null, savedGames = [];
 
   function el(tag, className, text) {
@@ -620,7 +640,7 @@
     const rank = $("rank");
     E.RANKS.forEach((r) => { const o = el("option", "", r.name); o.value = r.id; rank.append(o); });
     applySettingsToForm();
-    for (const id of ["startScore", "outRule", "rank", "first", "entry", "handover"]) $(id).addEventListener("change", readForm);
+    for (const id of ["startScore", "outRule", "rank", "first", "entry", "handover", "seriesTarget"]) $(id).addEventListener("change", readForm);
     for (const id of ["oppName", "oppEmail"]) { $(id).addEventListener("input", readForm); $(id).addEventListener("change", readForm); }
     document.querySelectorAll('input[name="kind"], input[name="opp"]').forEach((r) => r.addEventListener("change", readForm));
   }
@@ -636,6 +656,7 @@
     $("first").value = settings.first === "bot" ? "bot" : "player";
     $("entry").value = settings.entry === "keypad" ? "keypad" : "board";
     $("handover").value = settings.confirm ? "enter" : "auto";
+    $("seriesTarget").value = SERIES_TARGETS.includes(Number(settings.seriesTarget)) ? String(settings.seriesTarget) : "1";
     document.querySelectorAll('input[name="opp"]').forEach((r) => { r.checked = r.value === (settings.opponent === "human" ? "human" : "bot"); });
     $("oppName").value = String(settings.oppName || "");
     $("oppEmail").value = String(settings.oppEmail || "");
@@ -644,8 +665,10 @@
 
   function readForm() {
     const kind = document.querySelector('input[name="kind"]:checked');
+    const seriesTarget = Number($("seriesTarget").value);
     settings = { kind: kind ? kind.value : "x01", startScore: Number($("startScore").value), doubleOut: $("outRule").value !== "straight", rank: $("rank").value, first: $("first").value, entry: $("entry").value, confirm: $("handover").value === "enter",
-      opponent: (document.querySelector('input[name="opp"]:checked') || {}).value === "human" ? "human" : "bot", oppName: $("oppName").value.trim().slice(0, 40), oppEmail: $("oppEmail").value.trim(), mute: settings.mute };
+      opponent: (document.querySelector('input[name="opp"]:checked') || {}).value === "human" ? "human" : "bot", oppName: $("oppName").value.trim().slice(0, 40), oppEmail: $("oppEmail").value.trim(), mute: settings.mute,
+      seriesTarget: SERIES_TARGETS.includes(seriesTarget) ? seriesTarget : 1 };
     store.set(SETTINGS_KEY, settings);
     syncSetupVisibility();
   }
@@ -690,7 +713,14 @@
   const short = (label) => (label === "SB" ? "25" : label === "DB" ? "Bull" : label[0] === "S" ? label.slice(1) : label);
 
   function persistGame() {
-    if (game && !game.winner && !editing) store.set(GAME_KEY, { game, startedAt, settings, match });
+    if (game && !game.winner && !editing) store.set(GAME_KEY, { game, startedAt, settings, match, series });
+  }
+
+  // Between games in a series: the current game is over (nothing to resume there) but the series
+  // itself - the running score, and whose turn is first next - still needs to survive a reload.
+  function persistSeries() {
+    if (series && !E.seriesDecided(series)) store.set(SERIES_KEY, { series, settings, match });
+    else store.remove(SERIES_KEY);
   }
 
   // The two names for a new game. With another player, names that would be the same are told apart.
@@ -709,9 +739,26 @@
     readForm();
     if (settings.opponent === "human" && !setupProblem().ok) { syncSetupVisibility(); return; }
     match = buildMatch();
-    game = E.createGame({ kind: settings.kind, startScore: settings.startScore, doubleOut: settings.doubleOut, first: settings.first });
+    store.remove(SERIES_KEY);
+    const target = Number(settings.seriesTarget);
+    series = SERIES_TARGETS.includes(target) ? E.createSeries({ target, first: settings.first }) : null;
+    game = E.createGame({ kind: settings.kind, startScore: settings.startScore, doubleOut: settings.doubleOut, first: series ? series.nextFirst : settings.first });
     startedAt = Date.now(); reviewing = false; lastMessage = ""; pendingRecord = null;
-    store.set(GAME_KEY, { game, startedAt, settings, match });
+    store.set(GAME_KEY, { game, startedAt, settings, match, series });
+    showGame();
+    render();
+    if (game.turn === "bot" && !versus()) runBot();
+  }
+
+  // The next game of a series already in progress - same opponent, same settings, keeps the
+  // running score. Who throws first alternates from whoever was first in the game just finished.
+  function startNextSeriesGame() {
+    if (!series || E.seriesDecided(series)) return;
+    cancelAutoPass(); editing = null;
+    game = E.createGame({ kind: settings.kind, startScore: settings.startScore, doubleOut: settings.doubleOut, first: series.nextFirst });
+    startedAt = Date.now(); reviewing = false; lastMessage = ""; pendingRecord = null;
+    store.set(GAME_KEY, { game, startedAt, settings, match, series });
+    store.remove(SERIES_KEY);
     showGame();
     render();
     if (game.turn === "bot" && !versus()) runBot();
@@ -748,22 +795,48 @@
       && (g.kind === "cricket" ? g.marks && g.points && g.marksThrown : g.remaining && Number.isFinite(g.remaining.player) && Number.isFinite(g.remaining.bot));
   }
 
+  function looksLikeSeries(s) {
+    return !!s && typeof s === "object" && SERIES_TARGETS.includes(Number(s.target)) && s.wins
+      && Number.isFinite(s.wins.player) && Number.isFinite(s.wins.bot) && (s.nextFirst === "player" || s.nextFirst === "bot")
+      && !E.seriesDecided(s);
+  }
+
+  // Whichever resume offer is currently shown: a mid-game one (GAME_KEY, possibly with a series
+  // note too), or a between-games one where only the series score survives (SERIES_KEY).
+  let resumeKind = null;
+
   function checkResume() {
-    const saved = store.get(GAME_KEY);
-    const ok = saved && looksLikeGame(saved.game);
-    $("resumeBox").classList.toggle("hidden", !ok);
-    if (ok) {
-      const g = saved.game, when = new Date(Number(saved.startedAt) || Date.now());
-      const against = saved.match && saved.match.human ? " against " + saved.match.names.bot : "";
-      $("resumeText").textContent = "You have an unfinished " + (g.kind === "cricket" ? "Cricket" : g.startScore) + " game" + against + " from " + when.toLocaleString() + ".";
+    const savedGame = store.get(GAME_KEY);
+    if (savedGame && looksLikeGame(savedGame.game)) {
+      resumeKind = "game";
+      $("resumeBox").classList.remove("hidden");
+      $("resumeBtn").textContent = "Resume game";
+      const g = savedGame.game, when = new Date(Number(savedGame.startedAt) || Date.now());
+      const against = savedGame.match && savedGame.match.human ? " against " + savedGame.match.names.bot : "";
+      const seriesNote = savedGame.series && looksLikeSeries(savedGame.series) ? " " + seriesScoreLine(savedGame.series, savedGame.match) + "." : "";
+      $("resumeText").textContent = "You have an unfinished " + (g.kind === "cricket" ? "Cricket" : g.startScore) + " game" + against + " from " + when.toLocaleString() + "." + seriesNote;
+      return;
     }
+    const savedSeries = store.get(SERIES_KEY);
+    if (savedSeries && looksLikeSeries(savedSeries.series)) {
+      resumeKind = "series";
+      $("resumeBox").classList.remove("hidden");
+      $("resumeBtn").textContent = "Continue match";
+      const against = savedSeries.match && savedSeries.match.human ? " against " + savedSeries.match.names.bot : "";
+      $("resumeText").textContent = "You have a match in progress" + against + ": " + seriesScoreLine(savedSeries.series, savedSeries.match) + ".";
+      return;
+    }
+    resumeKind = null;
+    $("resumeBox").classList.add("hidden");
   }
 
   function resumeGame() {
+    if (resumeKind === "series") { resumeSeriesBetweenGames(); return; }
     const saved = store.get(GAME_KEY);
     if (!saved || !looksLikeGame(saved.game)) { checkResume(); return; }
     game = saved.game; startedAt = Number(saved.startedAt) || Date.now();
     match = saved.match && saved.match.names && typeof saved.match.human === "boolean" ? saved.match : { human: false, names: { player: "You", bot: rankName(settings.rank) + " bot" }, opponentEmail: "" };
+    series = saved.series && looksLikeSeries(saved.series) ? saved.series : null;
     E.upgradeGame(game);
     if (saved.settings && RANK_IDS.includes(saved.settings.rank)) settings = Object.assign(settings, saved.settings);
     reviewing = false; lastMessage = "Game resumed."; pendingRecord = null;
@@ -773,6 +846,17 @@
       while (game.visitDarts.length && E.undoDart(game)) { /* take back its unfinished darts */ }
       runBot();
     }
+  }
+
+  // Between games in a series (the last game finished cleanly, nothing left to resume there) -
+  // restore the running score and names, then go straight into the next game.
+  function resumeSeriesBetweenGames() {
+    const saved = store.get(SERIES_KEY);
+    if (!saved || !looksLikeSeries(saved.series)) { checkResume(); return; }
+    series = saved.series;
+    match = saved.match && saved.match.names && typeof saved.match.human === "boolean" ? saved.match : { human: false, names: { player: "You", bot: rankName(settings.rank) + " bot" }, opponentEmail: "" };
+    if (saved.settings && RANK_IDS.includes(saved.settings.rank)) settings = Object.assign(settings, saved.settings);
+    startNextSeriesGame();
   }
 
   function scoreBlock(who) {
@@ -1312,6 +1396,14 @@
     }
   }
 
+  // "Match: You 2 - 1 Bot", using the right names for bot or versus play. `m` defaults to the
+  // live `match`, but a resume preview needs to build this from a saved one before it is live.
+  function seriesScoreLine(s, m) {
+    const info = m && m.names ? m : match;
+    const playerName = info.human ? info.names.player : "You", botName = info.human ? info.names.bot : "Bot";
+    return "Match: " + playerName + " " + s.wins.player + " - " + s.wins.bot + " " + botName;
+  }
+
   function finishGame(result) {
     cancelAutoPass(); editing = null;
     botToken++; botBusy = false;
@@ -1319,6 +1411,17 @@
     reviewing = true;
     const s = E.summarize(game), won = result === "won", abandoned = result === "abandoned";
     const gameLabel = gameName({ kind: game.kind, startScore: game.startScore, doubleOut: game.doubleOut });
+
+    // Series bookkeeping: quitting mid-game ends the whole series, not just the one game - there
+    // is no sensible score to carry forward from a game nobody finished.
+    let decided = false;
+    if (series && abandoned) {
+      series = null; store.remove(SERIES_KEY);
+    } else if (series) {
+      decided = E.recordSeriesGame(series, game.winner).decided;
+      persistSeries();
+    }
+
     $("overCard").hidden = false;
     showRecord(true);
     $("emailNote").textContent = ""; $("emailNote").className = "saved";
@@ -1329,6 +1432,16 @@
       $("overTitle").textContent = abandoned ? "Game ended" : won ? "You won!" : "The " + rankName(settings.rank) + " bot won";
       $("overSub").textContent = gameLabel + " against the " + rankName(settings.rank) + " bot";
     }
+    if (series) {
+      $("overSeries").textContent = decided
+        ? (won ? (versus() ? nameOf("player") : "You") : (versus() ? nameOf("bot") : "Bot")) + " won the match " + Math.max(series.wins.player, series.wins.bot) + "-" + Math.min(series.wins.player, series.wins.bot) + "!"
+        : seriesScoreLine(series);
+    } else {
+      $("overSeries").textContent = "";
+    }
+    const midSeries = !!series && !decided;
+    $("nextGameBtn").classList.toggle("hidden", !midSeries);
+    $("againBtn").classList.toggle("hidden", midSeries);
     const stats = $("overStats"); stats.textContent = "";
     const add = (value, label) => { const c = el("div", "stat"); c.append(el("b", "", String(value)), el("span", "", label)); stats.append(c); };
     const unit = game.kind === "x01" ? "3-dart avg" : "marks/round";
@@ -1356,9 +1469,10 @@
     if (!game || game.winner) return;
     if (editing) cancelEdit();
     const thrown = game.darts.player.length + (versus() ? game.darts.bot.length : 0);
-    const message = thrown ? "End this game? It is saved as unfinished, with the darts you have thrown." : "Leave this game? Nothing has been thrown, so nothing is saved.";
+    const seriesNote = series ? " This also ends the match (" + seriesScoreLine(series) + ")." : "";
+    const message = (thrown ? "End this game? It is saved as unfinished, with the darts you have thrown." : "Leave this game? Nothing has been thrown, so nothing is saved.") + seriesNote;
     if (!window.confirm(message)) return;
-    if (!thrown) { store.remove(GAME_KEY); showSetup(); return; }
+    if (!thrown) { store.remove(GAME_KEY); store.remove(SERIES_KEY); series = null; showSetup(); return; }
     // Bring the visit that is in progress to a clean stop so the record is consistent.
     botToken++; botBusy = false;
     finishGame("abandoned");
@@ -1410,7 +1524,11 @@
   $("entryKeypad").addEventListener("click", () => setEntry("keypad"));
   $("startBtn").addEventListener("click", startGame);
   $("resumeBtn").addEventListener("click", resumeGame);
-  $("discardBtn").addEventListener("click", () => { store.remove(GAME_KEY); checkResume(); });
+  $("discardBtn").addEventListener("click", () => {
+    store.remove(resumeKind === "series" ? SERIES_KEY : GAME_KEY);
+    if (resumeKind === "game") store.remove(SERIES_KEY); // a mid-game resume's series note is the same series
+    checkResume();
+  });
   $("board").addEventListener("pointerdown", (event) => { if (event.button === 0 || event.pointerType === "touch") onBoardTap(event); });
   $("undoBtn").addEventListener("click", undo);
   $("missBtn").addEventListener("click", missDart);
@@ -1420,6 +1538,7 @@
   $("editOtherBtn").addEventListener("click", () => startEdit(game && otherSide(game.turn)));
   $("cancelEditBtn").addEventListener("click", cancelEdit);
   $("againBtn").addEventListener("click", startGame);
+  $("nextGameBtn").addEventListener("click", startNextSeriesGame);
   $("changeBtn").addEventListener("click", showSetup);
   $("retryBtn").addEventListener("click", () => { if (pendingRecord) saveRecord(pendingRecord.record, pendingRecord.coll); });
   $("heatKind").addEventListener("change", renderHeat);

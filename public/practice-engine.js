@@ -178,6 +178,33 @@
     return game;
   }
 
+  // --- a multi-game match (first to N games wins) -----------------------------------------------
+
+  const SERIES_TARGETS = [2, 3, 4, 5, 7, 9, 11];
+
+  function createSeries(options) {
+    const target = Number(options && options.target);
+    if (!SERIES_TARGETS.includes(target)) throw new Error("target must be one of " + SERIES_TARGETS.join(", "));
+    const first = options && options.first === "bot" ? "bot" : "player";
+    return { target, wins: { player: 0, bot: 0 }, gamesPlayed: 0, nextFirst: first };
+  }
+
+  function seriesDecided(series) {
+    return !!series && (series.wins.player >= series.target || series.wins.bot >= series.target);
+  }
+
+  // Records one finished game's winner against the series. Mutates and returns `series`. Who
+  // throws first alternates from the game just recorded, unless the series is now decided.
+  function recordSeriesGame(series, winner) {
+    if (seriesDecided(series)) throw new Error("This match is already decided.");
+    if (winner !== "player" && winner !== "bot") throw new Error("winner must be \"player\" or \"bot\".");
+    series.wins[winner] += 1;
+    series.gamesPlayed += 1;
+    const decided = seriesDecided(series);
+    if (!decided) series.nextFirst = other(series.nextFirst);
+    return { series, decided, winner };
+  }
+
   const SNAPSHOT_FIELDS = ["remaining", "visitStart", "visitBust", "visitInput", "marks", "points", "marksThrown", "visitMarks", "visitPoints", "visitDarts", "visitDone", "winner"];
 
   function snapshot(game) {
@@ -611,6 +638,10 @@
     botAim,
     checkoutRoute,
     createGame,
+    SERIES_TARGETS,
+    createSeries,
+    recordSeriesGame,
+    seriesDecided,
     throwDart,
     enterVisit,
     enterDarts,

@@ -723,3 +723,73 @@ test("either side's latest visit can be found, for two people sharing the phone"
   assert.equal(corrected.game.remaining.bot, 501 - 120);
   assert.deepEqual(corrected.game.remaining.player, game.remaining.player);
 });
+
+// --- a match (first to N games) -----------------------------------------------------------------
+
+test("createSeries rejects a target that is not one of the offered choices", () => {
+  assert.throws(() => E.createSeries({ target: 6 }), /target must be one of/);
+  assert.throws(() => E.createSeries({ target: 1 }), /target must be one of/);
+  for (const target of E.SERIES_TARGETS) {
+    const series = E.createSeries({ target });
+    assert.equal(series.target, target);
+    assert.deepEqual(series.wins, { player: 0, bot: 0 });
+    assert.equal(series.gamesPlayed, 0);
+  }
+});
+
+test("createSeries defaults who is first to \"player\", or takes an explicit side", () => {
+  assert.equal(E.createSeries({ target: 3 }).nextFirst, "player");
+  assert.equal(E.createSeries({ target: 3, first: "bot" }).nextFirst, "bot");
+  assert.equal(E.createSeries({ target: 3, first: "player" }).nextFirst, "player");
+});
+
+test("recordSeriesGame counts a win, alternates who is first, and is not decided early", () => {
+  const series = E.createSeries({ target: 3, first: "player" });
+  const first = E.recordSeriesGame(series, "player");
+  assert.equal(series.wins.player, 1);
+  assert.equal(series.wins.bot, 0);
+  assert.equal(series.gamesPlayed, 1);
+  assert.equal(first.decided, false);
+  assert.equal(series.nextFirst, "bot", "the loser of the last game throws first is not the rule here - it just alternates");
+
+  const second = E.recordSeriesGame(series, "bot");
+  assert.equal(series.wins.bot, 1);
+  assert.equal(second.decided, false);
+  assert.equal(series.nextFirst, "player");
+});
+
+test("recordSeriesGame decides the match the instant someone reaches the target, however many games that took", () => {
+  const series = E.createSeries({ target: 2 });
+  E.recordSeriesGame(series, "bot");
+  const result = E.recordSeriesGame(series, "bot");
+  assert.equal(result.decided, true);
+  assert.equal(result.winner, "bot");
+  assert.equal(series.wins.bot, 2);
+  assert.equal(E.seriesDecided(series), true);
+});
+
+test("recordSeriesGame stops alternating once the match is decided", () => {
+  const series = E.createSeries({ target: 2, first: "player" });
+  E.recordSeriesGame(series, "player");
+  const before = series.nextFirst;
+  E.recordSeriesGame(series, "player");
+  assert.equal(series.nextFirst, before, "nextFirst is meaningless once decided, and must not keep flipping");
+});
+
+test("recordSeriesGame refuses to record another game once the match is already decided", () => {
+  const series = E.createSeries({ target: 2 });
+  E.recordSeriesGame(series, "player");
+  E.recordSeriesGame(series, "player");
+  assert.throws(() => E.recordSeriesGame(series, "bot"), /already decided/);
+});
+
+test("recordSeriesGame rejects a winner that is not \"player\" or \"bot\"", () => {
+  assert.throws(() => E.recordSeriesGame(E.createSeries({ target: 3 }), "nobody"), /player.*bot/);
+});
+
+test("a race to 11 genuinely needs 11 wins, not a two-ahead margin", () => {
+  const series = E.createSeries({ target: 11 });
+  for (let i = 0; i < 10; i += 1) assert.equal(E.recordSeriesGame(series, "player").decided, false);
+  assert.equal(E.recordSeriesGame(series, "player").decided, true);
+  assert.equal(series.wins.player, 11);
+});
