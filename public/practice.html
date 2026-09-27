@@ -347,7 +347,11 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
-<script src="practice-engine.js"></script>
+<!-- ?v= is bumped whenever practice-engine.js changes, so a browser/carrier cache that ignores
+     Cache-Control: no-cache (a real, previously-seen failure mode - see docs/bot-practice.md) is
+     still forced to fetch the matching engine instead of silently pairing a new page with a stale
+     one, which throws inside announce()'s catch-all and looks like "no sound at all". -->
+<script src="practice-engine.js?v=2"></script>
 <script>
 (function () {
   "use strict";
@@ -466,7 +470,13 @@
       // recording here without its own audio-processing pipeline).
       const botPitch = (visit.who === "bot" && !versus()) ? 0.75 : 1;
       window.speechSynthesis.cancel();
-      for (const seg of E.visitAnnouncement(visit, game.kind, game.winner === visit.who)) {
+      // A stale cached practice-engine.js from before visitAnnouncement existed would otherwise throw
+      // here and go completely silent for every score, not just the new calls - fall back to the
+      // older, simpler visitSpeech (still exported) rather than saying nothing at all.
+      const segs = typeof E.visitAnnouncement === "function"
+        ? E.visitAnnouncement(visit, game.kind, game.winner === visit.who)
+        : [{ text: E.visitSpeech(visit, game.kind, game.winner === visit.who), rate: 1, pitch: 1, volume: 1, clip: null }];
+      for (const seg of segs) {
         if (seg.clip) {
           playClip(seg.clip, botPitch);
         } else {
