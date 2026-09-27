@@ -730,17 +730,16 @@ test("a caller's voice lifts with the score, and peaks as a deep roar at 180", (
   assert.equal(oneSixty[0].text, "ONE HUNDRED AND SIXTY!!");
   assert.ok(oneSixty[0].pitch > oneForty[0].pitch, "160 is higher energy than 140");
 
-  // 180 itself: the top of the same climb, taken further than 160-179, plus its own extra flourish -
-  // a second, even more excited "ONE EIGHTY!!!" - so it's unmistakable as the biggest call, not just a
-  // slightly higher-pitched 160. (An earlier version copied the real, deep-roar PDC delivery by dropping
-  // 180's pitch/rate below normal - through a synthesised voice that just sounded flat, not powerful,
-  // so it was dropped in favour of what actually reads as maximum excitement.)
+  // 180 itself: the highest pitch of any tier, said once, at a measured pace rather than a rushed one -
+  // two earlier versions overcorrected (first a deep, slow "roar" that read as flat through a
+  // synthesised voice; then a fast, repeated call that read as rushed and like an accidental echo) -
+  // pitch alone, at a normal speaking pace, is what actually reads as the biggest call without either
+  // problem.
   const maximum = call(180);
-  assert.equal(maximum.length, 2, "the score, then an extra flourish unique to 180");
+  assert.equal(maximum.length, 1, "said once - no repeated/echoed call");
   assert.equal(maximum[0].text, "ONE HUNDRED AND EIGHTY!!!");
-  assert.ok(maximum[0].pitch > oneSixty[0].pitch && maximum[0].rate > oneSixty[0].rate, "180 is higher energy than 160, the top of the climb");
-  assert.equal(maximum[1].text, "ONE EIGHTY!!!");
-  assert.ok(maximum[1].pitch > maximum[0].pitch, "the flourish tops even the main call");
+  assert.ok(maximum[0].pitch > oneSixty[0].pitch, "180 is the highest pitch of any tier");
+  assert.ok(maximum[0].rate <= oneSixty[0].rate, "but not delivered faster/more rushed than the tiers below it");
   assert.equal(maximum[0].volume, 1);
 
   // A bust and a no-score are both said plainly, never with excitement, but no quieter than usual either.
@@ -756,10 +755,9 @@ test("winning the leg gets its own separate 'Game shot!' call, on top of the sco
 
   // A maximum finish still gets both: the 180 roar, then the win call.
   const maxFinish = E.visitAnnouncement({ scored: 180 }, "x01", true);
-  assert.equal(maxFinish.length, 3, "the 180 call, its own flourish, then Game shot");
+  assert.equal(maxFinish.length, 2, "the 180 call, then Game shot");
   assert.equal(maxFinish[0].text, "ONE HUNDRED AND EIGHTY!!!");
-  assert.equal(maxFinish[1].text, "ONE EIGHTY!!!");
-  assert.equal(maxFinish[2].text, "GAME SHOT!");
+  assert.equal(maxFinish[1].text, "GAME SHOT!");
 
   assert.equal(E.visitAnnouncement({ scored: 100 }, "x01", false).length, 1, "no Game shot call when the leg isn't won");
 });
