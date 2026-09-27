@@ -10,6 +10,9 @@
     --good: #22c55e; --warn: #ef4444; --border: rgba(148, 163, 184, .18); --chip: #0f172a;
   }
   * { box-sizing: border-box; }
+  /* Pinch-zoom still works (the viewport meta allows it), but a plain tap no longer risks being
+     read as a double-tap-to-zoom - that's what was making the screen "move" on iPad taps. */
+  html, body { touch-action: manipulation; }
   body { margin: 0; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; }
   .shell { background: radial-gradient(1200px 600px at 20% 0%, rgba(245, 158, 11, .12), transparent 55%), var(--bg); min-height: 100vh; padding: 12px 16px 16px; }
   .wrap { max-width: 1000px; margin: 0 auto; }

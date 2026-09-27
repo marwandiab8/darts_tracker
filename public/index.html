@@ -2,9 +2,14 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
 
 <style>
+  /* Pinch-zoom still works (the viewport meta allows it), but a plain tap on a button or the
+     board no longer risks being read as a double-tap-to-zoom or a pan gesture - that's what was
+     making the screen "move" on iPad taps. */
+  html, body { touch-action: manipulation; }
+
   :root {
     --bg: #0b0f17; --muted: #94a3b8; --text: #e5e7eb; --accent: #f59e0b;
     --good: #22c55e; --warn: #ef4444; --border: rgba(148, 163, 184, .18); --chip: #0f172a;
