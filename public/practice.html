@@ -405,6 +405,10 @@
   // After your third dart the turn passes to the bot by itself. This is the pause first, long enough
   // to see the dart land and to press Undo, and longer after a bust so the message can be read.
   const PASS_DELAY = 1200, PASS_DELAY_BUST = 2400;
+  // Mid-match, the next game starts on its own too - long enough to read the score and stats and
+  // hear "Game shot!" first. "Next game" stays clickable to skip the wait.
+  const NEXT_GAME_DELAY = 5000;
+  let nextGameTimer = null;
   let game = null, startedAt = 0, botToken = 0, botBusy = false;
   // A best-of/first-to series of games. null for a single game. Not to be confused with `match`
   // above, which just holds the two sides' names - this tracks the running score across games.
@@ -859,7 +863,7 @@
   }
 
   function startGame() {
-    cancelAutoPass(); editing = null;
+    cancelAutoPass(); cancelNextGameTimer(); editing = null;
     readForm();
     if (settings.opponent === "human" && !setupProblem().ok) { syncSetupVisibility(); return; }
     match = buildMatch();
@@ -878,7 +882,7 @@
   // running score. Who throws first alternates from whoever was first in the game just finished.
   function startNextSeriesGame() {
     if (!series || E.seriesDecided(series)) return;
-    cancelAutoPass(); editing = null;
+    cancelAutoPass(); cancelNextGameTimer(); editing = null;
     game = E.createGame({ kind: settings.kind, startScore: settings.startScore, doubleOut: settings.doubleOut, first: series.nextFirst });
     startedAt = Date.now(); reviewing = false; lastMessage = ""; pendingRecord = null;
     store.set(GAME_KEY, { game, startedAt, settings, match, series });
@@ -903,7 +907,7 @@
   }
 
   function showSetup() {
-    cancelAutoPass(); editing = null;
+    cancelAutoPass(); cancelNextGameTimer(); editing = null;
     botToken++; botBusy = false;
     game = null; reviewing = false;
     $("gameCard").classList.add("hidden");
@@ -1331,6 +1335,10 @@
     if (passTimer) { clearTimeout(passTimer); passTimer = null; }
   }
 
+  function cancelNextGameTimer() {
+    if (nextGameTimer) { clearTimeout(nextGameTimer); nextGameTimer = null; }
+  }
+
   // A visit that ends without a win hands over on its own. A win waits for "Finish game".
   function scheduleAutoPass() {
     cancelAutoPass();
@@ -1529,7 +1537,7 @@
   }
 
   function finishGame(result) {
-    cancelAutoPass(); editing = null;
+    cancelAutoPass(); cancelNextGameTimer(); editing = null;
     botToken++; botBusy = false;
     store.remove(GAME_KEY);
     reviewing = true;
@@ -1565,7 +1573,9 @@
     }
     const midSeries = !!series && !decided;
     $("nextGameBtn").classList.toggle("hidden", !midSeries);
+    $("nextGameBtn").textContent = "Next game (starting automatically…)";
     $("againBtn").classList.toggle("hidden", midSeries);
+    if (midSeries) nextGameTimer = setTimeout(() => { nextGameTimer = null; startNextSeriesGame(); }, NEXT_GAME_DELAY);
     const stats = $("overStats"); stats.textContent = "";
     const add = (value, label) => { const c = el("div", "stat"); c.append(el("b", "", String(value)), el("span", "", label)); stats.append(c); };
     const unit = game.kind === "x01" ? "3-dart avg" : "marks/round";
