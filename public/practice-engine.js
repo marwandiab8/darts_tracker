@@ -448,19 +448,20 @@
   }
 
   // How a professional caller's voice lifts with the score - flat and businesslike for a normal
-  // return, brighter for a "ton" (100+), a shout by the 140s, and by 160+ real excitement. 180 itself
-  // is its own thing: the iconic call ("ONE HUNDRED AND EIGHTY") is a deep, gravelly roar - think of
-  // the PDC's Russ Bray, "The Voice" - not a high-pitched shriek, so it drops the pitch and slows down
-  // for weight rather than pushing pitch/rate higher like the tiers below it.
-  // The swings are kept wide (pitch/rate are the parts most browsers' voices actually render clearly;
-  // `volume` differences are barely audible on many voices, so it stays at 1 throughout rather than
-  // making an ordinary score sound quieter than it always has).
+  // return, brighter for a "ton" (100+), a shout by the 140s, and by 160+ real excitement, peaking at
+  // 180. The real PDC call ("ONE HUNDRED AND EIGHTY") is famously a deep, gravelly roar (think Russ
+  // Bray, "The Voice") rather than a high shout - a first version of this tried to copy that by
+  // dropping 180's pitch/rate BELOW the normal tone. In testing that just sounded flat and less
+  // energetic through a synthesised voice (no rasp, no chest, no crowd behind it - lowering the pitch
+  // alone reads as "tired", not "powerful"), which defeats the actual goal: 180 should be the most
+  // exciting call, not a curveball. So it keeps climbing the same way the tiers below it do, taken to
+  // the top, and gets an extra flourish (see visitAnnouncement) no other score does.
   const SCORE_TIERS = [
     { min: 0, rate: 0.95, pitch: 1.0, volume: 1, style: (t) => cap(t) },
     { min: 100, rate: 1.0, pitch: 1.15, volume: 1, style: (t) => cap(t) },
     { min: 140, rate: 1.1, pitch: 1.35, volume: 1, style: (t) => t.toUpperCase() + "!" },
     { min: 160, rate: 1.15, pitch: 1.5, volume: 1, style: (t) => t.toUpperCase() + "!!" },
-    { min: 180, rate: 0.72, pitch: 0.6, volume: 1, style: (t) => t.toUpperCase() + "!!!" },
+    { min: 180, rate: 1.25, pitch: 1.85, volume: 1, style: (t) => t.toUpperCase() + "!!!" },
   ];
 
   function scoreTier(n) {
@@ -481,6 +482,10 @@
       else {
         const tier = scoreTier(visit.scored);
         segs.push({ text: tier.style(sayNumber(visit.scored)), rate: tier.rate, pitch: tier.pitch, volume: tier.volume });
+        // The maximum gets an extra, even more excited flourish no other score does - real broadcasts
+        // often repeat a huge number for emphasis, and this makes 180 unmistakable as a structurally
+        // different call, not just a slightly higher-pitched version of 160.
+        if (visit.scored === 180) segs.push({ text: "ONE EIGHTY!!!", rate: 1.3, pitch: 2, volume: 1 });
       }
     } else {
       const marks = visit.marks || 0, points = visit.points || 0;
