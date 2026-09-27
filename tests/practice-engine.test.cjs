@@ -713,17 +713,17 @@ test("a visit is announced by its total, a bust, or a win", () => {
 test("a caller's voice lifts with the score, and peaks as a deep roar at 180", () => {
   const call = (scored) => E.visitAnnouncement({ scored }, "x01", false);
 
-  // Below a ton: businesslike, plain text, no shouting, no quieter than a normal score has always been,
-  // and no pre-recorded clip - too many distinct numbers below 140 to feasibly record each one.
+  // Below a ton: businesslike, plain text, no shouting, no quieter than a normal score has always been.
+  // Every score has its own recorded clip; the browser voice is only a fallback.
   const plain = call(60);
-  assert.deepEqual(plain, [{ text: "Sixty", rate: 0.95, pitch: 1.0, volume: 1, clip: null }]);
+  assert.deepEqual(plain, [{ text: "Sixty", rate: 0.95, pitch: 1.0, volume: 1, clip: "audio/calls/score-60.wav" }]);
 
-  // A ton and up to 139: a bit brighter, still said plainly, still no clip.
+  // A ton and up to 139: a bit brighter, still said plainly.
   const ton = call(120);
   assert.equal(ton.length, 1);
   assert.equal(ton[0].text, "One hundred and twenty");
   assert.ok(ton[0].rate > plain[0].rate && ton[0].pitch > plain[0].pitch, "a ton lifts rate and pitch above a normal return");
-  assert.equal(ton[0].clip, null);
+  assert.equal(ton[0].clip, "audio/calls/score-120.wav");
 
   // 140s and 160s: shouted (capitals, exclamation marks), each louder/higher than the last, and from
   // here up every score has its own pre-recorded clip (a real voice, not the browser's synthesiser).
@@ -754,13 +754,14 @@ test("a caller's voice lifts with the score, and peaks as a deep roar at 180", (
   assert.deepEqual(E.visitAnnouncement({ scored: 0, bust: true }, "x01", false), [{ text: "Bust", rate: 0.95, pitch: 0.95, volume: 1, clip: "audio/calls/bust.wav" }]);
 });
 
-test("every clip the announcer can ask for is in ALL_CLIP_FILES, so the first tap unlocks all of them", () => {
+test("every call has a recorded clip, and every clip it can ask for exists in public/", () => {
   const wanted = new Set();
-  for (let n = 1; n <= 180; n++) for (const s of E.visitAnnouncement({ scored: n }, "x01", true)) if (s.clip) wanted.add(s.clip);
-  for (const s of E.visitAnnouncement({ scored: 0 }, "x01", false)) if (s.clip) wanted.add(s.clip);
-  for (const s of E.visitAnnouncement({ scored: 0, bust: true }, "x01", false)) if (s.clip) wanted.add(s.clip);
+  const want = (segs) => { for (const s of segs) { assert.ok(s.clip, "no clip for: " + s.text); wanted.add(s.clip); } };
+  for (let n = 0; n <= 180; n++) want(E.visitAnnouncement({ scored: n }, "x01", true));
+  want(E.visitAnnouncement({ scored: 0, bust: true }, "x01", false));
+  for (let marks = 0; marks <= 9; marks++) for (let points = 0; points <= 180; points++) want(E.visitAnnouncement({ marks, points }, "cricket", true));
   const listed = new Set(E.ALL_CLIP_FILES);
-  assert.equal(listed.size, 44);
+  assert.equal(listed.size, 373);
   for (const c of wanted) assert.ok(listed.has(c), c + " is played but never unlocked");
   const fs = require("node:fs"), path = require("node:path");
   for (const c of listed) assert.ok(fs.existsSync(path.join(__dirname, "..", "public", c)), c + " is missing from public/");
@@ -784,17 +785,19 @@ test("winning the leg gets its own separate 'Game shot!' call, on top of the sco
 });
 
 test("cricket gets a lighter version of the same idea: a plain call, or an excited one for a clean sweep", () => {
-  // Cricket's marks-and-points text is too open-ended (marks 0-9, points 0 and up, in combination) to
-  // pre-record, so it stays on the browser's voice throughout, unlike x01's fixed 140+ scores.
+  // Marks and points are two clips said back to back, since every combination would be hundreds of files.
   const single = E.visitAnnouncement({ marks: 1, points: 0 }, "cricket", false);
-  assert.deepEqual(single, [{ text: "One mark", rate: 0.95, pitch: 1, volume: 1, clip: null }]);
+  assert.deepEqual(single, [{ text: "One mark", rate: 0.95, pitch: 1, volume: 1, clip: "audio/calls/marks-1.wav" }]);
 
   const sweep = E.visitAnnouncement({ marks: 3, points: 0 }, "cricket", false);
   assert.equal(sweep[0].text, "THREE MARKS!");
   assert.ok(sweep[0].pitch > single[0].pitch && sweep[0].rate > single[0].rate);
-  assert.equal(sweep[0].clip, null);
+  assert.equal(sweep[0].clip, "audio/calls/marks-3.wav");
 
-  assert.deepEqual(E.visitAnnouncement({ marks: 0, points: 0 }, "cricket", false), [{ text: "No marks", rate: 0.95, pitch: 1, volume: 1, clip: null }]);
+  const withPoints = E.visitAnnouncement({ marks: 2, points: 40 }, "cricket", false);
+  assert.deepEqual(withPoints.map((s) => [s.text, s.clip]), [["Two marks", "audio/calls/marks-2.wav"], ["and forty points", "audio/calls/points-40.wav"]]);
+
+  assert.deepEqual(E.visitAnnouncement({ marks: 0, points: 0 }, "cricket", false), [{ text: "No marks", rate: 0.95, pitch: 1, volume: 1, clip: "audio/calls/no-marks.wav" }]);
 });
 
 test("either side's latest visit can be found, for two people sharing the phone", () => {

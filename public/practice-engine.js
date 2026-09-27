@@ -462,9 +462,11 @@
   // enough to matter (140 and up, plus Bust/No score/Game shot - a fixed, small set of exact phrases,
   // `clipForScore`/`FIXED_CLIPS` below) are pre-rendered offline with a proper neural voice (Piper,
   // MIT-licensed, using a CC BY 4.0 LibriTTS-R speaker - see `public/audio/calls/README.md`) instead of
-  // the browser's built-in synthesiser, which is what actually sounds thin on a shouted line. A plain
-  // return and a "ton" (1-139) stay on the browser voice: there are too many distinct numbers to
-  // feasibly pre-record every one of them, and those tiers were never the ones that sounded weak.
+  // the browser's built-in synthesiser, which is what actually sounds thin on a shouted line. Every
+  // other call (1-139, and Cricket's marks/points) is pre-rendered with the same voice too: the
+  // browser's SpeechSynthesis was silent on iPad/iPhone while the recorded clips played fine, so the
+  // browser voice is now only a fallback for a clip that fails to load. The rate/pitch fields here
+  // only shape that fallback; a clip is played as it was recorded.
   const SCORE_TIERS = [
     { min: 0, rate: 0.95, pitch: 1.0, volume: 1, style: (t) => cap(t) },
     { min: 100, rate: 1.0, pitch: 1.15, volume: 1, style: (t) => cap(t) },
@@ -479,21 +481,20 @@
     return tier;
   }
 
-  // A pre-rendered clip (path under `public/`) for the fixed set of big/special calls, or `null` when
-  // there isn't one and the browser's own voice should say it instead (see the comment above
-  // SCORE_TIERS). Every score from 140 to 180 has one; 1-139 do not.
+  // The pre-rendered clip (path under `public/`) for each call, or `null` if there is none and the
+  // browser's voice has to say it.
   function clipForScore(n) {
-    return n >= 140 && n <= 180 ? `audio/calls/score-${n}.wav` : null;
+    return Number.isInteger(n) && n >= 1 && n <= 180 ? `audio/calls/score-${n}.wav` : null;
   }
-  const FIXED_CLIPS = { bust: "audio/calls/bust.wav", noScore: "audio/calls/no-score.wav", gameShot: "audio/calls/game-shot.wav" };
+  const clipForMarks = (m) => (Number.isInteger(m) && m >= 1 && m <= 9 ? `audio/calls/marks-${m}.wav` : null);
+  const clipForPoints = (p) => (Number.isInteger(p) && p >= 1 && p <= 180 ? `audio/calls/points-${p}.wav` : null);
+  const FIXED_CLIPS = { bust: "audio/calls/bust.wav", noScore: "audio/calls/no-score.wav", gameShot: "audio/calls/game-shot.wav", noMarks: "audio/calls/no-marks.wav" };
 
-  // Every clip file that exists, for practice.html to unlock up front on the same first tap that
-  // warms up the browser's voice. Several mobile browsers only bless the exact <audio> element that
-  // was played during a real user gesture - unlocking one clip does not unlock the other 43, so all of
-  // them need their own play() call during that same tap, not just whichever one happens to be first.
+  // Every clip file that exists (the page loads each one the first time it is needed).
   const ALL_CLIP_FILES = [];
-  for (let n = 140; n <= 180; n++) ALL_CLIP_FILES.push(clipForScore(n));
-  ALL_CLIP_FILES.push(FIXED_CLIPS.bust, FIXED_CLIPS.noScore, FIXED_CLIPS.gameShot);
+  for (let n = 1; n <= 180; n++) ALL_CLIP_FILES.push(clipForScore(n), clipForPoints(n));
+  for (let m = 1; m <= 9; m++) ALL_CLIP_FILES.push(clipForMarks(m));
+  ALL_CLIP_FILES.push(FIXED_CLIPS.bust, FIXED_CLIPS.noScore, FIXED_CLIPS.gameShot, FIXED_CLIPS.noMarks);
 
   // The full call for a finished visit, as one or more utterances to speak in order, each with its own
   // voice (rate/pitch/volume, on top of whatever base voice is speaking) and an optional `clip` - a
@@ -512,11 +513,14 @@
       }
     } else {
       const marks = visit.marks || 0, points = visit.points || 0;
-      if (!marks) segs.push({ text: "No marks", rate: 0.95, pitch: 1, volume: 1, clip: null });
+      if (!marks) segs.push({ text: "No marks", rate: 0.95, pitch: 1, volume: 1, clip: FIXED_CLIPS.noMarks });
       else {
-        const text = sayNumber(marks) + (marks === 1 ? " mark" : " marks") + (points ? " and " + sayNumber(points) + " points" : "");
+        // Two clips back to back ("Three marks", "and sixty points") - one per combination would be hundreds.
+        const text = sayNumber(marks) + (marks === 1 ? " mark" : " marks");
         const sweep = marks >= 3; // three marks in one visit - a clean sweep of the number
-        segs.push({ text: sweep ? text.toUpperCase() + "!" : cap(text), rate: sweep ? 1.1 : 0.95, pitch: sweep ? 1.35 : 1, volume: 1, clip: null });
+        const voice = { rate: sweep ? 1.1 : 0.95, pitch: sweep ? 1.35 : 1, volume: 1 };
+        segs.push({ text: sweep ? text.toUpperCase() + "!" : cap(text), ...voice, clip: clipForMarks(marks) });
+        if (points) segs.push({ text: "and " + sayNumber(points) + " points", ...voice, clip: clipForPoints(points) });
       }
     }
     if (won) segs.push({ text: "GAME SHOT!", rate: 1.05, pitch: 1.3, volume: 1, clip: FIXED_CLIPS.gameShot });
