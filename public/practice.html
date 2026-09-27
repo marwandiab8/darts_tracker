@@ -351,7 +351,7 @@
      Cache-Control: no-cache (a real, previously-seen failure mode - see docs/bot-practice.md) is
      still forced to fetch the matching engine instead of silently pairing a new page with a stale
      one, which throws inside announce()'s catch-all and looks like "no sound at all". -->
-<script src="practice-engine.js?v=3"></script>
+<script src="practice-engine.js?v=4"></script>
 <script>
 (function () {
   "use strict";
@@ -423,75 +423,133 @@
 
   // The fixed set of big/special calls (see FIXED_CLIPS/clipForScore in practice-engine.js) are
   // pre-recorded with a real voice rather than the browser's own synthesiser - see
-  // public/audio/calls/README.md for what that voice is and why. Cached per file so a repeat of the
-  // same call (e.g. two 180s in a game) doesn't re-create the element each time.
-  const clipCache = Object.create(null);
-  let currentClip = null;
-  function getClip(path) {
-    let a = clipCache[path];
-    if (!a) { a = new Audio(path); clipCache[path] = a; }
-    return a;
+  // public/audio/calls/README.md for what that voice is and why.
+  //
+  // They are downloaded whole with fetch() and played through the Web Audio API, NOT streamed through
+  // <audio> elements. Firebase Hosting answers the byte-range probe Safari sends before playing any
+  // media ("Range: bytes=0-1") with a plain 200 instead of 206, and iPhone Safari refuses to play media
+  // from such a server - which is why every recorded call was silent on the phone while the browser's
+  // own voice (low scores) worked. Web Audio also needs only one unlock for every clip (not one per
+  // <audio> element), gives the bot a real pitch shift (detune), and lets the clips play in order.
+  const AC = window.AudioContext || window.webkitAudioContext;
+  let audioCtx = null;
+  const clipBuffers = Object.create(null); // path -> Promise<AudioBuffer | null>
+  let currentSource = null;
+  let announceToken = 0;
+  const soundDebug = /[?&]sounddebug\b/.test(location.search);
+  let lastSoundNote = "";
+
+  function noteSound(text) {
+    lastSoundNote = text;
+    if (!soundDebug) return;
+    let box = document.getElementById("soundDebug");
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "soundDebug";
+      box.style.cssText = "position:fixed;left:8px;bottom:8px;z-index:9999;background:#000c;color:#fff;font:12px monospace;padding:6px 8px;border-radius:6px;max-width:92vw";
+      document.body.appendChild(box);
+    }
+    const loaded = Object.keys(clipBuffers).length;
+    box.textContent = `audio: ${audioCtx ? audioCtx.state : "none"} · clips requested: ${loaded} · last: ${text}`;
   }
-  function playClip(path, rate) {
-    const a = getClip(path);
-    a.wanted = true;
-    a.muted = false;
-    // Resetting currentTime before a fresh element has loaded its metadata throws in some browsers
-    // (Safari in particular) - on its own, so it can't take play() down with it if it fails.
-    try { a.currentTime = 0; } catch (_) {}
+
+  function loadClip(path) {
+    if (!clipBuffers[path]) {
+      clipBuffers[path] = fetch(path)
+        .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error("HTTP " + r.status))))
+        // The callback form, because older Safari's webkitAudioContext doesn't return a promise.
+        .then((data) => new Promise((resolve, reject) => audioCtx.decodeAudioData(data, resolve, reject)))
+        .catch((err) => { delete clipBuffers[path]; noteSound("load failed " + path + ": " + (err && err.message || err)); return null; });
+    }
+    return clipBuffers[path];
+  }
+
+  function unlockAudio() {
+    if (!AC) return;
     try {
-      a.playbackRate = rate; // the same "the bot sounds a notch lower" trick, via speed rather than pitch
-      currentClip = a;
-      const p = a.play();
-      if (p && p.catch) p.catch(() => {}); // autoplay can be blocked outside a user gesture; nothing else to fall back to for this segment
-    } catch (_) {}
+      // iOS 17+: play even with the silent switch on, the same as the browser voice does.
+      if (navigator.audioSession) navigator.audioSession.type = "playback";
+      if (!audioCtx) audioCtx = new AC();
+      // A one-sample silent buffer started inside the tap is what unlocks older iOS; resume() the rest.
+      const src = audioCtx.createBufferSource();
+      src.buffer = audioCtx.createBuffer(1, 1, 22050);
+      src.connect(audioCtx.destination);
+      src.start(0);
+      if (audioCtx.state !== "running" && audioCtx.resume) audioCtx.resume().catch(() => {});
+    } catch (_) { return; }
+    for (const path of E.ALL_CLIP_FILES || []) loadClip(path); // ~2.5 MB, fetched once in the background
+    noteSound("unlocked");
   }
 
   function warmUpSpeech() {
     if (speechReady || !canSpeak) return;
     speechReady = true;
     try { const u = new SpeechSynthesisUtterance(""); u.volume = 0; window.speechSynthesis.speak(u); } catch (_) {}
-    // A silent play+pause of EVERY clip, on this same first tap. Mobile browsers bless only the exact
-    // <audio> element that was played during a real gesture, so unlocking one clip left the other 43
-    // (every 140+ score) created later outside any gesture and silently blocked.
-    for (const path of E.ALL_CLIP_FILES || []) {
-      try {
-        const a = getClip(path);
-        a.muted = true;
-        const p = a.play();
-        // If a real call starts this same clip before the unlock settles (the first tap entered a
-        // big score), leave it playing rather than pausing it.
-        const settle = () => { if (!a.wanted) { a.pause(); a.currentTime = 0; } a.muted = false; };
-        if (p && p.then) p.then(settle).catch(() => { a.muted = false; });
-        else a.muted = false;
-      } catch (_) {}
-    }
+    unlockAudio();
   }
 
-  function announce(visit) {
+  function speakSeg(seg, botPitch) {
+    return new Promise((resolve) => {
+      const u = new SpeechSynthesisUtterance(seg.text);
+      u.rate = seg.rate; u.pitch = seg.pitch * botPitch; u.volume = seg.volume; u.lang = "en-GB";
+      let t = null;
+      const done = () => { clearTimeout(t); resolve(); };
+      t = setTimeout(done, 6000); // some browsers never fire onend
+      u.onend = done; u.onerror = done;
+      window.speechSynthesis.speak(u);
+    });
+  }
+
+  async function playSeg(seg, botPitch) {
+    // Checked without an await when there's no clip, so a plain call is still spoken inside the tap.
+    const buffer = seg.clip && audioCtx && audioCtx.state === "running" ? await loadClip(seg.clip) : null;
+    if (!buffer) {
+      // Never silent: if the recording can't play for any reason, the browser voice says the line.
+      if (seg.clip) noteSound("fallback voice for " + seg.clip + " (audio " + (audioCtx ? audioCtx.state : "unavailable") + ")");
+      return speakSeg(seg, botPitch);
+    }
+    return new Promise((resolve) => {
+      const src = audioCtx.createBufferSource();
+      src.buffer = buffer;
+      if (botPitch !== 1) {
+        // The bot's "notch lower" voice as a real pitch shift where supported, else by speed.
+        if (src.detune) src.detune.value = 1200 * Math.log2(botPitch);
+        else src.playbackRate.value = botPitch;
+      }
+      src.connect(audioCtx.destination);
+      src.onended = () => { if (currentSource === src) currentSource = null; resolve(); };
+      currentSource = src;
+      src.start(0);
+      noteSound("played " + seg.clip);
+    });
+  }
+
+  function stopAnnouncing() {
+    announceToken++;
+    try { window.speechSynthesis.cancel(); } catch (_) {}
+    if (currentSource) { try { currentSource.stop(); } catch (_) {} currentSource = null; }
+  }
+
+  async function announce(visit) {
     if (!canSpeak || settings.mute || !visit || !game) return;
+    stopAnnouncing();
+    const token = announceToken;
+    if (audioCtx && audioCtx.state !== "running" && audioCtx.resume) audioCtx.resume().catch(() => {});
     try {
       // A caller's voice: flat for a normal return, more excited for a big one, peaking at 180 - see
       // E.visitAnnouncement, which also names a pre-recorded clip for the calls big enough to have one.
-      // The bot's calls stay a notch lower/slower than the player's, same as before (pitch for the
-      // synthesised voice, playback rate for a recorded clip - there's no way to pitch-shift a fixed
-      // recording here without its own audio-processing pipeline).
+      // The bot's calls stay a notch lower-pitched than the player's, same as before.
       const botPitch = (visit.who === "bot" && !versus()) ? 0.75 : 1;
-      window.speechSynthesis.cancel();
       // A stale cached practice-engine.js from before visitAnnouncement existed would otherwise throw
       // here and go completely silent for every score, not just the new calls - fall back to the
       // older, simpler visitSpeech (still exported) rather than saying nothing at all.
       const segs = typeof E.visitAnnouncement === "function"
         ? E.visitAnnouncement(visit, game.kind, game.winner === visit.who)
         : [{ text: E.visitSpeech(visit, game.kind, game.winner === visit.who), rate: 1, pitch: 1, volume: 1, clip: null }];
+      // One after another (the score, then "Game shot!"), and abandoned if a newer call starts.
       for (const seg of segs) {
-        if (seg.clip) {
-          playClip(seg.clip, botPitch);
-        } else {
-          const u = new SpeechSynthesisUtterance(seg.text);
-          u.rate = seg.rate; u.pitch = seg.pitch * botPitch; u.volume = seg.volume; u.lang = "en-GB";
-          window.speechSynthesis.speak(u);
-        }
+        if (token !== announceToken || settings.mute) return;
+        await playSeg(seg, botPitch);
       }
     } catch (_) { /* no voice available: the score is on the screen anyway */ }
   }
@@ -505,10 +563,7 @@
 
   function setMute(mute) {
     settings.mute = mute; store.set(SETTINGS_KEY, settings);
-    if (mute) {
-      if (canSpeak) { try { window.speechSynthesis.cancel(); } catch (_) {} }
-      if (currentClip) { try { currentClip.pause(); } catch (_) {} }
-    }
+    if (mute) stopAnnouncing();
     renderSound();
   }
 
@@ -1585,6 +1640,11 @@
   $("soundBtn").addEventListener("click", () => setMute(!settings.mute));
   document.addEventListener("pointerdown", warmUpSpeech, { once: true });
   document.addEventListener("keydown", warmUpSpeech, { once: true });
+  // iOS suspends ("interrupts") Web Audio when the page goes to the background or a call comes in;
+  // any later tap wakes it again, so the recorded calls don't quietly fall back to the plain voice.
+  document.addEventListener("pointerdown", () => {
+    if (audioCtx && audioCtx.state !== "running") unlockAudio();
+  });
   renderSound();
   $("entryBoard").addEventListener("click", () => setEntry("board"));
   $("entryKeypad").addEventListener("click", () => setEntry("keypad"));
