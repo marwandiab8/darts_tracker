@@ -455,12 +455,20 @@
   // triumphant - a big call is declared, not blurted. So 180 keeps the rate close to a normal, measured
   // pace (not faster than the tiers below it) and lets pitch alone - the highest of any tier - carry
   // the excitement, said once, clearly, without needing a rushed delivery or a repeated call to prove it.
+  //
+  // On top of the voice, the big tiers layer a crowd-noise clip under the call for real broadcast
+  // impact. That can't be an actual recording of a real announcer (Russ Bray's "ONE HUNDRED AND
+  // EIGHTY" is copyrighted broadcast audio, not something to embed here); instead these are stock
+  // crowd/applause/horn recordings from Mixkit's free sound-effect library (no attribution required,
+  // free for this kind of use - see `public/audio/README.md`), rising from a light ripple of applause
+  // to a full victory roar the same way the voice does. `sfx` is a path relative to `public/`, or
+  // `null` for tiers that stay voice-only.
   const SCORE_TIERS = [
-    { min: 0, rate: 0.95, pitch: 1.0, volume: 1, style: (t) => cap(t) },
-    { min: 100, rate: 1.0, pitch: 1.15, volume: 1, style: (t) => cap(t) },
-    { min: 140, rate: 1.1, pitch: 1.35, volume: 1, style: (t) => t.toUpperCase() + "!" },
-    { min: 160, rate: 1.15, pitch: 1.5, volume: 1, style: (t) => t.toUpperCase() + "!!" },
-    { min: 180, rate: 1.0, pitch: 1.9, volume: 1, style: (t) => t.toUpperCase() + "!!!" },
+    { min: 0, rate: 0.95, pitch: 1.0, volume: 1, sfx: null, style: (t) => cap(t) },
+    { min: 100, rate: 1.0, pitch: 1.15, volume: 1, sfx: "audio/crowd-light.mp3", style: (t) => cap(t) },
+    { min: 140, rate: 1.1, pitch: 1.35, volume: 1, sfx: "audio/crowd-cheer.mp3", style: (t) => t.toUpperCase() + "!" },
+    { min: 160, rate: 1.15, pitch: 1.5, volume: 1, sfx: "audio/crowd-roar.mp3", style: (t) => t.toUpperCase() + "!!" },
+    { min: 180, rate: 1.0, pitch: 1.9, volume: 1, sfx: "audio/crowd-victory.mp3", style: (t) => t.toUpperCase() + "!!!" },
   ];
 
   function scoreTier(n) {
@@ -470,28 +478,36 @@
   }
 
   // The full call for a finished visit, as one or more utterances to speak in order, each with its own
-  // voice (rate/pitch/volume, on top of whatever base voice is speaking). A checkout gets its own
+  // voice (rate/pitch/volume, on top of whatever base voice is speaking) and an optional `sfx` clip
+  // (a path under `public/`, or `null`) to play under it for the bigger calls. A checkout gets its own
   // separate "Game shot!" on top of the score - a real caller states the score, then celebrates the
-  // finish - rather than one flat sentence for both.
+  // finish - rather than one flat sentence for both, and it gets its own fanfare regardless of the
+  // score it was checked out on.
   function visitAnnouncement(visit, kind, won) {
     const segs = [];
     if (kind === "x01") {
-      if (visit.bust) segs.push({ text: "Bust", rate: 0.95, pitch: 0.95, volume: 1 });
-      else if (!visit.scored) segs.push({ text: "No score", rate: 0.9, pitch: 0.9, volume: 1 });
+      if (visit.bust) segs.push({ text: "Bust", rate: 0.95, pitch: 0.95, volume: 1, sfx: null });
+      else if (!visit.scored) segs.push({ text: "No score", rate: 0.9, pitch: 0.9, volume: 1, sfx: null });
       else {
         const tier = scoreTier(visit.scored);
-        segs.push({ text: tier.style(sayNumber(visit.scored)), rate: tier.rate, pitch: tier.pitch, volume: tier.volume });
+        segs.push({ text: tier.style(sayNumber(visit.scored)), rate: tier.rate, pitch: tier.pitch, volume: tier.volume, sfx: tier.sfx });
       }
     } else {
       const marks = visit.marks || 0, points = visit.points || 0;
-      if (!marks) segs.push({ text: "No marks", rate: 0.95, pitch: 1, volume: 1 });
+      if (!marks) segs.push({ text: "No marks", rate: 0.95, pitch: 1, volume: 1, sfx: null });
       else {
         const text = sayNumber(marks) + (marks === 1 ? " mark" : " marks") + (points ? " and " + sayNumber(points) + " points" : "");
         const sweep = marks >= 3; // three marks in one visit - a clean sweep of the number
-        segs.push({ text: sweep ? text.toUpperCase() + "!" : cap(text), rate: sweep ? 1.1 : 0.95, pitch: sweep ? 1.35 : 1, volume: 1 });
+        segs.push({
+          text: sweep ? text.toUpperCase() + "!" : cap(text),
+          rate: sweep ? 1.1 : 0.95,
+          pitch: sweep ? 1.35 : 1,
+          volume: 1,
+          sfx: sweep ? "audio/crowd-cheer.mp3" : null,
+        });
       }
     }
-    if (won) segs.push({ text: "GAME SHOT!", rate: 1.05, pitch: 1.3, volume: 1 });
+    if (won) segs.push({ text: "GAME SHOT!", rate: 1.05, pitch: 1.3, volume: 1, sfx: "audio/horn-fanfare.mp3" });
     return segs;
   }
 

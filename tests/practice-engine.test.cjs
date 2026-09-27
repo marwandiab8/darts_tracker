@@ -713,38 +713,45 @@ test("a visit is announced by its total, a bust, or a win", () => {
 test("a caller's voice lifts with the score, and peaks as a deep roar at 180", () => {
   const call = (scored) => E.visitAnnouncement({ scored }, "x01", false);
 
-  // Below a ton: businesslike, plain text, no shouting, and no quieter than a normal score has always been.
+  // Below a ton: businesslike, plain text, no shouting, no quieter than a normal score has always been,
+  // and no crowd clip - a routine return doesn't get a reaction.
   const plain = call(60);
-  assert.deepEqual(plain, [{ text: "Sixty", rate: 0.95, pitch: 1.0, volume: 1 }]);
+  assert.deepEqual(plain, [{ text: "Sixty", rate: 0.95, pitch: 1.0, volume: 1, sfx: null }]);
 
-  // A ton and up to 139: a bit brighter, but still said plainly, not shouted.
+  // A ton and up to 139: a bit brighter, still said plainly, and the crowd clip starts here.
   const ton = call(120);
   assert.equal(ton.length, 1);
   assert.equal(ton[0].text, "One hundred and twenty");
   assert.ok(ton[0].rate > plain[0].rate && ton[0].pitch > plain[0].pitch, "a ton lifts rate and pitch above a normal return");
+  assert.equal(ton[0].sfx, "audio/crowd-light.mp3");
 
-  // 140s and 160s: shouted (capitals, exclamation marks), and each louder/higher than the last.
+  // 140s and 160s: shouted (capitals, exclamation marks), each louder/higher than the last, and a
+  // bigger crowd clip each time.
   const oneForty = call(140);
   assert.equal(oneForty[0].text, "ONE HUNDRED AND FORTY!");
+  assert.equal(oneForty[0].sfx, "audio/crowd-cheer.mp3");
   const oneSixty = call(160);
   assert.equal(oneSixty[0].text, "ONE HUNDRED AND SIXTY!!");
   assert.ok(oneSixty[0].pitch > oneForty[0].pitch, "160 is higher energy than 140");
+  assert.equal(oneSixty[0].sfx, "audio/crowd-roar.mp3");
 
   // 180 itself: the highest pitch of any tier, said once, at a measured pace rather than a rushed one -
   // two earlier versions overcorrected (first a deep, slow "roar" that read as flat through a
   // synthesised voice; then a fast, repeated call that read as rushed and like an accidental echo) -
   // pitch alone, at a normal speaking pace, is what actually reads as the biggest call without either
-  // problem.
+  // problem. Its crowd clip is the biggest of the set too (a real recording, just not of a real named
+  // announcer - see public/audio/README.md).
   const maximum = call(180);
   assert.equal(maximum.length, 1, "said once - no repeated/echoed call");
   assert.equal(maximum[0].text, "ONE HUNDRED AND EIGHTY!!!");
   assert.ok(maximum[0].pitch > oneSixty[0].pitch, "180 is the highest pitch of any tier");
   assert.ok(maximum[0].rate <= oneSixty[0].rate, "but not delivered faster/more rushed than the tiers below it");
   assert.equal(maximum[0].volume, 1);
+  assert.equal(maximum[0].sfx, "audio/crowd-victory.mp3");
 
-  // A bust and a no-score are both said plainly, never with excitement, but no quieter than usual either.
-  assert.deepEqual(call(0), [{ text: "No score", rate: 0.9, pitch: 0.9, volume: 1 }]);
-  assert.deepEqual(E.visitAnnouncement({ scored: 0, bust: true }, "x01", false), [{ text: "Bust", rate: 0.95, pitch: 0.95, volume: 1 }]);
+  // A bust and a no-score are both said plainly, never with excitement, no quieter than usual, and no clip.
+  assert.deepEqual(call(0), [{ text: "No score", rate: 0.9, pitch: 0.9, volume: 1, sfx: null }]);
+  assert.deepEqual(E.visitAnnouncement({ scored: 0, bust: true }, "x01", false), [{ text: "Bust", rate: 0.95, pitch: 0.95, volume: 1, sfx: null }]);
 });
 
 test("winning the leg gets its own separate 'Game shot!' call, on top of the score", () => {
@@ -752,25 +759,28 @@ test("winning the leg gets its own separate 'Game shot!' call, on top of the sco
   assert.equal(normalFinish.length, 2, "the score, then a separate Game shot exclamation");
   assert.equal(normalFinish[0].text, "Forty");
   assert.equal(normalFinish[1].text, "GAME SHOT!");
+  assert.equal(normalFinish[1].sfx, "audio/horn-fanfare.mp3", "the win itself always gets the fanfare, even on an ordinary finish");
 
   // A maximum finish still gets both: the 180 roar, then the win call.
   const maxFinish = E.visitAnnouncement({ scored: 180 }, "x01", true);
   assert.equal(maxFinish.length, 2, "the 180 call, then Game shot");
   assert.equal(maxFinish[0].text, "ONE HUNDRED AND EIGHTY!!!");
   assert.equal(maxFinish[1].text, "GAME SHOT!");
+  assert.equal(maxFinish[1].sfx, "audio/horn-fanfare.mp3");
 
   assert.equal(E.visitAnnouncement({ scored: 100 }, "x01", false).length, 1, "no Game shot call when the leg isn't won");
 });
 
 test("cricket gets a lighter version of the same idea: a plain call, or an excited one for a clean sweep", () => {
   const single = E.visitAnnouncement({ marks: 1, points: 0 }, "cricket", false);
-  assert.deepEqual(single, [{ text: "One mark", rate: 0.95, pitch: 1, volume: 1 }]);
+  assert.deepEqual(single, [{ text: "One mark", rate: 0.95, pitch: 1, volume: 1, sfx: null }]);
 
   const sweep = E.visitAnnouncement({ marks: 3, points: 0 }, "cricket", false);
   assert.equal(sweep[0].text, "THREE MARKS!");
   assert.ok(sweep[0].pitch > single[0].pitch && sweep[0].rate > single[0].rate);
+  assert.equal(sweep[0].sfx, "audio/crowd-cheer.mp3", "a clean sweep gets the same crowd clip as a 140-159 x01 return");
 
-  assert.deepEqual(E.visitAnnouncement({ marks: 0, points: 0 }, "cricket", false), [{ text: "No marks", rate: 0.95, pitch: 1, volume: 1 }]);
+  assert.deepEqual(E.visitAnnouncement({ marks: 0, points: 0 }, "cricket", false), [{ text: "No marks", rate: 0.95, pitch: 1, volume: 1, sfx: null }]);
 });
 
 test("either side's latest visit can be found, for two people sharing the phone", () => {

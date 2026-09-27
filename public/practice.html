@@ -417,24 +417,54 @@
   const canSpeak = !!window.speechSynthesis && typeof window.SpeechSynthesisUtterance === "function";
   let speechReady = false;
 
+  // Crowd/horn clips (see public/audio/README.md) reused across calls rather than re-created each
+  // time. Kept separate from the synthesised voice: it is real recorded audio (stock crowd noise, not
+  // a synthesised effect), just not of an actual named announcer - see that README for why.
+  const sfxCache = Object.create(null);
+  const SFX_FILES = ["audio/crowd-light.mp3", "audio/crowd-cheer.mp3", "audio/crowd-roar.mp3", "audio/crowd-victory.mp3", "audio/horn-fanfare.mp3"];
+  function playSfx(path) {
+    if (!path) return;
+    try {
+      let a = sfxCache[path];
+      if (!a) { a = new Audio(path); a.volume = 0.55; sfxCache[path] = a; }
+      a.currentTime = 0;
+      const p = a.play();
+      if (p && p.catch) p.catch(() => {}); // autoplay can be blocked outside a user gesture (e.g. the bot's own turn); the voice call still carries it
+    } catch (_) {}
+  }
+
   function warmUpSpeech() {
     if (speechReady || !canSpeak) return;
     speechReady = true;
     try { const u = new SpeechSynthesisUtterance(""); u.volume = 0; window.speechSynthesis.speak(u); } catch (_) {}
+    // Some browsers (notably mobile Safari) only allow an <audio> element to be played
+    // programmatically later if it was first played during a real user gesture; a silent play+pause
+    // here on the same first tap unlocks the crowd/horn clips for when a big score actually calls one.
+    for (const path of SFX_FILES) {
+      try {
+        const a = new Audio(path);
+        a.volume = 0;
+        const p = a.play();
+        if (p && p.then) p.then(() => a.pause()).catch(() => {});
+        sfxCache[path] = a;
+      } catch (_) {}
+    }
   }
 
   function announce(visit) {
     if (!canSpeak || settings.mute || !visit || !game) return;
     try {
-      // A caller's voice: flat for a normal return, more excited for a big one, and a deep roar for
-      // 180 - see E.visitAnnouncement. The bot's calls stay a notch lower-pitched than the player's,
-      // same as before, on top of whatever that visit's own energy is.
+      // A caller's voice: flat for a normal return, more excited for a big one, peaking at 180 - see
+      // E.visitAnnouncement, which also carries a crowd-noise clip (`sfx`) for the bigger tiers. The
+      // bot's calls stay a notch lower-pitched than the player's, same as before, on top of whatever
+      // that visit's own energy is; the crowd noise itself isn't pitched down for the bot.
       const botPitch = (visit.who === "bot" && !versus()) ? 0.75 : 1;
       window.speechSynthesis.cancel();
       for (const seg of E.visitAnnouncement(visit, game.kind, game.winner === visit.who)) {
         const u = new SpeechSynthesisUtterance(seg.text);
         u.rate = seg.rate; u.pitch = seg.pitch * botPitch; u.volume = seg.volume; u.lang = "en-GB";
         window.speechSynthesis.speak(u);
+        playSfx(seg.sfx);
       }
     } catch (_) { /* no voice available: the score is on the screen anyway */ }
   }
