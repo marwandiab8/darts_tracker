@@ -713,9 +713,9 @@ test("a visit is announced by its total, a bust, or a win", () => {
 test("a caller's voice lifts with the score, and peaks as a deep roar at 180", () => {
   const call = (scored) => E.visitAnnouncement({ scored }, "x01", false);
 
-  // Below a ton: businesslike, plain text, no shouting.
+  // Below a ton: businesslike, plain text, no shouting, and no quieter than a normal score has always been.
   const plain = call(60);
-  assert.deepEqual(plain, [{ text: "Sixty", rate: 0.95, pitch: 1.0, volume: 0.85 }]);
+  assert.deepEqual(plain, [{ text: "Sixty", rate: 0.95, pitch: 1.0, volume: 1 }]);
 
   // A ton and up to 139: a bit brighter, but still said plainly, not shouted.
   const ton = call(120);
@@ -730,18 +730,18 @@ test("a caller's voice lifts with the score, and peaks as a deep roar at 180", (
   assert.equal(oneSixty[0].text, "ONE HUNDRED AND SIXTY!!");
   assert.ok(oneSixty[0].pitch > oneForty[0].pitch, "160 is higher energy than 140");
 
-  // 180 itself: the iconic call, but a deep, slower roar rather than a higher-pitched shout - it should
-  // sit BELOW the normal pitch, not above it, and every other tier's pitch is below the normal, plain
-  // tone... i.e. 180 is deliberately the odd one out, not just "the top of an ever-rising scale".
+  // 180 itself: the iconic call, but a deep, slower roar rather than a higher-pitched shout. Every tier
+  // from 100 up to 179 climbs steadily above the normal pitch/rate; 180 breaks that pattern on purpose -
+  // it drops BELOW even the normal, plain tone, rather than being "the top of an ever-rising scale".
   const maximum = call(180);
   assert.equal(maximum[0].text, "ONE HUNDRED AND EIGHTY!!!");
-  assert.ok(maximum[0].pitch < plain[0].pitch, "180 is a deep roar, not a high-pitched shout");
-  assert.ok(maximum[0].rate < plain[0].rate, "and it's delivered slower/more deliberately, not faster");
-  assert.equal(maximum[0].volume, 1, "but at full volume/power");
+  assert.ok(maximum[0].pitch < plain[0].pitch && maximum[0].pitch < oneSixty[0].pitch, "180 is a deep roar, lower than even a normal score, not the peak of the climb");
+  assert.ok(maximum[0].rate < plain[0].rate && maximum[0].rate < oneSixty[0].rate, "and it's delivered slower/more deliberately, not faster");
+  assert.equal(maximum[0].volume, 1, "at full volume/power, same as every other tier");
 
-  // A bust and a no-score are both said plainly/quietly, never with excitement.
-  assert.deepEqual(call(0), [{ text: "No score", rate: 0.9, pitch: 0.92, volume: 0.75 }]);
-  assert.deepEqual(E.visitAnnouncement({ scored: 0, bust: true }, "x01", false), [{ text: "Bust", rate: 0.95, pitch: 0.95, volume: 0.85 }]);
+  // A bust and a no-score are both said plainly, never with excitement, but no quieter than usual either.
+  assert.deepEqual(call(0), [{ text: "No score", rate: 0.9, pitch: 0.9, volume: 1 }]);
+  assert.deepEqual(E.visitAnnouncement({ scored: 0, bust: true }, "x01", false), [{ text: "Bust", rate: 0.95, pitch: 0.95, volume: 1 }]);
 });
 
 test("winning the leg gets its own separate 'Game shot!' call, on top of the score", () => {
@@ -760,13 +760,13 @@ test("winning the leg gets its own separate 'Game shot!' call, on top of the sco
 
 test("cricket gets a lighter version of the same idea: a plain call, or an excited one for a clean sweep", () => {
   const single = E.visitAnnouncement({ marks: 1, points: 0 }, "cricket", false);
-  assert.deepEqual(single, [{ text: "One mark", rate: 0.95, pitch: 1, volume: 0.85 }]);
+  assert.deepEqual(single, [{ text: "One mark", rate: 0.95, pitch: 1, volume: 1 }]);
 
   const sweep = E.visitAnnouncement({ marks: 3, points: 0 }, "cricket", false);
   assert.equal(sweep[0].text, "THREE MARKS!");
-  assert.ok(sweep[0].pitch > single[0].pitch && sweep[0].volume > single[0].volume);
+  assert.ok(sweep[0].pitch > single[0].pitch && sweep[0].rate > single[0].rate);
 
-  assert.deepEqual(E.visitAnnouncement({ marks: 0, points: 0 }, "cricket", false), [{ text: "No marks", rate: 0.95, pitch: 1, volume: 0.85 }]);
+  assert.deepEqual(E.visitAnnouncement({ marks: 0, points: 0 }, "cricket", false), [{ text: "No marks", rate: 0.95, pitch: 1, volume: 1 }]);
 });
 
 test("either side's latest visit can be found, for two people sharing the phone", () => {

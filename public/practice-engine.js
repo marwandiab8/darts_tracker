@@ -452,12 +452,15 @@
   // is its own thing: the iconic call ("ONE HUNDRED AND EIGHTY") is a deep, gravelly roar - think of
   // the PDC's Russ Bray, "The Voice" - not a high-pitched shriek, so it drops the pitch and slows down
   // for weight rather than pushing pitch/rate higher like the tiers below it.
+  // The swings are kept wide (pitch/rate are the parts most browsers' voices actually render clearly;
+  // `volume` differences are barely audible on many voices, so it stays at 1 throughout rather than
+  // making an ordinary score sound quieter than it always has).
   const SCORE_TIERS = [
-    { min: 0, rate: 0.95, pitch: 1.0, volume: 0.85, style: (t) => cap(t) },
-    { min: 100, rate: 1.0, pitch: 1.05, volume: 0.95, style: (t) => cap(t) },
-    { min: 140, rate: 1.05, pitch: 1.15, volume: 1, style: (t) => t.toUpperCase() + "!" },
-    { min: 160, rate: 1.08, pitch: 1.22, volume: 1, style: (t) => t.toUpperCase() + "!!" },
-    { min: 180, rate: 0.82, pitch: 0.85, volume: 1, style: (t) => t.toUpperCase() + "!!!" },
+    { min: 0, rate: 0.95, pitch: 1.0, volume: 1, style: (t) => cap(t) },
+    { min: 100, rate: 1.0, pitch: 1.15, volume: 1, style: (t) => cap(t) },
+    { min: 140, rate: 1.1, pitch: 1.35, volume: 1, style: (t) => t.toUpperCase() + "!" },
+    { min: 160, rate: 1.15, pitch: 1.5, volume: 1, style: (t) => t.toUpperCase() + "!!" },
+    { min: 180, rate: 0.72, pitch: 0.6, volume: 1, style: (t) => t.toUpperCase() + "!!!" },
   ];
 
   function scoreTier(n) {
@@ -473,22 +476,22 @@
   function visitAnnouncement(visit, kind, won) {
     const segs = [];
     if (kind === "x01") {
-      if (visit.bust) segs.push({ text: "Bust", rate: 0.95, pitch: 0.95, volume: 0.85 });
-      else if (!visit.scored) segs.push({ text: "No score", rate: 0.9, pitch: 0.92, volume: 0.75 });
+      if (visit.bust) segs.push({ text: "Bust", rate: 0.95, pitch: 0.95, volume: 1 });
+      else if (!visit.scored) segs.push({ text: "No score", rate: 0.9, pitch: 0.9, volume: 1 });
       else {
         const tier = scoreTier(visit.scored);
         segs.push({ text: tier.style(sayNumber(visit.scored)), rate: tier.rate, pitch: tier.pitch, volume: tier.volume });
       }
     } else {
       const marks = visit.marks || 0, points = visit.points || 0;
-      if (!marks) segs.push({ text: "No marks", rate: 0.95, pitch: 1, volume: 0.85 });
+      if (!marks) segs.push({ text: "No marks", rate: 0.95, pitch: 1, volume: 1 });
       else {
         const text = sayNumber(marks) + (marks === 1 ? " mark" : " marks") + (points ? " and " + sayNumber(points) + " points" : "");
         const sweep = marks >= 3; // three marks in one visit - a clean sweep of the number
-        segs.push({ text: sweep ? text.toUpperCase() + "!" : cap(text), rate: sweep ? 1.05 : 0.95, pitch: sweep ? 1.15 : 1, volume: sweep ? 1 : 0.85 });
+        segs.push({ text: sweep ? text.toUpperCase() + "!" : cap(text), rate: sweep ? 1.1 : 0.95, pitch: sweep ? 1.35 : 1, volume: 1 });
       }
     }
-    if (won) segs.push({ text: "GAME SHOT!", rate: 1.0, pitch: 1.15, volume: 1 });
+    if (won) segs.push({ text: "GAME SHOT!", rate: 1.05, pitch: 1.3, volume: 1 });
     return segs;
   }
 
