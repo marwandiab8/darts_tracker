@@ -429,9 +429,11 @@
     return a;
   }
   function playClip(path, rate) {
+    const a = getClip(path);
+    // Resetting currentTime before a fresh element has loaded its metadata throws in some browsers
+    // (Safari in particular) - on its own, so it can't take play() down with it if it fails.
+    try { a.currentTime = 0; } catch (_) {}
     try {
-      const a = getClip(path);
-      a.currentTime = 0;
       a.playbackRate = rate; // the same "the bot sounds a notch lower" trick, via speed rather than pitch
       currentClip = a;
       const p = a.play();
