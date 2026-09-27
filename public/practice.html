@@ -413,28 +413,65 @@
 
   // --- announcing scores -----------------------------------------------------------------------------
   // Each finished visit is said out loud, by a caller's voice, unless muted. Browsers only let a page
-  // speak once it has been touched, so the first tap anywhere warms the voice up silently.
+  // speak (or play audio) once it has been touched, so the first tap anywhere warms both up silently.
   const canSpeak = !!window.speechSynthesis && typeof window.SpeechSynthesisUtterance === "function";
   let speechReady = false;
+
+  // The fixed set of big/special calls (see FIXED_CLIPS/clipForScore in practice-engine.js) are
+  // pre-recorded with a real voice rather than the browser's own synthesiser - see
+  // public/audio/calls/README.md for what that voice is and why. Cached per file so a repeat of the
+  // same call (e.g. two 180s in a game) doesn't re-create the element each time.
+  const clipCache = Object.create(null);
+  let currentClip = null;
+  function getClip(path) {
+    let a = clipCache[path];
+    if (!a) { a = new Audio(path); clipCache[path] = a; }
+    return a;
+  }
+  function playClip(path, rate) {
+    try {
+      const a = getClip(path);
+      a.currentTime = 0;
+      a.playbackRate = rate; // the same "the bot sounds a notch lower" trick, via speed rather than pitch
+      currentClip = a;
+      const p = a.play();
+      if (p && p.catch) p.catch(() => {}); // autoplay can be blocked outside a user gesture; nothing else to fall back to for this segment
+    } catch (_) {}
+  }
 
   function warmUpSpeech() {
     if (speechReady || !canSpeak) return;
     speechReady = true;
     try { const u = new SpeechSynthesisUtterance(""); u.volume = 0; window.speechSynthesis.speak(u); } catch (_) {}
+    // A silent play+pause of one real clip, on the same first tap, unlocks <audio> playback generally
+    // for the rest of the page in browsers (notably mobile Safari) that only allow it after a genuine
+    // user gesture.
+    try {
+      const a = getClip("audio/calls/game-shot.wav");
+      a.volume = 0;
+      const p = a.play();
+      if (p && p.then) p.then(() => { a.pause(); a.volume = 1; }).catch(() => {});
+    } catch (_) {}
   }
 
   function announce(visit) {
     if (!canSpeak || settings.mute || !visit || !game) return;
     try {
-      // A caller's voice: flat for a normal return, more excited for a big one, and a deep roar for
-      // 180 - see E.visitAnnouncement. The bot's calls stay a notch lower-pitched than the player's,
-      // same as before, on top of whatever that visit's own energy is.
+      // A caller's voice: flat for a normal return, more excited for a big one, peaking at 180 - see
+      // E.visitAnnouncement, which also names a pre-recorded clip for the calls big enough to have one.
+      // The bot's calls stay a notch lower/slower than the player's, same as before (pitch for the
+      // synthesised voice, playback rate for a recorded clip - there's no way to pitch-shift a fixed
+      // recording here without its own audio-processing pipeline).
       const botPitch = (visit.who === "bot" && !versus()) ? 0.75 : 1;
       window.speechSynthesis.cancel();
       for (const seg of E.visitAnnouncement(visit, game.kind, game.winner === visit.who)) {
-        const u = new SpeechSynthesisUtterance(seg.text);
-        u.rate = seg.rate; u.pitch = seg.pitch * botPitch; u.volume = seg.volume; u.lang = "en-GB";
-        window.speechSynthesis.speak(u);
+        if (seg.clip) {
+          playClip(seg.clip, botPitch);
+        } else {
+          const u = new SpeechSynthesisUtterance(seg.text);
+          u.rate = seg.rate; u.pitch = seg.pitch * botPitch; u.volume = seg.volume; u.lang = "en-GB";
+          window.speechSynthesis.speak(u);
+        }
       }
     } catch (_) { /* no voice available: the score is on the screen anyway */ }
   }
@@ -448,7 +485,10 @@
 
   function setMute(mute) {
     settings.mute = mute; store.set(SETTINGS_KEY, settings);
-    if (mute && canSpeak) { try { window.speechSynthesis.cancel(); } catch (_) {} }
+    if (mute) {
+      if (canSpeak) { try { window.speechSynthesis.cancel(); } catch (_) {} }
+      if (currentClip) { try { currentClip.pause(); } catch (_) {} }
+    }
     renderSound();
   }
 

@@ -455,6 +455,16 @@
   // triumphant - a big call is declared, not blurted. So 180 keeps the rate close to a normal, measured
   // pace (not faster than the tiers below it) and lets pitch alone - the highest of any tier - carry
   // the excitement, said once, clearly, without needing a rushed delivery or a repeated call to prove it.
+  //
+  // A crowd-noise layer was tried on top of this and taken back out - it just sounded like generic
+  // stock clapping, not a caller. What actually moves the needle is the VOICE itself: a real, named PDC
+  // announcer's recording is copyrighted broadcast audio and still can't be used, but the calls big
+  // enough to matter (140 and up, plus Bust/No score/Game shot - a fixed, small set of exact phrases,
+  // `clipForScore`/`FIXED_CLIPS` below) are pre-rendered offline with a proper neural voice (Piper,
+  // MIT-licensed, using a CC BY 4.0 LibriTTS-R speaker - see `public/audio/calls/README.md`) instead of
+  // the browser's built-in synthesiser, which is what actually sounds thin on a shouted line. A plain
+  // return and a "ton" (1-139) stay on the browser voice: there are too many distinct numbers to
+  // feasibly pre-record every one of them, and those tiers were never the ones that sounded weak.
   const SCORE_TIERS = [
     { min: 0, rate: 0.95, pitch: 1.0, volume: 1, style: (t) => cap(t) },
     { min: 100, rate: 1.0, pitch: 1.15, volume: 1, style: (t) => cap(t) },
@@ -469,29 +479,39 @@
     return tier;
   }
 
+  // A pre-rendered clip (path under `public/`) for the fixed set of big/special calls, or `null` when
+  // there isn't one and the browser's own voice should say it instead (see the comment above
+  // SCORE_TIERS). Every score from 140 to 180 has one; 1-139 do not.
+  function clipForScore(n) {
+    return n >= 140 && n <= 180 ? `audio/calls/score-${n}.wav` : null;
+  }
+  const FIXED_CLIPS = { bust: "audio/calls/bust.wav", noScore: "audio/calls/no-score.wav", gameShot: "audio/calls/game-shot.wav" };
+
   // The full call for a finished visit, as one or more utterances to speak in order, each with its own
-  // voice (rate/pitch/volume, on top of whatever base voice is speaking). A checkout gets its own
-  // separate "Game shot!" on top of the score - a real caller states the score, then celebrates the
-  // finish - rather than one flat sentence for both.
+  // voice (rate/pitch/volume, on top of whatever base voice is speaking) and an optional `clip` - a
+  // pre-recorded file to play instead of the synthesised voice for that one utterance, for the fixed
+  // set of calls that has one. A checkout gets its own separate "Game shot!" on top of the score - a
+  // real caller states the score, then celebrates the finish - rather than one flat sentence for both,
+  // and it always has its own clip regardless of the score it was checked out on.
   function visitAnnouncement(visit, kind, won) {
     const segs = [];
     if (kind === "x01") {
-      if (visit.bust) segs.push({ text: "Bust", rate: 0.95, pitch: 0.95, volume: 1 });
-      else if (!visit.scored) segs.push({ text: "No score", rate: 0.9, pitch: 0.9, volume: 1 });
+      if (visit.bust) segs.push({ text: "Bust", rate: 0.95, pitch: 0.95, volume: 1, clip: FIXED_CLIPS.bust });
+      else if (!visit.scored) segs.push({ text: "No score", rate: 0.9, pitch: 0.9, volume: 1, clip: FIXED_CLIPS.noScore });
       else {
         const tier = scoreTier(visit.scored);
-        segs.push({ text: tier.style(sayNumber(visit.scored)), rate: tier.rate, pitch: tier.pitch, volume: tier.volume });
+        segs.push({ text: tier.style(sayNumber(visit.scored)), rate: tier.rate, pitch: tier.pitch, volume: tier.volume, clip: clipForScore(visit.scored) });
       }
     } else {
       const marks = visit.marks || 0, points = visit.points || 0;
-      if (!marks) segs.push({ text: "No marks", rate: 0.95, pitch: 1, volume: 1 });
+      if (!marks) segs.push({ text: "No marks", rate: 0.95, pitch: 1, volume: 1, clip: null });
       else {
         const text = sayNumber(marks) + (marks === 1 ? " mark" : " marks") + (points ? " and " + sayNumber(points) + " points" : "");
         const sweep = marks >= 3; // three marks in one visit - a clean sweep of the number
-        segs.push({ text: sweep ? text.toUpperCase() + "!" : cap(text), rate: sweep ? 1.1 : 0.95, pitch: sweep ? 1.35 : 1, volume: 1 });
+        segs.push({ text: sweep ? text.toUpperCase() + "!" : cap(text), rate: sweep ? 1.1 : 0.95, pitch: sweep ? 1.35 : 1, volume: 1, clip: null });
       }
     }
-    if (won) segs.push({ text: "GAME SHOT!", rate: 1.05, pitch: 1.3, volume: 1 });
+    if (won) segs.push({ text: "GAME SHOT!", rate: 1.05, pitch: 1.3, volume: 1, clip: FIXED_CLIPS.gameShot });
     return segs;
   }
 
