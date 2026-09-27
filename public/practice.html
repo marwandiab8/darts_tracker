@@ -426,10 +426,16 @@
   function announce(visit) {
     if (!canSpeak || settings.mute || !visit || !game) return;
     try {
-      const u = new SpeechSynthesisUtterance(E.visitSpeech(visit, game.kind, game.winner === visit.who));
-      u.rate = 0.95; u.pitch = visit.who === "bot" && !versus() ? 0.75 : 1; u.lang = "en-GB";
+      // A caller's voice: flat for a normal return, more excited for a big one, and a deep roar for
+      // 180 - see E.visitAnnouncement. The bot's calls stay a notch lower-pitched than the player's,
+      // same as before, on top of whatever that visit's own energy is.
+      const botPitch = (visit.who === "bot" && !versus()) ? 0.75 : 1;
       window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(u);
+      for (const seg of E.visitAnnouncement(visit, game.kind, game.winner === visit.who)) {
+        const u = new SpeechSynthesisUtterance(seg.text);
+        u.rate = seg.rate; u.pitch = seg.pitch * botPitch; u.volume = seg.volume; u.lang = "en-GB";
+        window.speechSynthesis.speak(u);
+      }
     } catch (_) { /* no voice available: the score is on the screen anyway */ }
   }
 

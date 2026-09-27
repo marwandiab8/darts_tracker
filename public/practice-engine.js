@@ -443,6 +443,55 @@
     return won ? text + ". Game shot" : text;
   }
 
+  function cap(t) {
+    return t.charAt(0).toUpperCase() + t.slice(1);
+  }
+
+  // How a professional caller's voice lifts with the score - flat and businesslike for a normal
+  // return, brighter for a "ton" (100+), a shout by the 140s, and by 160+ real excitement. 180 itself
+  // is its own thing: the iconic call ("ONE HUNDRED AND EIGHTY") is a deep, gravelly roar - think of
+  // the PDC's Russ Bray, "The Voice" - not a high-pitched shriek, so it drops the pitch and slows down
+  // for weight rather than pushing pitch/rate higher like the tiers below it.
+  const SCORE_TIERS = [
+    { min: 0, rate: 0.95, pitch: 1.0, volume: 0.85, style: (t) => cap(t) },
+    { min: 100, rate: 1.0, pitch: 1.05, volume: 0.95, style: (t) => cap(t) },
+    { min: 140, rate: 1.05, pitch: 1.15, volume: 1, style: (t) => t.toUpperCase() + "!" },
+    { min: 160, rate: 1.08, pitch: 1.22, volume: 1, style: (t) => t.toUpperCase() + "!!" },
+    { min: 180, rate: 0.82, pitch: 0.85, volume: 1, style: (t) => t.toUpperCase() + "!!!" },
+  ];
+
+  function scoreTier(n) {
+    let tier = SCORE_TIERS[0];
+    for (const t of SCORE_TIERS) if (n >= t.min) tier = t;
+    return tier;
+  }
+
+  // The full call for a finished visit, as one or more utterances to speak in order, each with its own
+  // voice (rate/pitch/volume, on top of whatever base voice is speaking). A checkout gets its own
+  // separate "Game shot!" on top of the score - a real caller states the score, then celebrates the
+  // finish - rather than one flat sentence for both.
+  function visitAnnouncement(visit, kind, won) {
+    const segs = [];
+    if (kind === "x01") {
+      if (visit.bust) segs.push({ text: "Bust", rate: 0.95, pitch: 0.95, volume: 0.85 });
+      else if (!visit.scored) segs.push({ text: "No score", rate: 0.9, pitch: 0.92, volume: 0.75 });
+      else {
+        const tier = scoreTier(visit.scored);
+        segs.push({ text: tier.style(sayNumber(visit.scored)), rate: tier.rate, pitch: tier.pitch, volume: tier.volume });
+      }
+    } else {
+      const marks = visit.marks || 0, points = visit.points || 0;
+      if (!marks) segs.push({ text: "No marks", rate: 0.95, pitch: 1, volume: 0.85 });
+      else {
+        const text = sayNumber(marks) + (marks === 1 ? " mark" : " marks") + (points ? " and " + sayNumber(points) + " points" : "");
+        const sweep = marks >= 3; // three marks in one visit - a clean sweep of the number
+        segs.push({ text: sweep ? text.toUpperCase() + "!" : cap(text), rate: sweep ? 1.05 : 0.95, pitch: sweep ? 1.15 : 1, volume: sweep ? 1 : 0.85 });
+      }
+    }
+    if (won) segs.push({ text: "GAME SHOT!", rate: 1.0, pitch: 1.15, volume: 1 });
+    return segs;
+  }
+
   // --- correcting an earlier visit -------------------------------------------------------------------
 
   // Play a list of finished visits again from the start of a game, using exactly what was entered for
@@ -652,6 +701,7 @@
     endVisit,
     sayNumber,
     visitSpeech,
+    visitAnnouncement,
     replayVisits,
     upgradeGame,
     gameOptions,

@@ -710,6 +710,65 @@ test("a visit is announced by its total, a bust, or a win", () => {
   assert.equal(E.visitSpeech({ marks: 0, points: 0 }, "cricket", false), "No marks");
 });
 
+test("a caller's voice lifts with the score, and peaks as a deep roar at 180", () => {
+  const call = (scored) => E.visitAnnouncement({ scored }, "x01", false);
+
+  // Below a ton: businesslike, plain text, no shouting.
+  const plain = call(60);
+  assert.deepEqual(plain, [{ text: "Sixty", rate: 0.95, pitch: 1.0, volume: 0.85 }]);
+
+  // A ton and up to 139: a bit brighter, but still said plainly, not shouted.
+  const ton = call(120);
+  assert.equal(ton.length, 1);
+  assert.equal(ton[0].text, "One hundred and twenty");
+  assert.ok(ton[0].rate > plain[0].rate && ton[0].pitch > plain[0].pitch, "a ton lifts rate and pitch above a normal return");
+
+  // 140s and 160s: shouted (capitals, exclamation marks), and each louder/higher than the last.
+  const oneForty = call(140);
+  assert.equal(oneForty[0].text, "ONE HUNDRED AND FORTY!");
+  const oneSixty = call(160);
+  assert.equal(oneSixty[0].text, "ONE HUNDRED AND SIXTY!!");
+  assert.ok(oneSixty[0].pitch > oneForty[0].pitch, "160 is higher energy than 140");
+
+  // 180 itself: the iconic call, but a deep, slower roar rather than a higher-pitched shout - it should
+  // sit BELOW the normal pitch, not above it, and every other tier's pitch is below the normal, plain
+  // tone... i.e. 180 is deliberately the odd one out, not just "the top of an ever-rising scale".
+  const maximum = call(180);
+  assert.equal(maximum[0].text, "ONE HUNDRED AND EIGHTY!!!");
+  assert.ok(maximum[0].pitch < plain[0].pitch, "180 is a deep roar, not a high-pitched shout");
+  assert.ok(maximum[0].rate < plain[0].rate, "and it's delivered slower/more deliberately, not faster");
+  assert.equal(maximum[0].volume, 1, "but at full volume/power");
+
+  // A bust and a no-score are both said plainly/quietly, never with excitement.
+  assert.deepEqual(call(0), [{ text: "No score", rate: 0.9, pitch: 0.92, volume: 0.75 }]);
+  assert.deepEqual(E.visitAnnouncement({ scored: 0, bust: true }, "x01", false), [{ text: "Bust", rate: 0.95, pitch: 0.95, volume: 0.85 }]);
+});
+
+test("winning the leg gets its own separate 'Game shot!' call, on top of the score", () => {
+  const normalFinish = E.visitAnnouncement({ scored: 40 }, "x01", true);
+  assert.equal(normalFinish.length, 2, "the score, then a separate Game shot exclamation");
+  assert.equal(normalFinish[0].text, "Forty");
+  assert.equal(normalFinish[1].text, "GAME SHOT!");
+
+  // A maximum finish still gets both: the 180 roar, then the win call.
+  const maxFinish = E.visitAnnouncement({ scored: 180 }, "x01", true);
+  assert.equal(maxFinish[0].text, "ONE HUNDRED AND EIGHTY!!!");
+  assert.equal(maxFinish[1].text, "GAME SHOT!");
+
+  assert.equal(E.visitAnnouncement({ scored: 100 }, "x01", false).length, 1, "no Game shot call when the leg isn't won");
+});
+
+test("cricket gets a lighter version of the same idea: a plain call, or an excited one for a clean sweep", () => {
+  const single = E.visitAnnouncement({ marks: 1, points: 0 }, "cricket", false);
+  assert.deepEqual(single, [{ text: "One mark", rate: 0.95, pitch: 1, volume: 0.85 }]);
+
+  const sweep = E.visitAnnouncement({ marks: 3, points: 0 }, "cricket", false);
+  assert.equal(sweep[0].text, "THREE MARKS!");
+  assert.ok(sweep[0].pitch > single[0].pitch && sweep[0].volume > single[0].volume);
+
+  assert.deepEqual(E.visitAnnouncement({ marks: 0, points: 0 }, "cricket", false), [{ text: "No marks", rate: 0.95, pitch: 1, volume: 0.85 }]);
+});
+
 test("either side's latest visit can be found, for two people sharing the phone", () => {
   const game = playVisits({ kind: "x01", startScore: 501 }, [["T20", "T20", "T20"], ["S20", "S5", "S1"], ["T19", "S1", "S1"]]);
   assert.equal(E.lastVisitOf(game, "player"), 2);

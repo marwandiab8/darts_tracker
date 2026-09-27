@@ -10,7 +10,7 @@ Playing works as it does against the bot, with these differences:
 
 - Each player enters their own darts, by board or keypad, and the turn passes to the other player after the third dart (or when Enter is pressed, if "Press Enter" is on). The status line says whose turn it is.
 - Either player's last visit can be corrected: "Edit Alex's last visit" and "Edit Sam's last visit" are both shown, and correcting one leaves the other's darts as entered.
-- Scores are announced for both, in the same voice.
+- Scores are announced for both, in the same voice (see `docs/bot-practice.md` for how the caller's energy changes with the score - that applies here too, just without the bot's lower pitch).
 - Only your own darts, from any game type, go into "Yours" on the heat map. The second player's darts are not counted as "The bot's".
 
 ## What is saved and emailed
