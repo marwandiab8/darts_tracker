@@ -754,6 +754,18 @@ test("a caller's voice lifts with the score, and peaks as a deep roar at 180", (
   assert.deepEqual(E.visitAnnouncement({ scored: 0, bust: true }, "x01", false), [{ text: "Bust", rate: 0.95, pitch: 0.95, volume: 1, clip: "audio/calls/bust.wav" }]);
 });
 
+test("every clip the announcer can ask for is in ALL_CLIP_FILES, so the first tap unlocks all of them", () => {
+  const wanted = new Set();
+  for (let n = 1; n <= 180; n++) for (const s of E.visitAnnouncement({ scored: n }, "x01", true)) if (s.clip) wanted.add(s.clip);
+  for (const s of E.visitAnnouncement({ scored: 0 }, "x01", false)) if (s.clip) wanted.add(s.clip);
+  for (const s of E.visitAnnouncement({ scored: 0, bust: true }, "x01", false)) if (s.clip) wanted.add(s.clip);
+  const listed = new Set(E.ALL_CLIP_FILES);
+  assert.equal(listed.size, 44);
+  for (const c of wanted) assert.ok(listed.has(c), c + " is played but never unlocked");
+  const fs = require("node:fs"), path = require("node:path");
+  for (const c of listed) assert.ok(fs.existsSync(path.join(__dirname, "..", "public", c)), c + " is missing from public/");
+});
+
 test("winning the leg gets its own separate 'Game shot!' call, on top of the score", () => {
   const normalFinish = E.visitAnnouncement({ scored: 40 }, "x01", true);
   assert.equal(normalFinish.length, 2, "the score, then a separate Game shot exclamation");

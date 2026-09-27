@@ -487,6 +487,14 @@
   }
   const FIXED_CLIPS = { bust: "audio/calls/bust.wav", noScore: "audio/calls/no-score.wav", gameShot: "audio/calls/game-shot.wav" };
 
+  // Every clip file that exists, for practice.html to unlock up front on the same first tap that
+  // warms up the browser's voice. Several mobile browsers only bless the exact <audio> element that
+  // was played during a real user gesture - unlocking one clip does not unlock the other 43, so all of
+  // them need their own play() call during that same tap, not just whichever one happens to be first.
+  const ALL_CLIP_FILES = [];
+  for (let n = 140; n <= 180; n++) ALL_CLIP_FILES.push(clipForScore(n));
+  ALL_CLIP_FILES.push(FIXED_CLIPS.bust, FIXED_CLIPS.noScore, FIXED_CLIPS.gameShot);
+
   // The full call for a finished visit, as one or more utterances to speak in order, each with its own
   // voice (rate/pitch/volume, on top of whatever base voice is speaking) and an optional `clip` - a
   // pre-recorded file to play instead of the synthesised voice for that one utterance, for the fixed
@@ -725,6 +733,7 @@
     sayNumber,
     visitSpeech,
     visitAnnouncement,
+    ALL_CLIP_FILES,
     replayVisits,
     upgradeGame,
     gameOptions,

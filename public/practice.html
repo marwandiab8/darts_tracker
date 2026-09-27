@@ -351,7 +351,7 @@
      Cache-Control: no-cache (a real, previously-seen failure mode - see docs/bot-practice.md) is
      still forced to fetch the matching engine instead of silently pairing a new page with a stale
      one, which throws inside announce()'s catch-all and looks like "no sound at all". -->
-<script src="practice-engine.js?v=2"></script>
+<script src="practice-engine.js?v=3"></script>
 <script>
 (function () {
   "use strict";
@@ -434,6 +434,8 @@
   }
   function playClip(path, rate) {
     const a = getClip(path);
+    a.wanted = true;
+    a.muted = false;
     // Resetting currentTime before a fresh element has loaded its metadata throws in some browsers
     // (Safari in particular) - on its own, so it can't take play() down with it if it fails.
     try { a.currentTime = 0; } catch (_) {}
@@ -449,15 +451,21 @@
     if (speechReady || !canSpeak) return;
     speechReady = true;
     try { const u = new SpeechSynthesisUtterance(""); u.volume = 0; window.speechSynthesis.speak(u); } catch (_) {}
-    // A silent play+pause of one real clip, on the same first tap, unlocks <audio> playback generally
-    // for the rest of the page in browsers (notably mobile Safari) that only allow it after a genuine
-    // user gesture.
-    try {
-      const a = getClip("audio/calls/game-shot.wav");
-      a.volume = 0;
-      const p = a.play();
-      if (p && p.then) p.then(() => { a.pause(); a.volume = 1; }).catch(() => {});
-    } catch (_) {}
+    // A silent play+pause of EVERY clip, on this same first tap. Mobile browsers bless only the exact
+    // <audio> element that was played during a real gesture, so unlocking one clip left the other 43
+    // (every 140+ score) created later outside any gesture and silently blocked.
+    for (const path of E.ALL_CLIP_FILES || []) {
+      try {
+        const a = getClip(path);
+        a.muted = true;
+        const p = a.play();
+        // If a real call starts this same clip before the unlock settles (the first tap entered a
+        // big score), leave it playing rather than pausing it.
+        const settle = () => { if (!a.wanted) { a.pause(); a.currentTime = 0; } a.muted = false; };
+        if (p && p.then) p.then(settle).catch(() => { a.muted = false; });
+        else a.muted = false;
+      } catch (_) {}
+    }
   }
 
   function announce(visit) {
