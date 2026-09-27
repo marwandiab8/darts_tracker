@@ -471,11 +471,19 @@
     return clipBuffers[path];
   }
 
+  // iOS 17+ lets a page pick its shared audio session category. Setting it to "playback" makes a
+  // clip play even with the silent switch on, but the category is page-wide, not per-sound - left
+  // set to "playback" all the time it silently muted the browser's own SpeechSynthesis voice too
+  // (used for every score under 140 and all of Cricket), which is why only the recorded 140+/Bust/
+  // Game shot clips were ever heard. So it is only switched to "playback" for the moment a clip is
+  // actually playing, and back to "auto" the instant that clip ends.
+  function setAudioSession(type) {
+    try { if (navigator.audioSession) navigator.audioSession.type = type; } catch (_) {}
+  }
+
   function unlockAudio() {
     if (!AC) return;
     try {
-      // iOS 17+: play even with the silent switch on, the same as the browser voice does.
-      if (navigator.audioSession) navigator.audioSession.type = "playback";
       if (!audioCtx) audioCtx = new AC();
       // A one-sample silent buffer started inside the tap is what unlocks older iOS; resume() the rest.
       const src = audioCtx.createBufferSource();
@@ -516,6 +524,7 @@
       return speakSeg(seg, botPitch);
     }
     return new Promise((resolve) => {
+      setAudioSession("playback"); // just for this clip - see setAudioSession above
       const src = audioCtx.createBufferSource();
       src.buffer = buffer;
       if (botPitch !== 1) {
@@ -524,7 +533,7 @@
         else src.playbackRate.value = botPitch;
       }
       src.connect(audioCtx.destination);
-      src.onended = () => { if (currentSource === src) currentSource = null; resolve(); };
+      src.onended = () => { setAudioSession("auto"); if (currentSource === src) currentSource = null; resolve(); };
       currentSource = src;
       src.start(0);
       noteSound("played " + seg.clip);
@@ -534,7 +543,7 @@
   function stopAnnouncing() {
     announceToken++;
     try { window.speechSynthesis.cancel(); } catch (_) {}
-    if (currentSource) { try { currentSource.stop(); } catch (_) {} currentSource = null; }
+    if (currentSource) { try { currentSource.stop(); } catch (_) {} currentSource = null; setAudioSession("auto"); }
   }
 
   async function announce(visit) {
