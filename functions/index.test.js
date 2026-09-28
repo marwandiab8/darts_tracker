@@ -399,3 +399,25 @@ test("a failed send is recorded on the game with the reason", async () => {
   assert.equal(status, "failed");
   assert.deepEqual(ref.updates[0], { emailStatus: "failed", emailError: "535 bad login" });
 });
+
+test("a bot game is sent as a timed Darts session with its numbers and a readable note", () => {
+  const item = _test.mapBotGameToTimeLeft(botGame(), "game1");
+  assert.equal(item.eventType, "darts_practice");
+  assert.equal(item.activityFamily, "darts");
+  assert.equal(item.durationSeconds, 612);
+  assert.deepEqual(item.metrics, { darts: 45, average: 54.24, botAverage: 47.9, rounds: 15 });
+  assert.equal(item.metadata.note, item.summary);
+  const instant = _test.mapBotGameToTimeLeft(botGame({ durationSec: 0 }), "g0");
+  assert.equal(instant.durationSeconds, undefined, "no length, no time on the wheel");
+  const unplayed = _test.mapBotGameToTimeLeft(botGame({ result: "abandoned", playerDarts: [], botDarts: [] }), "g4");
+  assert.deepEqual(unplayed.metrics, { rounds: 15 }, "no averages for a side that threw nothing");
+});
+
+test("a tracker practice is filed under Darts with its score and note, but no time", () => {
+  const item = _test.mapSessionToTimeLeft({ timestamp: "2026-09-20 19:30", total: 12, entry: {} }, "s1");
+  assert.equal(item.eventType, "darts_practice");
+  assert.equal(item.activityFamily, "darts");
+  assert.deepEqual(item.metrics, { score: 12 });
+  assert.equal(item.metadata.note, item.summary);
+  assert.equal(item.durationSeconds, undefined);
+});

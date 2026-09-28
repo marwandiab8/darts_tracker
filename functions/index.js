@@ -152,13 +152,14 @@ function mapSessionToTimeLeft(session, sessionId, syncStatus = "active") {
   const targetSummaries = summarizeTargets(session.entry || {}, mode);
   const best = bestTargets(targetSummaries);
   const appBaseUrl = String(DARTS_APP_BASE_URL.value() || "").replace(/\/+$/, "");
+  const summary = `Practice score ${total}${best.length ? `; best targets: ${best.map((row) => `${row.target} (${row.score})`).join(", ")}` : ""}.`;
 
   return {
     dateId: dateId || undefined,
     sourceApp: "DartstRacker2026",
     category: "dartsRecord",
     title: `${mode === "single" ? "Singles practice" : "Darts practice"} summary`,
-    summary: `Practice score ${total}${best.length ? `; best targets: ${best.map((row) => `${row.target} (${row.score})`).join(", ")}` : ""}.`,
+    summary,
     description: best.length
       ? `Top targets: ${best.map((row) => `${row.target}: ${row.darts.join("")} = ${row.score}`).join("; ")}.`
       : "Practice session saved from Darts Tracker.",
@@ -188,7 +189,12 @@ function mapSessionToTimeLeft(session, sessionId, syncStatus = "active") {
       targetSummaries,
       bestTargets: best,
       source: "dartstracker2026",
+      note: summary,
     },
+    // No duration is recorded for a tracker practice, so it is filed under Darts without time on the wheel.
+    eventType: "darts_practice",
+    activityFamily: "darts",
+    metrics: { score: total },
   };
 }
 
@@ -227,12 +233,14 @@ function mapBotGameToTimeLeft(game, gameId, syncStatus = "active") {
   const scores = [];
   if (playerAvg !== null && playerDarts) scores.push(`Your ${averageName} ${playerAvg} against ${botAvg === null ? "the bot's" : botAvg}`);
 
+  const summary = `${resultWord} ${gameName} against the ${rankName} bot${scores.length ? `. ${scores[0]}` : ""}${playerDarts ? `. ${playerDarts} darts thrown` : ""}.`;
+
   return {
     dateId: dateId || undefined,
     sourceApp: "DartstRacker2026",
     category: "dartsRecord",
     title: `Bot practice: ${gameName} vs ${rankName} (${result})`,
-    summary: `${resultWord} ${gameName} against the ${rankName} bot${scores.length ? `. ${scores[0]}` : ""}${playerDarts ? `. ${playerDarts} darts thrown` : ""}.`,
+    summary,
     description: `Practice game against the ${rankName} bot in Darts Tracker: ${gameName}, ${result}.`,
     sourceFirebaseProjectId: DARTS_FIREBASE_PROJECT_ID.value() || "dartstracker2026",
     sourceProjectName: "Darts Tracker",
@@ -270,7 +278,19 @@ function mapBotGameToTimeLeft(game, gameId, syncStatus = "active") {
       durationSec,
       timestamp: cleanString(game.timestamp || ""),
       source: "dartstracker2026",
+      note: summary,
     },
+    // Labelled like the doubles-practice sessions so Time Left files it under Darts, and timed from the
+    // game's start (capturedAt) so it shows on the Activity wheel.
+    eventType: "darts_practice",
+    activityFamily: "darts",
+    durationSeconds: durationSec > 0 ? durationSec : undefined,
+    metrics: Object.fromEntries(Object.entries({
+      darts: playerDarts || null,
+      average: playerDarts ? playerAvg : null,
+      botAverage: botDarts ? botAvg : null,
+      rounds: cleanNumber(game.rounds, 0, 1000, 0),
+    }).filter(([, value]) => value !== null && value !== undefined)),
   };
 }
 
@@ -481,11 +501,16 @@ async function forwardOwnerDocument({ event, collectionName, idParam, mapItem })
   const item = mapItem(source, documentId, deleted ? "deletedFromSource" : "active");
   try {
     const result = await postToTimeLeft(item);
-    logger.info("darts Time Left sync complete", {
+    // Time Left answers 200 even when it could not update the timeline event, so log what it said.
+    const timeline = result && result.canonicalIngestion === "failed" ? "failed" : result && result.lifeEventId ? "ok" : "unknown";
+    const log = timeline === "failed" ? logger.warn : logger.info;
+    log("darts Time Left sync complete", {
       sourceDocumentPath: item.sourceDocumentPath,
       dateId: item.dateId || null,
       category: item.category,
       syncStatus: item.syncStatus,
+      timeline,
+      timelineError: result && result.canonicalError ? cleanString(result.canonicalError, 300) : null,
     });
     return result;
   } catch (error) {
