@@ -83,6 +83,18 @@ function timestampDateId(timestamp, timeZone = "America/Toronto") {
   return "";
 }
 
+// Time Left requires ISO-8601 text for these dates; a Firestore Timestamp would arrive as an object.
+function isoOrNull(value) {
+  if (!value) return null;
+  let date = null;
+  if (value instanceof Date) date = value;
+  else if (typeof value.toDate === "function") date = value.toDate();
+  else if (typeof value.seconds === "number") date = new Date(value.seconds * 1000);
+  else if (typeof value === "number") date = new Date(value);
+  else if (typeof value === "string") date = new Date(value);
+  return date && !Number.isNaN(date.getTime()) ? date.toISOString() : null;
+}
+
 function rowScoreForMode(values, mode) {
   const arr = Array.isArray(values) ? values : ["-", "-", "-"];
   if (mode === "single") return arr.reduce((sum, value) => sum + (value && value !== "-" ? 1 : 0), 0);
@@ -176,9 +188,9 @@ function mapSessionToTimeLeft(session, sessionId, syncStatus = "active") {
     contentType: null,
     fileName: null,
     fileSize: null,
-    originalCreatedAt: session.createdAt || null,
-    originalUpdatedAt: session.updatedAt || null,
-    capturedAt: session.timestamp || session.createdAt || null,
+    originalCreatedAt: isoOrNull(session.createdAt),
+    originalUpdatedAt: isoOrNull(session.updatedAt),
+    capturedAt: session.timestamp || isoOrNull(session.createdAt),
     visibility: "ownerOnly",
     syncStatus,
     metadata: {
@@ -255,9 +267,9 @@ function mapBotGameToTimeLeft(game, gameId, syncStatus = "active") {
     contentType: null,
     fileName: null,
     fileSize: null,
-    originalCreatedAt: game.createdAt || null,
-    originalUpdatedAt: game.updatedAt || null,
-    capturedAt: game.timestamp || game.createdAt || null,
+    originalCreatedAt: isoOrNull(game.createdAt),
+    originalUpdatedAt: isoOrNull(game.updatedAt),
+    capturedAt: game.timestamp || isoOrNull(game.createdAt),
     visibility: "ownerOnly",
     syncStatus,
     metadata: {

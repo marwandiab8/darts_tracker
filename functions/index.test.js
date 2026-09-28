@@ -413,6 +413,18 @@ test("a bot game is sent as a timed Darts session with its numbers and a readabl
   assert.deepEqual(unplayed.metrics, { rounds: 15 }, "no averages for a side that threw nothing");
 });
 
+test("stored dates are sent as ISO-8601 text, whatever form they were saved in", () => {
+  const stamp = { toDate: () => new Date("2026-08-09T13:05:00Z") };
+  const item = _test.mapSessionToTimeLeft({ timestamp: "2026-08-09 09:05", total: 3, entry: {}, createdAt: stamp, updatedAt: { seconds: 1786280700 } }, "s2");
+  assert.equal(item.originalCreatedAt, "2026-08-09T13:05:00.000Z");
+  assert.equal(item.originalUpdatedAt, new Date(1786280700 * 1000).toISOString());
+  const noTime = _test.mapSessionToTimeLeft({ total: 3, entry: {}, createdAt: stamp }, "s3");
+  assert.equal(noTime.capturedAt, "2026-08-09T13:05:00.000Z");
+  const game = _test.mapBotGameToTimeLeft(botGame({ createdAt: stamp, updatedAt: "not a date" }), "g5");
+  assert.equal(game.originalCreatedAt, "2026-08-09T13:05:00.000Z");
+  assert.equal(game.originalUpdatedAt, null);
+});
+
 test("a tracker practice is filed under Darts with its score and note, but no time", () => {
   const item = _test.mapSessionToTimeLeft({ timestamp: "2026-09-20 19:30", total: 12, entry: {} }, "s1");
   assert.equal(item.eventType, "darts_practice");
