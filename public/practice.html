@@ -57,11 +57,14 @@
   .side .big { font-size: clamp(38px, 9vw, 60px); font-weight: 950; line-height: 1.05; color: var(--accent); }
   .side.bot .big { color: var(--bot); }
   .side .small { font-size: 13px; color: var(--muted); }
-  .status { min-height: 48px; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,.04); border: 1px solid var(--border); margin-bottom: 12px; font-size: 15px; }
+  /* Room for three lines, so the board below doesn't jump as messages and checkout hints come and go. */
+  .status { min-height: 82px; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,.04); border: 1px solid var(--border); margin-bottom: 12px; font-size: 15px; }
   .status strong { color: var(--accent); }
   .hint { font-size: 14px; color: #bbf7d0; margin-top: 6px; min-height: 20px; }
   .canvas-wrap { width: 100%; max-width: 520px; margin: 0 auto; }
   canvas { display: block; width: 100%; height: auto; aspect-ratio: 1; touch-action: manipulation; border-radius: 50%; }
+  /* A tap on the board is a dart: never let it pan or zoom the page (pinch-zoom still works elsewhere). */
+  #board { touch-action: none; }
   canvas.tappable { cursor: crosshair; }
   .controls { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 12px; }
   table { width: 100%; border-collapse: collapse; }
@@ -123,7 +126,7 @@
   /* Keypad mode has to fit a phone screen without scrolling, or ENTER ends up below the fold. */
   .compact .side .big { font-size: 38px; }
   .compact .side { padding: 8px; }
-  .compact .status { min-height: 0; padding: 6px 10px; margin-bottom: 8px; font-size: 14px; }
+  .compact .status { min-height: 66px; padding: 6px 10px; margin-bottom: 8px; font-size: 14px; }
   .compact .boards { margin-bottom: 8px; gap: 8px; }
   .compact .kp-key { min-height: 48px; font-size: 22px; }
   .compact .kp-display { min-height: 60px; }
