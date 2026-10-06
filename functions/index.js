@@ -306,6 +306,84 @@ function mapBotGameToTimeLeft(game, gameId, syncStatus = "active") {
   };
 }
 
+// A JDC Challenge round from challenge.html: Shanghai 10-15, a dart at each double and the bull, Shanghai
+// 15-20 (57 darts, out of 3,330). Written by the browser, so every number is clamped; the darts stay here.
+const CHALLENGE_MAX = 3330;
+function mapChallengeGameToTimeLeft(game, gameId, syncStatus = "active") {
+  const timeZone = DARTS_DEFAULT_TIME_ZONE.value() || "America/Toronto";
+  const dateId = timestampDateId(game.timestamp || game.dateId || game.createdAt, timeZone);
+  const appBaseUrl = String(DARTS_APP_BASE_URL.value() || "").replace(/\/+$/, "");
+  const total = cleanNumber(game.total, 0, CHALLENGE_MAX, 0) || 0;
+  const part1 = cleanNumber(game.part1, 0, 1050, 0) || 0;
+  const part2 = cleanNumber(game.part2, 0, 1050, 0) || 0;
+  const part3 = cleanNumber(game.part3, 0, 1230, 0) || 0;
+  const doublesHit = cleanNumber(game.doublesHit, 0, 21, 0);
+  const trebles = cleanNumber(game.trebles, 0, 36, 0);
+  const shanghais = cleanNumber(game.shanghais, 0, 12, 0);
+  const darts = Array.isArray(game.darts) ? Math.min(game.darts.length, 57) : 0;
+  const durationSec = cleanNumber(game.durationSec, 0, 86400, 0);
+  const extras = [
+    shanghais !== null ? `${shanghais} Shanghai${shanghais === 1 ? "" : "s"}` : "",
+    trebles !== null ? `${trebles} treble${trebles === 1 ? "" : "s"}` : "",
+  ].filter(Boolean);
+  const summary = `Scored ${total} of ${CHALLENGE_MAX} in the JDC Challenge: Shanghai 10-15 ${part1}, doubles ${part2}${doublesHit !== null ? ` (${doublesHit} of 21 hit)` : ""}, Shanghai 15-20 ${part3}.${extras.length ? ` ${extras.join(", ")}.` : ""}${darts ? ` ${darts} darts thrown.` : ""}`;
+
+  return {
+    dateId: dateId || undefined,
+    sourceApp: "DartstRacker2026",
+    category: "dartsRecord",
+    title: `JDC Challenge: ${total} / ${CHALLENGE_MAX}`,
+    summary,
+    description: "JDC Challenge practice round in Darts Tracker: Shanghai 10-15, every double and the bull, Shanghai 15-20.",
+    sourceFirebaseProjectId: DARTS_FIREBASE_PROJECT_ID.value() || "dartstracker2026",
+    sourceProjectName: "Darts Tracker",
+    sourceProjectId: DARTS_SOURCE_PROJECT_ID,
+    sourceCollection: "challengeGames",
+    sourceDocumentId: gameId,
+    sourceDocumentPath: `challengeGames/${gameId}`,
+    sourceStoragePath: null,
+    sourceUrl: appBaseUrl ? `${appBaseUrl}/challenge.html` : "",
+    fileUrl: null,
+    thumbnailUrl: null,
+    contentType: null,
+    fileName: null,
+    fileSize: null,
+    originalCreatedAt: isoOrNull(game.createdAt),
+    originalUpdatedAt: isoOrNull(game.updatedAt),
+    capturedAt: game.timestamp || isoOrNull(game.createdAt),
+    visibility: "ownerOnly",
+    syncStatus,
+    metadata: {
+      uid: game.uid || null,
+      practiceType: "jdcChallenge",
+      total,
+      maxScore: CHALLENGE_MAX,
+      part1,
+      part2,
+      part3,
+      doublesHit,
+      trebles,
+      shanghais,
+      darts,
+      durationSec,
+      timestamp: cleanString(game.timestamp || ""),
+      source: "dartstracker2026",
+      note: summary,
+    },
+    // Filed under Darts and timed like the other practice, so it shows on the Activity wheel.
+    eventType: "darts_practice",
+    activityFamily: "darts",
+    durationSeconds: durationSec > 0 ? durationSec : undefined,
+    metrics: Object.fromEntries(Object.entries({
+      darts: darts || null,
+      score: total,
+      doublesHit,
+      trebles,
+      shanghais,
+    }).filter(([, value]) => value !== null && value !== undefined)),
+  };
+}
+
 // --- emailing the result of a game between two players ---------------------------------------------
 
 const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -562,6 +640,11 @@ exports.syncBotGameToTimeLeft = onDocumentWritten(
   (event) => forwardOwnerDocument({ event, collectionName: "botGames", idParam: "gameId", mapItem: mapBotGameToTimeLeft })
 );
 
+exports.syncChallengeGameToTimeLeft = onDocumentWritten(
+  { ...SYNC_OPTIONS, document: "challengeGames/{gameId}" },
+  (event) => forwardOwnerDocument({ event, collectionName: "challengeGames", idParam: "gameId", mapItem: mapChallengeGameToTimeLeft })
+);
+
 // What happens when a two-player game is saved: who may have it emailed, the daily cap, the send, and
 // the status written back to the game. `countRecent` and `send` are passed in so it can be tested.
 async function processVersusGame({ game, ref, ownerUid, countRecent, send }) {
@@ -695,6 +778,7 @@ module.exports._test = {
   isOwnerSession,
   normalizeDarts,
   mapBotGameToTimeLeft,
+  mapChallengeGameToTimeLeft,
   mapSessionToTimeLeft,
   rowScoreForMode,
   summarizeTargets,

@@ -34,6 +34,8 @@ The Time Left item uses:
 
 Games played against the bot on `practice.html` are sent the same way from `botGames/{gameId}` (function `syncBotGameToTimeLeft`), as a summary with `sourceCollection: botGames`. See [bot-practice.md](bot-practice.md).
 
+JDC Challenge rounds from `challenge.html` are sent from `challengeGames/{gameId}` (function `syncChallengeGameToTimeLeft`) as a timed Darts practice item: the score out of 3,330, each part, doubles hit, trebles and Shanghais. The 57 darts stay in Darts Tracker. See [challenge.md](challenge.md).
+
 ## Required Time Left Setup
 
 In Time Left To Live:

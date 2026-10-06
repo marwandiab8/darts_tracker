@@ -214,6 +214,43 @@ test("a bot game's contents are treated as untrusted", () => {
   assert.equal(item.title.includes("<"), false);
 });
 
+// --- JDC Challenge rounds -----------------------------------------------------------------------
+
+const challengeGame = (overrides = {}) => ({
+  uid: "owner-1", timestamp: "2026-10-05 20:00", total: 1441, part1: 552, part2: 350, part3: 539,
+  trebles: 9, shanghais: 3, doublesHit: 7, darts: Array(57).fill(1), durationSec: 640, ...overrides,
+});
+
+test("a JDC Challenge round becomes a timed Darts practice item with its score", () => {
+  const item = _test.mapChallengeGameToTimeLeft(challengeGame(), "c1");
+  assert.equal(item.dateId, "2026-10-05");
+  assert.equal(item.sourceCollection, "challengeGames");
+  assert.equal(item.sourceDocumentPath, "challengeGames/c1");
+  assert.equal(item.title, "JDC Challenge: 1441 / 3330");
+  assert.equal(item.summary, "Scored 1441 of 3330 in the JDC Challenge: Shanghai 10-15 552, doubles 350 (7 of 21 hit), Shanghai 15-20 539. 3 Shanghais, 9 trebles. 57 darts thrown.");
+  assert.deepEqual([item.eventType, item.activityFamily, item.durationSeconds], ["darts_practice", "darts", 640]);
+  assert.deepEqual(item.metrics, { darts: 57, score: 1441, doublesHit: 7, trebles: 9, shanghais: 3 });
+  assert.equal(item.metadata.practiceType, "jdcChallenge");
+  assert.equal(JSON.stringify(item).includes("[1,1,1"), false, "the darts themselves are not forwarded");
+});
+
+test("a challenge round's contents are treated as untrusted", () => {
+  const item = _test.mapChallengeGameToTimeLeft(challengeGame({ total: 1e9, part2: -4, doublesHit: "lots", trebles: 99, darts: "many", durationSec: -1 }), "c2");
+  assert.equal(item.metadata.total, 3330);
+  assert.equal(item.metadata.part2, 0);
+  assert.equal(item.metadata.doublesHit, null);
+  assert.equal(item.metadata.trebles, 36);
+  assert.equal(item.metadata.darts, 0);
+  assert.equal(item.durationSeconds, undefined);
+});
+
+test("the owner's challenge round is sent once; someone else's isn't", async () => {
+  const sent = await runForward(challengeGame(), { collectionName: "challengeGames", mapItem: _test.mapChallengeGameToTimeLeft });
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].body.item ? sent[0].body.item.sourceCollection : sent[0].body.sourceCollection, "challengeGames");
+  assert.equal((await runForward(challengeGame({ uid: "someone" }), { collectionName: "challengeGames", mapItem: _test.mapChallengeGameToTimeLeft })).length, 0);
+});
+
 // --- what the triggers send ---------------------------------------------------------------------
 
 async function runForward(document, { ownerUid = "owner-1", deleted = false, collectionName = "botGames", mapItem = _test.mapBotGameToTimeLeft } = {}) {

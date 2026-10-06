@@ -24,4 +24,6 @@ kept in the browser and offered back; only finished rounds are saved.
 - Progress: rounds, best, average of the last 10 (and the change on the 10 before), each round on a chart with a
   five-round moving average, each part's average against its maximum, the part with the most to gain, and the hit
   rate on every double with the three weakest named.
-- Not sent to Time Left (bot games and tracker sessions are).
+- Each saved round is sent to Time Left by `syncChallengeGameToTimeLeft` (owner only): a timed Darts practice item
+  titled "JDC Challenge: score / 3330" with each part, doubles hit, trebles and Shanghais. Deleting a round marks it
+  deleted in Time Left. See [time-left-sync.md](time-left-sync.md).
