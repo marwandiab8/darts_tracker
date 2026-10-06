@@ -9,7 +9,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 
-const files = (process.argv.length > 2 ? process.argv.slice(2) : ["index.html", "practice.html", "practice-engine.js"].map((name) => path.join(__dirname, "..", "public", name))).map((f) => path.resolve(f));
+const files = (process.argv.length > 2 ? process.argv.slice(2) : ["index.html", "practice.html", "practice-engine.js", "challenge.html", "challenge-engine.js"].map((name) => path.join(__dirname, "..", "public", name))).map((f) => path.resolve(f));
 
 let failed = 0;
 for (const file of files) {

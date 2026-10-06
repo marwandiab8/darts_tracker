@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+<title>JDC Challenge - Darts Tracker</title>
+<style>
+  :root {
+    --bg: #0b0f17; --muted: #94a3b8; --text: #e5e7eb; --accent: #f59e0b; --blue: #38bdf8;
+    --good: #22c55e; --warn: #ef4444; --border: rgba(148, 163, 184, .18); --chip: #0f172a;
+  }
+  * { box-sizing: border-box; }
+  html, body { touch-action: manipulation; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; }
+  .shell { background: radial-gradient(1200px 600px at 20% 0%, rgba(245, 158, 11, .12), transparent 55%), var(--bg); min-height: 100vh; padding: 12px 16px 16px; }
+  .wrap { max-width: 1000px; margin: 0 auto; }
+  header { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  header h1 { margin: 0; font-size: 22px; }
+  .head-left, .head-right { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; }
+  a.back { color: var(--accent); text-decoration: none; font-weight: 700; font-size: 14px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 999px; }
+  .pill { display: inline-flex; align-items: center; padding: 6px 12px; border-radius: 999px; background: rgba(255,255,255,.05); border: 1px solid var(--border); font-size: 14px; max-width: 100%; }
+  #userName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+  .card { background: rgba(255,255,255,.02); border: 1px solid var(--border); border-radius: 16px; padding: 16px; margin-bottom: 16px; min-width: 0; }
+  .card h2 { margin: 0 0 12px; font-size: 18px; }
+  .hidden { display: none !important; }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+  button { font: inherit; cursor: pointer; background: var(--accent); color: #111; border: 0; border-radius: 12px; padding: 12px 18px; font-weight: 800; min-height: 44px; }
+  button.secondary { background: rgba(255,255,255,.07); color: var(--text); border: 1px solid var(--border); }
+  button.danger { background: transparent; color: #fca5a5; border: 1px solid rgba(239,68,68,.4); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button:focus-visible, a:focus-visible, summary:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+  details.rules summary { cursor: pointer; font-weight: 700; color: var(--accent); }
+  details.rules ol { margin: 10px 0 0; padding-left: 20px; line-height: 1.55; }
+
+  /* Playing */
+  .now { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: end; margin-bottom: 12px; }
+  .now .part { font-size: 13px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .now .target { font-size: clamp(34px, 9vw, 56px); font-weight: 950; line-height: 1.05; color: var(--accent); }
+  .now .dartno { font-size: 14px; color: var(--muted); }
+  .score { text-align: right; }
+  .score .big { font-size: clamp(30px, 8vw, 46px); font-weight: 950; line-height: 1; }
+  .pace { font-size: 13px; margin-top: 4px; }
+  .pace.up { color: var(--good); } .pace.down { color: #fca5a5; }
+  .visit { display: flex; gap: 8px; margin: 0 0 12px; min-height: 40px; }
+  .visit span { flex: 1; text-align: center; padding: 8px 4px; border-radius: 10px; border: 1px dashed var(--border); font-weight: 800; color: var(--muted); }
+  .visit span.filled { border-style: solid; color: var(--text); background: rgba(255,255,255,.05); }
+  .visit span.filled.hit { border-color: var(--accent); color: var(--accent); }
+  .keys { display: grid; gap: 10px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .keys.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .keys button { min-height: 76px; font-size: 20px; }
+  .keys button.miss { background: rgba(255,255,255,.07); color: var(--text); border: 1px solid var(--border); }
+  .keys button small { display: block; font-size: 12px; font-weight: 700; opacity: .75; }
+  .track { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 6px; margin-top: 14px; }
+  .track div { border: 1px solid var(--border); border-radius: 8px; padding: 4px; text-align: center; font-size: 12px; color: var(--muted); }
+  .track div b { display: block; color: var(--text); font-size: 14px; }
+  .track div.cur { border-color: var(--accent); }
+  .track div.sh b { color: var(--accent); }
+  .flash { min-height: 22px; font-weight: 800; color: var(--accent); margin-top: 10px; }
+
+  /* Results and progress */
+  .stats { display: grid; gap: 10px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .stat { border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: rgba(0,0,0,.2); min-width: 0; }
+  .stat .k { font-size: 12px; color: var(--muted); }
+  .stat .v { font-size: 24px; font-weight: 900; }
+  .stat .d { font-size: 12px; }
+  .stat .d.up { color: var(--good); } .stat .d.down { color: #fca5a5; }
+  canvas { width: 100%; display: block; }
+  .bars { display: grid; grid-template-columns: repeat(21, minmax(0, 1fr)); gap: 3px; align-items: end; height: 120px; margin-top: 8px; }
+  .bars div { background: rgba(56,189,248,.75); border-radius: 3px 3px 0 0; min-height: 2px; }
+  .bars div.low { background: rgba(239,68,68,.8); }
+  .barlabels { display: grid; grid-template-columns: repeat(21, minmax(0, 1fr)); gap: 3px; font-size: 10px; color: var(--muted); text-align: center; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); }
+  th { font-size: 12px; color: var(--muted); font-weight: 700; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td button { min-height: 32px; padding: 4px 10px; font-size: 12px; }
+  .table-wrap { overflow-x: auto; }
+  h3 { font-size: 15px; margin: 18px 0 6px; }
+  @media (max-width: 700px) {
+    .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .keys { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .keys button { min-height: 64px; font-size: 18px; }
+    .barlabels { font-size: 8px; }
+  }
+</style>
+</head>
+<body>
+<div class="shell"><div class="wrap">
+  <header>
+    <div class="head-left">
+      <a class="back" href="./">&larr; Tracker</a>
+      <h1>JDC Challenge</h1>
+    </div>
+    <div class="head-right">
+      <a class="back" href="practice.html">Play the bot</a>
+      <span class="pill hidden" id="userPill"><span id="userName"></span></span>
+    </div>
+  </header>
+
+  <div id="authScreen" class="card hidden">
+    <h2>Sign in to play</h2>
+    <p class="muted">Use the same Google account as the tracker so your rounds are saved with your practice.</p>
+    <button id="signInBtn" type="button">Sign in with Google</button>
+  </div>
+
+  <div id="app" class="hidden">
+    <section class="card" id="startCard">
+      <h2>The best all-round practice round</h2>
+      <p class="muted">One round tests scoring, trebles and doubles, and always scores out of <b id="maxScore"></b>, so you can see exactly how you're improving. It takes about 10-15 minutes and 57 darts.</p>
+      <details class="rules">
+        <summary>How it works</summary>
+        <ol>
+          <li><b>Part 1 - Shanghai 10 to 15:</b> three darts at each number. A single scores the number, a double twice it, a treble three times. Hit a single, a double <i>and</i> a treble of the same number in one visit (a <b>Shanghai</b>) for a <b>+100</b> bonus.</li>
+          <li><b>Part 2 - Doubles:</b> one dart at each double, D1 to D20, then one at the bull. Every hit scores <b>50</b>.</li>
+          <li><b>Part 3 - Shanghai 15 to 20:</b> the same as Part 1.</li>
+          <li>Throw each dart, then tap what it hit. The keys only offer what that target can score. "Undo" takes back the last dart.</li>
+        </ol>
+      </details>
+      <div class="actions">
+        <button type="button" id="startBtn">Start a round</button>
+        <button type="button" class="secondary hidden" id="resumeBtn">Resume round</button>
+        <button type="button" class="danger hidden" id="discardBtn">Discard unfinished round</button>
+      </div>
+      <p class="muted small hidden" id="resumeText"></p>
+    </section>
+
+    <section class="card hidden" id="playCard" aria-live="polite">
+      <div class="now">
+        <div>
+          <div class="part" id="partLabel"></div>
+          <div class="target" id="targetLabel"></div>
+          <div class="dartno" id="dartLabel"></div>
+        </div>
+        <div class="score">
+          <div class="small muted">Score</div>
+          <div class="big" id="runningScore">0</div>
+          <div class="pace" id="pace"></div>
+        </div>
+      </div>
+      <div class="visit" id="visitSlots"></div>
+      <div class="keys" id="keys"></div>
+      <div class="flash" id="flash"></div>
+      <div class="actions">
+        <button type="button" class="secondary" id="undoBtn">Undo</button>
+        <button type="button" class="danger" id="quitBtn">Quit round</button>
+      </div>
+      <div class="track" id="track"></div>
+      <p class="muted small">Keyboard: 0 miss, 1 single, 2 double, 3 treble (doubles: 1 hit, 0 miss), Backspace undo.</p>
+    </section>
+
+    <section class="card hidden" id="resultCard">
+      <h2>Round finished</h2>
+      <div class="stats" id="resultStats"></div>
+      <p id="resultNote" class="muted"></p>
+      <div class="actions">
+        <button type="button" id="againBtn">Play another round</button>
+      </div>
+    </section>
+
+    <section class="card" id="progressCard">
+      <h2>Your progress</h2>
+      <p class="muted" id="noGames">No rounds yet. Your scores, averages and weakest doubles show here after your first round.</p>
+      <div id="progressBody" class="hidden">
+        <div class="stats" id="progressStats"></div>
+        <h3>Score per round</h3>
+        <p class="muted small">Orange dots are rounds; the blue line is the average of your last five.</p>
+        <canvas id="chart" height="220" aria-label="Score per round"></canvas>
+        <h3>Each part (average of your last 10 rounds)</h3>
+        <div class="stats" id="partStats"></div>
+        <h3>Doubles hit rate</h3>
+        <p class="muted small" id="weakest"></p>
+        <div class="bars" id="bars"></div>
+        <div class="barlabels" id="barLabels"></div>
+        <h3>Rounds</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Date</th><th class="num">Score</th><th class="num">Shanghai 10-15</th><th class="num">Doubles</th><th class="num">Shanghai 15-20</th><th></th></tr></thead>
+          <tbody id="history"></tbody>
+        </table></div>
+      </div>
+    </section>
+  </div>
+</div></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
+<script src="challenge-engine.js?v=1"></script>
+<script>
+(function () {
+  "use strict";
+  const C = window.ChallengeEngine;
+  const firebaseConfig = {
+    apiKey: "AIzaSyCAfRz72zGeDxKQGk3TGPAra1US64BGF90",
+    authDomain: "dartstracker2026.firebaseapp.com",
+    projectId: "dartstracker2026",
+    storageBucket: "dartstracker2026.firebasestorage.app",
+    messagingSenderId: "151826966768",
+    appId: "1:151826966768:web:a409ac8d409bf0f796ba35"
+  };
+  if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+  const auth = firebase.auth(), db = firebase.firestore();
+  const COLL = "challengeGames", ROUND_KEY = "dt_challenge_round", UNSAVED_KEY = "dt_challenge_unsaved";
+
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const fmt = (n, d = 0) => (n == null ? "-" : Number(n).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d }));
+  const stamp = (date = new Date()) => {
+    const p = (n) => String(n).padStart(2, "0");
+    return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())} ${p(date.getHours())}:${p(date.getMinutes())}`;
+  };
+  const store = {
+    get(key) { try { return JSON.parse(localStorage.getItem(key) || "null"); } catch (_) { return null; } },
+    set(key, value) { try { value == null ? localStorage.removeItem(key) : localStorage.setItem(key, JSON.stringify(value)); } catch (_) { /* private mode */ } },
+  };
+
+  let user = null;
+  let games = [];
+  let round = null; // { darts: [], startedAt: ms }
+  let flashTimer = null;
+
+  $("maxScore").textContent = fmt(C.MAX_SCORE);
+
+  // ---- playing -----------------------------------------------------------------------------
+  const RING = ["Miss", "Single", "Double", "Treble"];
+  function showCard(which) {
+    $("playCard").classList.toggle("hidden", which !== "play");
+    $("resultCard").classList.toggle("hidden", which !== "result");
+    $("startCard").classList.toggle("hidden", which !== "start");
+  }
+
+  function startRound(resume) {
+    round = resume || { darts: [], startedAt: Date.now() };
+    store.set(ROUND_KEY, round);
+    showCard("play");
+    renderPlay();
+  }
+
+  function bestRunning() {
+    const best = games.reduce((a, g) => (!a || g.total > a.total ? g : a), null);
+    return best && Array.isArray(best.darts) ? C.runningTotals(best.darts) : null;
+  }
+
+  function renderPlay() {
+    const pos = C.position(round.darts);
+    if (!pos) return finishRound();
+    const { step, dartInStep, index } = pos;
+    const s = C.summarize(round.darts);
+    $("partLabel").textContent = `Part ${step.part} of 3 · ${C.PART_NAMES[step.part]}`;
+    $("targetLabel").textContent = step.kind === "double" ? (step.target === C.BULL ? "Bull" : `Double ${step.target}`) : `${step.target}`;
+    $("dartLabel").textContent = step.kind === "double" ? `Dart ${round.darts.length + 1} of ${C.TOTAL_DARTS} · one dart` : `Dart ${dartInStep + 1} of 3 · dart ${round.darts.length + 1} of ${C.TOTAL_DARTS}`;
+    $("runningScore").textContent = fmt(s.total);
+
+    // Against your best round at the same point.
+    const best = bestRunning();
+    const doneSteps = C.runningTotals(round.darts).length;
+    const pace = $("pace");
+    pace.className = "pace";
+    if (best && doneSteps) {
+      const diff = s.total - best[doneSteps - 1];
+      pace.textContent = diff === 0 ? "level with your best" : `${diff > 0 ? "+" : ""}${fmt(diff)} vs your best`;
+      pace.classList.add(diff >= 0 ? "up" : "down");
+    } else pace.textContent = "";
+
+    // This visit's darts so far.
+    const visit = C.stepsOf(round.darts)[index].darts;
+    $("visitSlots").innerHTML = Array.from({ length: step.darts }, (_, i) => {
+      if (i >= visit.length) return "<span>-</span>";
+      const v = visit[i];
+      const text = step.kind === "double" ? (v ? "Hit" : "Miss") : (v ? `${"SDT"[v - 1]}${step.target}` : "Miss");
+      return `<span class="filled${v ? " hit" : ""}">${text}</span>`;
+    }).join("");
+
+    const keys = $("keys");
+    keys.className = step.kind === "double" ? "keys two" : "keys";
+    keys.innerHTML = step.kind === "double"
+      ? `<button type="button" class="miss" data-v="0">Miss</button><button type="button" data-v="1">Hit ${esc(C.doubleLabel(step.target))}<small>+50</small></button>`
+      : [0, 1, 2, 3].map((v) => `<button type="button" class="${v ? "" : "miss"}" data-v="${v}">${v ? `${RING[v]} ${step.target}` : "Miss"}${v ? `<small>+${step.target * v}</small>` : ""}</button>`).join("");
+
+    $("undoBtn").disabled = !round.darts.length;
+    $("track").innerHTML = C.stepsOf(round.darts).map((x, i) => {
+      const cls = [i === index ? "cur" : "", C.isShanghai(x.step, x.darts) ? "sh" : ""].join(" ");
+      const label = x.step.kind === "double" ? C.doubleLabel(x.step.target) : `S${x.step.target}`;
+      return `<div class="${cls}">${label}<b>${x.done || x.darts.length ? x.score : "·"}</b></div>`;
+    }).join("");
+  }
+
+  function flash(text) {
+    $("flash").textContent = text;
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => { $("flash").textContent = ""; }, 2500);
+  }
+
+  function throwDart(value) {
+    if (!round) return;
+    const pos = C.position(round.darts);
+    if (!pos || !C.validDart(pos.step, value)) return;
+    round.darts = C.addDart(round.darts, value);
+    store.set(ROUND_KEY, round);
+    const step = C.stepsOf(round.darts)[pos.index];
+    if (step.done && C.isShanghai(step.step, step.darts)) flash(`SHANGHAI! +${C.SHANGHAI_BONUS}`);
+    else if (step.done && pos.step.kind === "shanghai") flash(`${pos.step.target}: ${step.score}`);
+    renderPlay();
+  }
+
+  function undo() {
+    if (!round || !round.darts.length) return;
+    round.darts = round.darts.slice(0, -1);
+    store.set(ROUND_KEY, round);
+    $("flash").textContent = "";
+    renderPlay();
+  }
+
+  async function saveRecord(rec) {
+    try {
+      const ref = await db.collection(COLL).add(rec);
+      games.push({ id: ref.id, ...rec });
+      store.set(UNSAVED_KEY, null);
+      return true;
+    } catch (err) {
+      console.error(err);
+      store.set(UNSAVED_KEY, rec);
+      return false;
+    }
+  }
+
+  async function finishRound() {
+    const prevBest = games.length ? Math.max(...games.map((g) => g.total)) : null;
+    const prevAvg = C.progress(games).avgLast10;
+    const rec = C.record(user.uid, round.darts, { timestamp: stamp(), durationSec: (Date.now() - round.startedAt) / 1000 });
+    round = null;
+    store.set(ROUND_KEY, null);
+    showCard("result");
+    const s = C.summarize(rec.darts);
+    $("resultStats").innerHTML = [
+      ["Score", fmt(rec.total), `out of ${fmt(C.MAX_SCORE)}`],
+      ["Shanghai 10-15", fmt(rec.part1), ""],
+      ["Doubles", fmt(rec.part2), `${rec.doublesHit} of 21 hit`],
+      ["Shanghai 15-20", fmt(rec.part3), ""],
+      ["Trebles", fmt(rec.trebles), "of 36 darts"],
+      ["Shanghais", fmt(rec.shanghais), "of 12 numbers"],
+      ["Number hit", `${fmt(s.hitRate * 100)}%`, "Shanghai darts on the number"],
+      ["Time", rec.durationSec != null ? `${Math.floor(rec.durationSec / 60)}:${String(rec.durationSec % 60).padStart(2, "0")}` : "-", ""],
+    ].map(([k, v, d]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div><div class="d muted">${d}</div></div>`).join("");
+    let note = prevBest == null ? "Your first round - this is the score to beat." : rec.total > prevBest ? `New personal best! Up ${fmt(rec.total - prevBest)} on your old best of ${fmt(prevBest)}.` : `Your best is ${fmt(prevBest)}.`;
+    if (prevAvg != null) note += ` Your recent average was ${fmt(prevAvg)}.`;
+    $("resultNote").textContent = note + " Saving…";
+    const ok = await saveRecord(rec);
+    $("resultNote").textContent = note + (ok ? " Saved." : " Couldn't save it right now - it's kept on this device and saved next time you open the page.");
+    renderProgress();
+  }
+
+  function quit() {
+    if (!round) return;
+    if (round.darts.length && !confirm("Quit this round? Unfinished rounds aren't saved.")) return;
+    round = null;
+    store.set(ROUND_KEY, null);
+    showCard("start");
+    refreshStart();
+  }
+
+  // ---- progress ----------------------------------------------------------------------------
+  function delta(now, before, digits = 0) {
+    if (now == null || before == null) return "";
+    const d = now - before;
+    if (Math.abs(d) < 0.5) return `<div class="d muted">same as the 10 before</div>`;
+    return `<div class="d ${d > 0 ? "up" : "down"}">${d > 0 ? "+" : ""}${fmt(d, digits)} on the 10 before</div>`;
+  }
+
+  function drawChart(p) {
+    const canvas = $("chart");
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth || 600, h = 220;
+    canvas.width = w * dpr; canvas.height = h * dpr;
+    const ctx = canvas.getContext("2d");
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, w, h);
+    const pad = { l: 40, r: 10, t: 10, b: 22 };
+    const n = p.totals.length;
+    const top = Math.max(100, Math.ceil(Math.max(...p.totals) / 100) * 100);
+    const x = (i) => pad.l + (n === 1 ? (w - pad.l - pad.r) / 2 : (i * (w - pad.l - pad.r)) / (n - 1));
+    const y = (v) => pad.t + (1 - v / top) * (h - pad.t - pad.b);
+    ctx.font = "11px system-ui, sans-serif"; ctx.fillStyle = "#94a3b8"; ctx.strokeStyle = "rgba(148,163,184,.18)"; ctx.lineWidth = 1;
+    ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    for (let k = 0; k <= 4; k++) {
+      const v = (top * k) / 4;
+      ctx.beginPath(); ctx.moveTo(pad.l, y(v)); ctx.lineTo(w - pad.r, y(v)); ctx.stroke();
+      ctx.fillText(fmt(v), pad.l - 6, y(v));
+    }
+    ctx.textAlign = "center"; ctx.textBaseline = "top";
+    ctx.fillText(n === 1 ? "1 round" : `${n} rounds`, (w + pad.l) / 2, h - pad.b + 6);
+    if (n > 1) {
+      ctx.strokeStyle = "#38bdf8"; ctx.lineWidth = 2.5; ctx.beginPath();
+      p.moving.forEach((v, i) => (i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v))));
+      ctx.stroke();
+    }
+    ctx.fillStyle = "#f59e0b";
+    p.totals.forEach((v, i) => { ctx.beginPath(); ctx.arc(x(i), y(v), n > 60 ? 2 : 3.5, 0, Math.PI * 2); ctx.fill(); });
+  }
+
+  function renderProgress() {
+    const p = C.progress(games);
+    $("noGames").classList.toggle("hidden", p.games > 0);
+    $("progressBody").classList.toggle("hidden", p.games === 0);
+    if (!p.games) return;
+    $("progressStats").innerHTML = [
+      ["Rounds", fmt(p.games), ""],
+      ["Best", fmt(p.best), p.bestGame ? `<div class="d muted">${esc(p.bestGame.timestamp.slice(0, 10))}</div>` : ""],
+      ["Average, last 10", fmt(p.avgLast10), delta(p.avgLast10, p.avgPrev10)],
+      ["Last round", fmt(p.last), `<div class="d muted">all-time average ${fmt(p.avgAll)}</div>`],
+    ].map(([k, v, d]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div>${d}</div>`).join("");
+    const partMax = { part1: C.STEPS.filter((s) => s.part === 1).reduce((a, s) => a + C.stepMax(s), 0), part2: 21 * C.DOUBLE_POINTS, part3: C.STEPS.filter((s) => s.part === 3).reduce((a, s) => a + C.stepMax(s), 0) };
+    const names = { part1: C.PART_NAMES[1], part2: C.PART_NAMES[2], part3: C.PART_NAMES[3] };
+    $("partStats").innerHTML = p.parts.map((x) => {
+      const extra = x.key === "part2" ? ` · ${fmt(x.last10 / C.DOUBLE_POINTS, 1)} of 21 hit` : "";
+      return `<div class="stat"><div class="k">${names[x.key]}</div><div class="v">${fmt(x.last10)}</div><div class="d muted">of ${fmt(partMax[x.key])}${extra} · all-time ${fmt(x.all)}</div></div>`;
+    }).join("") + `<div class="stat"><div class="k">Biggest part to gain</div><div class="v" style="font-size:18px">${esc(biggestGap(p, partMax, names))}</div></div>`;
+    $("weakest").textContent = p.weakest.length ? `Weakest doubles: ${p.weakest.map((d) => `${d.label} (${fmt(d.rate * 100)}%)`).join(", ")}. Red bars are below 25%.` : "";
+    $("bars").innerHTML = p.doubles.map((d) => `<div class="${d.rate != null && d.rate < 0.25 ? "low" : ""}" style="height:${d.rate == null ? 0 : Math.max(2, d.rate * 100)}%" title="${d.label}: ${d.rate == null ? "no darts yet" : `${d.hits} of ${d.tries} (${fmt(d.rate * 100)}%)`}"></div>`).join("");
+    $("barLabels").innerHTML = p.doubles.map((d) => `<div>${d.target === C.BULL ? "B" : d.target}</div>`).join("");
+    $("history").innerHTML = [...games].sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp))).map((g) => `
+      <tr><td>${esc(g.timestamp)}</td><td class="num"><b>${fmt(g.total)}</b></td><td class="num">${fmt(g.part1)}</td><td class="num">${fmt(g.part2)}</td><td class="num">${fmt(g.part3)}</td>
+      <td class="num"><button type="button" class="danger" data-del="${esc(g.id)}">Delete</button></td></tr>`).join("");
+    requestAnimationFrame(() => drawChart(p));
+  }
+
+  // Where the most points are being left: the part furthest below its maximum, as a share.
+  function biggestGap(p, partMax, names) {
+    const scored = p.parts.filter((x) => x.last10 != null);
+    if (!scored.length) return "-";
+    const worst = scored.reduce((a, b) => (b.last10 / partMax[b.key] < a.last10 / partMax[a.key] ? b : a));
+    return names[worst.key];
+  }
+
+  async function deleteGame(id) {
+    const g = games.find((x) => x.id === id);
+    if (!g || !confirm(`Delete the round from ${g.timestamp} (${g.total})?`)) return;
+    await db.collection(COLL).doc(id).delete();
+    games = games.filter((x) => x.id !== id);
+    renderProgress();
+  }
+
+  function refreshStart() {
+    const saved = store.get(ROUND_KEY);
+    const has = saved && Array.isArray(saved.darts) && saved.darts.length && C.position(saved.darts);
+    $("resumeBtn").classList.toggle("hidden", !has);
+    $("discardBtn").classList.toggle("hidden", !has);
+    $("resumeText").classList.toggle("hidden", !has);
+    if (has) $("resumeText").textContent = `You have a round in progress: ${saved.darts.length} of ${C.TOTAL_DARTS} darts, ${fmt(C.summarize(saved.darts).total)} so far.`;
+    $("startBtn").textContent = has ? "Start a new round" : "Start a round";
+  }
+
+  async function load() {
+    const snap = await db.collection(COLL).where("uid", "==", user.uid).get();
+    games = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    // A round that finished while offline is saved now.
+    const unsaved = store.get(UNSAVED_KEY);
+    if (unsaved && unsaved.uid === user.uid && !games.some((g) => g.timestamp === unsaved.timestamp && g.total === unsaved.total)) await saveRecord(unsaved);
+    renderProgress();
+  }
+
+  // ---- wiring ------------------------------------------------------------------------------
+  $("keys").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-v]");
+    if (b) throwDart(Number(b.dataset.v));
+  });
+  $("undoBtn").addEventListener("click", undo);
+  $("quitBtn").addEventListener("click", quit);
+  $("startBtn").addEventListener("click", () => {
+    if (store.get(ROUND_KEY) && !confirm("Start over? The round in progress will be discarded.")) return;
+    startRound(null);
+  });
+  $("resumeBtn").addEventListener("click", () => startRound(store.get(ROUND_KEY)));
+  $("discardBtn").addEventListener("click", () => { store.set(ROUND_KEY, null); refreshStart(); });
+  $("againBtn").addEventListener("click", () => startRound(null));
+  $("history").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-del]");
+    if (b) deleteGame(b.dataset.del).catch((err) => alert(`Couldn't delete it: ${err.message}`));
+  });
+  document.addEventListener("keydown", (e) => {
+    if (!round || e.target.closest("input, select, textarea")) return;
+    if (/^[0-3]$/.test(e.key)) { e.preventDefault(); throwDart(Number(e.key)); }
+    else if (e.key === "Backspace") { e.preventDefault(); undo(); }
+  });
+  window.addEventListener("resize", () => { if (games.length) drawChart(C.progress(games)); });
+
+  $("signInBtn").addEventListener("click", () => auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()));
+  auth.onAuthStateChanged((u) => {
+    user = u;
+    $("authScreen").classList.toggle("hidden", !!u);
+    $("app").classList.toggle("hidden", !u);
+    $("userPill").classList.toggle("hidden", !u);
+    if (!u) return;
+    $("userName").textContent = u.displayName || u.email || "";
+    refreshStart();
+    load().catch((err) => { console.error(err); $("noGames").textContent = `Couldn't load your rounds: ${err.message}`; });
+  });
+})();
+</script>
+</body>
+</html>

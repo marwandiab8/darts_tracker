@@ -342,3 +342,31 @@ test("a saved two-player game cannot be edited, so the email status is only ever
   await assertFails(updateDoc(ref, { opponentEmail: "victim@example.org" }));
   await assertFails(setDoc(ref, versusGame({ result: "lost" })));
 });
+
+// --- JDC Challenge rounds (challenge.html) ---------------------------------------------------
+const C = require("../public/challenge-engine.js");
+const challenge = (overrides = {}) => ({ ...C.record(me, [...Array(18).fill(1), ...Array(21).fill(1), ...Array(18).fill(3)], { timestamp: "2026-10-05 20:00", durationSec: 700 }), ...overrides });
+
+test("a finished challenge round is saved as the page saves it, and only its owner sees or deletes it", async () => {
+  const db = asUser(me);
+  const ref = await assertSucceeds(addDoc(collection(db, "challengeGames"), challenge()));
+  await assertSucceeds(getDocs(query(collection(db, "challengeGames"), where("uid", "==", me))));
+  await assertFails(getDoc(doc(asUser(other), "challengeGames", ref.id)));
+  await assertFails(deleteDoc(doc(asUser(other), "challengeGames", ref.id)));
+  await assertFails(updateDoc(ref, { total: 3330 }), "never edited");
+  await assertSucceeds(deleteDoc(ref));
+});
+
+test("challenge rounds with the wrong shape are refused", async () => {
+  const db = asUser(me);
+  const good = challenge();
+  const refused = [
+    challenge({ uid: other }), challenge({ darts: good.darts.slice(0, 56) }), challenge({ total: 3331 }),
+    challenge({ total: good.total + 1 }), challenge({ part2: 1100 }), challenge({ doublesHit: 22 }),
+    challenge({ extra: "field" }), challenge({ timestamp: 5 }),
+  ];
+  for (const data of refused) await assertFails(addDoc(collection(db, "challengeGames"), data));
+  const bare = challenge();
+  delete bare.durationSec; delete bare.trebles;
+  await assertSucceeds(addDoc(collection(db, "challengeGames"), bare));
+});

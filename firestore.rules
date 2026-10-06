@@ -118,6 +118,27 @@ service cloud.firestore {
         && optionalNumber(data, 'opponentScore', 0, 100000);
     }
 
+    // A finished JDC Challenge round, exactly as challenge.html saves it (public/challenge-engine.js
+    // `record`): 57 darts, each 0 miss, 1 single, 2 double or 3 treble, and the scores worked out from
+    // them. Never edited after it is saved.
+    function validChallengeGame(data) {
+      return data.keys().hasOnly(['uid', 'timestamp', 'total', 'part1', 'part2', 'part3', 'trebles', 'shanghais',
+          'doublesHit', 'darts', 'durationSec'])
+        && data.keys().hasAll(['uid', 'timestamp', 'total', 'part1', 'part2', 'part3', 'darts'])
+        && data.uid == request.auth.uid
+        && data.timestamp is string && data.timestamp.size() >= 10 && data.timestamp.size() <= 20
+        && data.darts is list && data.darts.size() == 57
+        && data.total is int && data.total >= 0 && data.total <= 3330
+        && data.part1 is int && data.part1 >= 0 && data.part1 <= 1050
+        && data.part2 is int && data.part2 >= 0 && data.part2 <= 1050
+        && data.part3 is int && data.part3 >= 0 && data.part3 <= 1230
+        && data.total == data.part1 + data.part2 + data.part3
+        && optionalNumber(data, 'trebles', 0, 36)
+        && optionalNumber(data, 'shanghais', 0, 12)
+        && optionalNumber(data, 'doublesHit', 0, 21)
+        && optionalNumber(data, 'durationSec', 0, 86400);
+    }
+
     // Live typing sync per user.
     match /liveDrafts/{uid} {
       allow read, delete: if signedIn() && request.auth.uid == uid;
@@ -138,6 +159,14 @@ service cloud.firestore {
     match /botGames/{gameId} {
       allow read: if signedIn() && resource.data.uid == request.auth.uid;
       allow create: if signedIn() && validBotGame(request.resource.data);
+      allow update: if false;
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    // JDC Challenge rounds (challenge.html). Read and delete your own; a saved round is never edited.
+    match /challengeGames/{gameId} {
+      allow read: if signedIn() && resource.data.uid == request.auth.uid;
+      allow create: if signedIn() && validChallengeGame(request.resource.data);
       allow update: if false;
       allow delete: if signedIn() && resource.data.uid == request.auth.uid;
     }
