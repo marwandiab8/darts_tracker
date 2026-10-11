@@ -57,6 +57,15 @@
   .side .big { font-size: clamp(38px, 9vw, 60px); font-weight: 950; line-height: 1.05; color: var(--accent); }
   .side.bot .big { color: var(--bot); }
   .side .small { font-size: 13px; color: var(--muted); }
+  /* The match score in a first-to-N series, big above the two scores: "You 1 - 1 Bot". */
+  .match-score { border: 1px solid var(--border); border-radius: 14px; padding: 8px 12px; margin-bottom: 10px; background: rgba(255,255,255,.03); text-align: center; }
+  .match-score .ms-row { display: flex; align-items: center; justify-content: center; gap: 12px; min-width: 0; }
+  .match-score .ms-name { font-size: 15px; font-weight: 800; color: var(--muted); overflow-wrap: anywhere; min-width: 0; }
+  .match-score .ms-num { font-size: clamp(34px, 8vw, 48px); font-weight: 950; line-height: 1; }
+  .match-score .ms-num.you { color: var(--accent); }
+  .match-score .ms-num.bot { color: var(--bot); }
+  .match-score .ms-dash { font-size: 28px; font-weight: 700; color: var(--muted); }
+  .match-score .ms-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
   /* Room for three lines, so the board below doesn't jump as messages and checkout hints come and go. */
   .status { min-height: 82px; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,.04); border: 1px solid var(--border); margin-bottom: 12px; font-size: 15px; }
   .status strong { color: var(--accent); }
@@ -128,6 +137,8 @@
   .compact .side { padding: 8px; }
   .compact .status { min-height: 66px; padding: 6px 10px; margin-bottom: 8px; font-size: 14px; }
   .compact .boards { margin-bottom: 8px; gap: 8px; }
+  .compact .match-score { padding: 4px 10px; margin-bottom: 6px; }
+  .compact .match-score .ms-num { font-size: 32px; }
   .compact .kp-key { min-height: 48px; font-size: 22px; }
   .compact .kp-display { min-height: 60px; }
   .compact .kp-value { min-height: 32px; font-size: 30px; }
@@ -1006,8 +1017,28 @@
     return side;
   }
 
+  // In a series, the match score - "You 1 - 1 Bot", first to 3, which game this is - big on the main
+  // screen above the two scores.
+  function matchScoreBanner() {
+    const decided = E.seriesDecided(series);
+    const banner = el("div", "match-score");
+    banner.setAttribute("role", "status");
+    banner.setAttribute("aria-label", "Match score: " + nameOf("player") + " " + series.wins.player + ", " + nameOf("bot") + " " + series.wins.bot + ". First to " + series.target + ".");
+    const row = el("div", "ms-row");
+    row.append(el("span", "ms-name", nameOf("player")), el("span", "ms-num you", String(series.wins.player)), el("span", "ms-dash", "–"),
+      el("span", "ms-num bot", String(series.wins.bot)), el("span", "ms-name", nameOf("bot")));
+    const gameNo = series.gamesPlayed + 1;
+    const format = "Best of " + (2 * series.target - 1) + " (first to " + series.target + ")";
+    const sub = decided ? "Match over · " + format
+      : game.winner ? format + " · next is game " + gameNo
+      : format + " · game " + gameNo;
+    banner.append(row, el("div", "ms-sub", sub));
+    return banner;
+  }
+
   function renderScoreboard() {
     const box = $("scoreboard"); box.textContent = "";
+    if (series) box.append(matchScoreBanner());
     const top = el("div", "boards");
     top.append(scoreBlock("player"), scoreBlock("bot"));
     box.append(top);
