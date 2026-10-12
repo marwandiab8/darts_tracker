@@ -24,6 +24,16 @@ test("maps a saved session to a Time Left darts record", () => {
   assert.equal(item.metadata.targetSummaries.find((row) => row.target === "20").score, 6);
 });
 
+test("a timed session goes to Time Left with its time; an untimed one stays untimed", () => {
+  const timed = _test.mapSessionToTimeLeft({ timestamp: "2026-10-12 19:30", total: 30, entry: {}, durationSec: 1265 }, "s-timed");
+  assert.equal(timed.durationSeconds, 1265);
+  assert.equal(timed.metadata.durationSec, 1265);
+  assert.equal(timed.capturedAt, "2026-10-12 19:30", "timed from when the session started");
+  const untimed = _test.mapSessionToTimeLeft({ timestamp: "2026-10-12 19:30", total: 30, entry: {} }, "s-untimed");
+  assert.equal(untimed.durationSeconds, undefined);
+  assert.equal(_test.mapSessionToTimeLeft({ timestamp: "2026-10-12 19:30", total: 3, entry: {}, durationSec: 999999 }, "s").durationSeconds, 86400, "clamped");
+});
+
 test("omits dateId when the saved session has no reliable date", () => {
   const item = _test.mapSessionToTimeLeft({ total: 4, entry: {} }, "session2");
   assert.equal(item.dateId, undefined);

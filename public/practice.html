@@ -273,6 +273,7 @@
     <section class="hidden" id="gameCard">
       <div class="play-grid">
         <div class="card" style="margin-bottom:0;">
+          <div id="practiceTimer"></div>
           <div id="scoreboard"></div>
           <div class="status" id="status" aria-live="polite"></div>
           <div class="canvas-wrap" id="boardWrap"><canvas id="board" width="640" height="640" aria-label="Dartboard. Tap where your dart landed."></canvas></div>
@@ -369,7 +370,8 @@
      Cache-Control: no-cache (a real, previously-seen failure mode - see docs/bot-practice.md) is
      still forced to fetch the matching engine instead of silently pairing a new page with a stale
      one, which throws inside announce()'s catch-all and looks like "no sound at all". -->
-<script src="practice-engine.js?v=5"></script>
+<script src="practice-engine.js?v=6"></script>
+<script src="practice-timer.js?v=1"></script>
 <script>
 (function () {
   "use strict";
@@ -425,9 +427,11 @@
   const NEXT_GAME_DELAY = 5000;
   let nextGameTimer = null;
   let game = null, startedAt = 0, botToken = 0, botBusy = false;
-  // The time actually spent playing (gaps between moves capped - see createPlayClock in the engine); this,
-  // not finish minus start, is the game's length, so a break mid-game doesn't count as darts.
-  let playClock = null;
+  // The game's timer (practice-timer.js): it starts with the game, Pause/Resume on the game screen, and
+  // it pauses itself after 3 minutes with no throws. Its time, not finish minus start, is the game's length.
+  const T = window.PracticeTimer;
+  let timer = null;
+  let timerView = { refresh() {} };
   // A best-of/first-to series of games. null for a single game. Not to be confused with `match`
   // above, which just holds the two sides' names - this tracks the running score across games.
   let series = null;
@@ -859,14 +863,23 @@
   const short = (label) => (label === "SB" ? "25" : label === "DB" ? "Bull" : label[0] === "S" ? label.slice(1) : label);
 
   function persistGame() {
-    if (playClock) E.tickPlayClock(playClock, Date.now());
-    if (game && !game.winner && !editing) store.set(GAME_KEY, { game, startedAt, settings, match, series, playClock });
+    if (game && !game.winner && !editing) store.set(GAME_KEY, { game, startedAt, settings, match, series, timer });
   }
 
-  // Seconds actually played: the moves so far plus the last one up to now (capped like any other gap).
+  // Seconds played, by the timer.
   function playedSeconds() {
-    if (!playClock) return Math.max(0, Math.min(86400, Math.round((Date.now() - startedAt) / 1000)));
-    return E.playSeconds(E.tickPlayClock({ ...playClock }, Date.now()));
+    if (!timer) return Math.max(0, Math.min(86400, Math.round((Date.now() - startedAt) / 1000)));
+    return T.seconds(timer, Date.now());
+  }
+
+  // Anything you do on the game screen (a dart, a score, Undo...) is playing: the timer runs, from a
+  // pause too. The bot's own turns don't count, so a pause holds while it throws.
+  function noteActivity(event) {
+    if (!timer || !game || game.winner || reviewing) return;
+    if (event && event.target && event.target.closest && event.target.closest(".ptimer")) return;
+    T.activity(timer, Date.now());
+    persistGame();
+    timerView.refresh();
   }
 
   // Between games in a series: the current game is over (nothing to resume there) but the series
@@ -897,8 +910,8 @@
     series = SERIES_TARGETS.includes(target) ? E.createSeries({ target, first: settings.first }) : null;
     game = E.createGame({ kind: settings.kind, startScore: settings.startScore, doubleOut: settings.doubleOut, first: series ? series.nextFirst : settings.first });
     startedAt = Date.now(); reviewing = false; lastMessage = ""; pendingRecord = null;
-    playClock = E.createPlayClock(startedAt);
-    store.set(GAME_KEY, { game, startedAt, settings, match, series, playClock });
+    timer = T.start(startedAt);
+    store.set(GAME_KEY, { game, startedAt, settings, match, series, timer });
     showGame();
     render();
     if (game.turn === "bot" && !versus()) runBot();
@@ -911,8 +924,8 @@
     cancelAutoPass(); cancelNextGameTimer(); editing = null;
     game = E.createGame({ kind: settings.kind, startScore: settings.startScore, doubleOut: settings.doubleOut, first: series.nextFirst });
     startedAt = Date.now(); reviewing = false; lastMessage = ""; pendingRecord = null;
-    playClock = E.createPlayClock(startedAt);
-    store.set(GAME_KEY, { game, startedAt, settings, match, series, playClock });
+    timer = T.start(startedAt);
+    store.set(GAME_KEY, { game, startedAt, settings, match, series, timer });
     store.remove(SERIES_KEY);
     showGame();
     render();
@@ -990,7 +1003,9 @@
     const saved = store.get(GAME_KEY);
     if (!saved || !looksLikeGame(saved.game)) { checkResume(); return; }
     game = saved.game; startedAt = Number(saved.startedAt) || Date.now();
-    playClock = E.resumePlayClock(saved.playClock, Date.now()); // the time away doesn't count
+    // The time away counts like any break: at most the 3 minutes before the timer paused itself.
+    timer = T.restore(saved.timer, Date.now())
+      || Object.assign(T.start(Date.now()), { activeMs: Math.max(0, Number(saved.playClock && saved.playClock.activeMs) || 0) });
     match = saved.match && saved.match.names && typeof saved.match.human === "boolean" ? saved.match : { human: false, names: { player: "You", bot: rankName(settings.rank) + " bot" }, opponentEmail: "" };
     series = saved.series && looksLikeSeries(saved.series) ? saved.series : null;
     E.upgradeGame(game);
@@ -1132,6 +1147,7 @@
   function render() {
     if (!game) return;
     renderScoreboard(); renderLog(); renderStatus(); renderControls(); renderEntry(); drawGameBoard();
+    timerView.refresh();
   }
 
   // --- the score keypad -------------------------------------------------------------------------------
@@ -1710,6 +1726,11 @@
   $("entryBoard").addEventListener("click", () => setEntry("board"));
   $("entryKeypad").addEventListener("click", () => setEntry("keypad"));
   $("startBtn").addEventListener("click", startGame);
+
+  // The practice timer on the game screen, shown while a game is being played.
+  timerView = T.mount($("practiceTimer"), { get: () => (game && !game.winner && !reviewing ? timer : null), onChange: () => persistGame() });
+  $("gameCard").addEventListener("pointerdown", noteActivity, true);
+  document.addEventListener("keydown", (event) => { if (!$("gameCard").classList.contains("hidden")) noteActivity(event); }, true);
   $("resumeBtn").addEventListener("click", resumeGame);
   $("discardBtn").addEventListener("click", () => {
     store.remove(resumeKind === "series" ? SERIES_KEY : GAME_KEY);

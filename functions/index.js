@@ -163,6 +163,8 @@ function mapSessionToTimeLeft(session, sessionId, syncStatus = "active") {
   const total = clampTotal(session.total);
   const targetSummaries = summarizeTargets(session.entry || {}, mode);
   const best = bestTargets(targetSummaries);
+  // The practice timer's time (index.html), when the session was timed.
+  const durationSec = cleanNumber(session.durationSec, 0, 86400, 0) || 0;
   const appBaseUrl = String(DARTS_APP_BASE_URL.value() || "").replace(/\/+$/, "");
   const summary = `Practice score ${total}${best.length ? `; best targets: ${best.map((row) => `${row.target} (${row.score})`).join(", ")}` : ""}.`;
 
@@ -200,12 +202,15 @@ function mapSessionToTimeLeft(session, sessionId, syncStatus = "active") {
       timestamp: cleanString(session.timestamp || ""),
       targetSummaries,
       bestTargets: best,
+      ...(durationSec ? { durationSec } : {}),
       source: "dartstracker2026",
       note: summary,
     },
-    // No duration is recorded for a tracker practice, so it is filed under Darts without time on the wheel.
+    // Timed from the session's start (capturedAt) when the practice timer ran, so it shows on the Activity
+    // wheel; an untimed session (older ones) is filed under Darts without time.
     eventType: "darts_practice",
     activityFamily: "darts",
+    ...(durationSec ? { durationSeconds: durationSec } : {}),
     metrics: { score: total },
   };
 }

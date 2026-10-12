@@ -36,6 +36,15 @@ Games played against the bot on `practice.html` are sent the same way from `botG
 
 JDC Challenge rounds from `challenge.html` are sent from `challengeGames/{gameId}` (function `syncChallengeGameToTimeLeft`) as a timed Darts practice item: the score out of 3,330, each part, doubles hit, trebles and Shanghais. The 57 darts stay in Darts Tracker. See [challenge.md](challenge.md).
 
+## Practice timer
+
+Every practice page (the doubles tracker, games against the bot or a friend, the JDC Challenge) has a
+timer, `public/practice-timer.js`: it starts with the first dart (a game or round starts it at once), has
+Pause/Resume, and pauses itself after 3 minutes with no throws - those 3 minutes count, the rest of a
+break doesn't; the next throw carries on. Its time is saved as `durationSec` and sent to Time Left as the
+item's `durationSeconds`, from the time the practice started (`capturedAt`), so it lands on the Activity
+wheel as Darts. Doubles sessions saved before the timer have no `durationSec` and stay untimed.
+
 ## Required Time Left Setup
 
 In Time Left To Live:

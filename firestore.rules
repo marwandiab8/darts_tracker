@@ -17,7 +17,8 @@ service cloud.firestore {
     // sign in, so new sessions are checked for shape and range: a session scores at most
     // 3 darts on each of 21 targets, so 200 is a safe ceiling.
     function validNewSession(data) {
-      return data.keys().hasOnly(['uid', 'timestamp', 'mode', 'entry', 'total', 'positions'])
+      return data.keys().hasOnly(['uid', 'timestamp', 'mode', 'entry', 'total', 'positions', 'durationSec'])
+        && optionalNumber(data, 'durationSec', 0, 86400)
         && data.keys().hasAll(['uid', 'timestamp', 'mode', 'entry', 'total'])
         && validPositions(data)
         && data.uid == request.auth.uid

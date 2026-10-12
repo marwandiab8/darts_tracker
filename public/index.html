@@ -429,6 +429,7 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
             </div>
           </div>
           
+          <div id="practiceTimer"></div>
           <div style="display:flex; gap:10px; margin-bottom:15px;">
             <button id="saveBtn" class="primary">Save Session</button>
           </div>
@@ -517,6 +518,7 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="practice-timer.js?v=1"></script>
 
 <script>
 (function() {
@@ -533,6 +535,27 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
   const auth = firebase.auth(), db = firebase.firestore();
   const TARGETS = [...Array.from({length:20}, (_,i)=>String(20-i)), "BULL"];
   const SCORE_VALS = {"-":0,"S":1,"D":2,"T":3,"B":1}; // Added B for Bullseye flexibility
+
+  // The practice timer (practice-timer.js): it starts with the session's first dart, Pause/Resume next to
+  // the total, and it pauses itself after 3 minutes with no throws. A session is saved with its time,
+  // under the time it started, so Time Left puts it on the Activity wheel.
+  const T = window.PracticeTimer;
+  const TIMER_KEY = "dt_sessionTimer";
+  let sessionTimer = (() => {
+    try { return T.restore(JSON.parse(localStorage.getItem(TIMER_KEY) || "null"), Date.now()); } catch (_) { return null; }
+  })();
+  let timerView = { refresh() {} };
+  function saveSessionTimer() {
+    try { if (sessionTimer) localStorage.setItem(TIMER_KEY, JSON.stringify(sessionTimer)); else localStorage.removeItem(TIMER_KEY); } catch (_) { /* private mode */ }
+    timerView.refresh();
+  }
+  // A dart entered (tapped, typed or undone): playing, so the timer runs - or starts, for a new session.
+  function practiceActivity() {
+    const now = Date.now();
+    if (sessionTimer) T.activity(sessionTimer, now);
+    else sessionTimer = T.start(now);
+    saveSessionTimer();
+  }
 
 
   let scoreMode = normMode(localStorage.getItem("dt_scoreMode") || "standard");
@@ -817,6 +840,7 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
     refreshCalculations();
     persistDraft();
     scheduleDraftWrite();
+    practiceActivity();
   });
 
   function refreshCalculations() {
@@ -836,6 +860,8 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
 
   function resetCurrentSession(opts = {}) {
     const resetDateTime = !!opts.resetDateTime;
+    sessionTimer = null; // a cleared or saved session's time is done
+    saveSessionTimer();
     TARGETS.forEach(t => { currentEntry[t] = ["-","-","-"]; });
     currentPos = {};
     setBoardNote("");
@@ -1441,6 +1467,7 @@ function applyEntryModeUI(){
           if (!last) return;
           currentEntry[last.target] = last.prev.slice();
           currentPos[last.target] = last.prevPos.slice();
+          practiceActivity();
           persistDraft();
           updateUIFromEntry(currentEntry);
           scheduleDraftWrite();
@@ -1688,6 +1715,7 @@ function applyBoardHit(hit){
 
     tapStack.push({ target, prev, prevPos, prevLast: lastTap });
     lastTap = { target, ring, x: hit.x, y: hit.y };
+    practiceActivity();
 
     persistDraft();
     updateUIFromEntry(currentEntry);
@@ -1850,7 +1878,16 @@ document.getElementById("signInBtn").onclick = () => auth.signInWithPopup(new fi
     btn.textContent = "Saving…";
     try {
       const ref = pendingSaveRef || (pendingSaveRef = db.collection("sessions").doc());
-      const data = { uid: user.uid, timestamp: date + " " + time, mode: scoreMode, entry: currentEntry, total };
+      // Saved with the timer's time, at the time it started (unless you set the date or time yourself).
+      const durationSec = sessionTimer ? T.seconds(sessionTimer, Date.now()) : 0;
+      let stampDate = date, stampTime = time;
+      if (sessionTimer && !__userTouchedDate && !__userTouchedTime) {
+        const began = new Date(sessionTimer.startedAt);
+        stampDate = localYYYYMMDD(began);
+        stampTime = began.toTimeString().slice(0, 5);
+      }
+      const data = { uid: user.uid, timestamp: stampDate + " " + stampTime, mode: scoreMode, entry: currentEntry, total };
+      if (durationSec > 0) data.durationSec = durationSec;
       const positions = positionsForSave();
       if (positions) data.positions = positions;
       const write = ref.set(data);
@@ -1874,6 +1911,9 @@ document.getElementById("signInBtn").onclick = () => auth.signInWithPopup(new fi
     const a = document.createElement("a"); a.href = 'data:text/csv;charset=utf-8,' + encodeURI(csv);
     a.download = `darts_summary.csv`; a.click();
   };
+
+  // The practice timer next to the session total, shown once a session has its first dart.
+  timerView = T.mount(document.getElementById("practiceTimer"), { get: () => sessionTimer, onChange: () => saveSessionTimer() });
 
 })();
 </script>

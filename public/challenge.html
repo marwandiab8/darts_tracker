@@ -127,6 +127,7 @@
     </section>
 
     <section class="card hidden" id="playCard" aria-live="polite">
+      <div id="practiceTimer"></div>
       <div class="now">
         <div>
           <div class="part" id="partLabel"></div>
@@ -187,6 +188,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
 <script src="challenge-engine.js?v=1"></script>
+<script src="practice-timer.js?v=1"></script>
 <script>
 (function () {
   "use strict";
@@ -217,7 +219,11 @@
 
   let user = null;
   let games = [];
-  let round = null; // { darts: [], startedAt: ms }
+  let round = null; // { darts: [], startedAt: ms, timer }
+  // The round's timer (practice-timer.js): Pause/Resume above the round, and it pauses itself after
+  // 3 minutes with no throws. Its time is the round's length.
+  const T = window.PracticeTimer;
+  let timerView = { refresh() {} };
   let flashTimer = null;
 
   $("maxScore").textContent = fmt(C.MAX_SCORE);
@@ -231,8 +237,12 @@
   }
 
   function startRound(resume) {
-    round = resume || { darts: [], startedAt: Date.now() };
+    const now = Date.now();
+    round = resume || { darts: [], startedAt: now };
+    // A resumed round's time away counts like any break; a round saved before the timer starts one now.
+    round.timer = T.restore(round.timer, now) || T.start(now);
     store.set(ROUND_KEY, round);
+    timerView.refresh();
     showCard("play");
     renderPlay();
   }
@@ -297,7 +307,9 @@
     const pos = C.position(round.darts);
     if (!pos || !C.validDart(pos.step, value)) return;
     round.darts = C.addDart(round.darts, value);
+    T.activity(round.timer, Date.now());
     store.set(ROUND_KEY, round);
+    timerView.refresh();
     const step = C.stepsOf(round.darts)[pos.index];
     if (step.done && C.isShanghai(step.step, step.darts)) flash(`SHANGHAI! +${C.SHANGHAI_BONUS}`);
     else if (step.done && pos.step.kind === "shanghai") flash(`${pos.step.target}: ${step.score}`);
@@ -307,7 +319,9 @@
   function undo() {
     if (!round || !round.darts.length) return;
     round.darts = round.darts.slice(0, -1);
+    T.activity(round.timer, Date.now());
     store.set(ROUND_KEY, round);
+    timerView.refresh();
     $("flash").textContent = "";
     renderPlay();
   }
@@ -328,8 +342,10 @@
   async function finishRound() {
     const prevBest = games.length ? Math.max(...games.map((g) => g.total)) : null;
     const prevAvg = C.progress(games).avgLast10;
-    const rec = C.record(user.uid, round.darts, { timestamp: stamp(), durationSec: (Date.now() - round.startedAt) / 1000 });
+    // Saved at the time the round began, with the time the timer counted.
+    const rec = C.record(user.uid, round.darts, { timestamp: stamp(new Date(round.timer.startedAt)), durationSec: T.seconds(round.timer, Date.now()) });
     round = null;
+    timerView.refresh();
     store.set(ROUND_KEY, null);
     showCard("result");
     const s = C.summarize(rec.darts);
@@ -466,6 +482,7 @@
     if (b) throwDart(Number(b.dataset.v));
   });
   $("undoBtn").addEventListener("click", undo);
+  timerView = T.mount($("practiceTimer"), { get: () => (round ? round.timer : null), onChange: () => store.set(ROUND_KEY, round) });
   $("quitBtn").addEventListener("click", quit);
   $("startBtn").addEventListener("click", () => {
     if (store.get(ROUND_KEY) && !confirm("Start over? The round in progress will be discarded.")) return;

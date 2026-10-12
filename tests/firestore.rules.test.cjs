@@ -39,6 +39,13 @@ test.after(async () => env.cleanup());
 
 // --- ownership: what the deployed rules already enforced -----------------------------------
 
+test("a session can be saved with its practice timer's time, within a day", async () => {
+  const db = asUser(me);
+  await assertSucceeds(addDoc(collection(db, "sessions"), session({ durationSec: 1265 })));
+  await assertFails(addDoc(collection(db, "sessions"), session({ durationSec: 90000 })));
+  await assertFails(addDoc(collection(db, "sessions"), session({ durationSec: "20 min" })));
+});
+
 test("a signed-in user can save, read, list and delete their own sessions", async () => {
   const db = asUser(me);
   const ref = await assertSucceeds(addDoc(collection(db, "sessions"), session()));

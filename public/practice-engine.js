@@ -180,34 +180,6 @@
 
   // --- a multi-game match (first to N games wins) -----------------------------------------------
 
-  // How long a game was actually played: the time between moves, each gap counted up to 3 minutes, so a
-  // game left open over a meal (or resumed hours later) counts only the playing, not the break. A turn
-  // never takes anywhere near 3 minutes; the whole game usually takes 3 or 4.
-  const PLAY_IDLE_CAP_MS = 3 * 60 * 1000;
-
-  function createPlayClock(nowMs) {
-    return { activeMs: 0, lastAt: Number(nowMs) || 0 };
-  }
-
-  // Counts the time since the last move (capped). Mutates and returns `clock`.
-  function tickPlayClock(clock, nowMs) {
-    const now = Number(nowMs) || 0;
-    const gap = now - (Number(clock.lastAt) || now);
-    clock.activeMs = (Number(clock.activeMs) || 0) + Math.max(0, Math.min(gap, PLAY_IDLE_CAP_MS));
-    clock.lastAt = Math.max(Number(clock.lastAt) || 0, now);
-    return clock;
-  }
-
-  // A clock saved before the page was reloaded: the time away doesn't count, playing resumes from now.
-  function resumePlayClock(saved, nowMs) {
-    const activeMs = saved && Number.isFinite(Number(saved.activeMs)) ? Math.max(0, Number(saved.activeMs)) : 0;
-    return { activeMs, lastAt: Number(nowMs) || 0 };
-  }
-
-  function playSeconds(clock) {
-    return clock ? Math.max(0, Math.min(86400, Math.round((Number(clock.activeMs) || 0) / 1000))) : 0;
-  }
-
   const SERIES_TARGETS = [2, 3, 4, 5, 7, 9, 11];
 
   function createSeries(options) {
@@ -746,11 +718,6 @@
     botAim,
     checkoutRoute,
     createGame,
-    PLAY_IDLE_CAP_MS,
-    createPlayClock,
-    tickPlayClock,
-    resumePlayClock,
-    playSeconds,
     SERIES_TARGETS,
     createSeries,
     recordSeriesGame,
