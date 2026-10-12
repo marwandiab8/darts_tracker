@@ -880,3 +880,28 @@ test("a race to 11 genuinely needs 11 wins, not a two-ahead margin", () => {
   assert.equal(E.recordSeriesGame(series, "player").decided, true);
   assert.equal(series.wins.player, 11);
 });
+
+test("a game's length is the time spent playing: a break mid-game counts at most 3 minutes", () => {
+  const start = Date.parse("2026-10-12T15:24:00Z");
+  const clock = E.createPlayClock(start);
+  // Five quick turns, 20 seconds apart.
+  for (let i = 1; i <= 5; i += 1) E.tickPlayClock(clock, start + i * 20000);
+  assert.equal(E.playSeconds(clock), 100);
+  // Off to eat for two hours, then three more turns.
+  const back = start + 100000 + 2 * 3600 * 1000;
+  E.tickPlayClock(clock, back);
+  for (let i = 1; i <= 3; i += 1) E.tickPlayClock(clock, back + i * 20000);
+  assert.equal(E.playSeconds(clock), 100 + 180 + 60, "the two hours count as the 3-minute cap, not 2 hours");
+  // A moment out of order never subtracts time.
+  E.tickPlayClock(clock, back);
+  assert.equal(E.playSeconds(clock), 340);
+});
+
+test("resuming a saved game later doesn't count the time away", () => {
+  const saved = { activeMs: 95000, lastAt: Date.parse("2026-10-12T15:30:00Z") };
+  const resumed = E.resumePlayClock(saved, Date.parse("2026-10-12T17:45:00Z"));
+  E.tickPlayClock(resumed, Date.parse("2026-10-12T17:45:30Z"));
+  assert.equal(E.playSeconds(resumed), 125);
+  assert.equal(E.playSeconds(E.resumePlayClock(null, 1000)), 0, "an older save without a clock starts from zero");
+  assert.equal(E.playSeconds(null), 0);
+});

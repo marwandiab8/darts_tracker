@@ -369,7 +369,7 @@
      Cache-Control: no-cache (a real, previously-seen failure mode - see docs/bot-practice.md) is
      still forced to fetch the matching engine instead of silently pairing a new page with a stale
      one, which throws inside announce()'s catch-all and looks like "no sound at all". -->
-<script src="practice-engine.js?v=4"></script>
+<script src="practice-engine.js?v=5"></script>
 <script>
 (function () {
   "use strict";
@@ -425,6 +425,9 @@
   const NEXT_GAME_DELAY = 5000;
   let nextGameTimer = null;
   let game = null, startedAt = 0, botToken = 0, botBusy = false;
+  // The time actually spent playing (gaps between moves capped - see createPlayClock in the engine); this,
+  // not finish minus start, is the game's length, so a break mid-game doesn't count as darts.
+  let playClock = null;
   // A best-of/first-to series of games. null for a single game. Not to be confused with `match`
   // above, which just holds the two sides' names - this tracks the running score across games.
   let series = null;
@@ -856,7 +859,14 @@
   const short = (label) => (label === "SB" ? "25" : label === "DB" ? "Bull" : label[0] === "S" ? label.slice(1) : label);
 
   function persistGame() {
-    if (game && !game.winner && !editing) store.set(GAME_KEY, { game, startedAt, settings, match, series });
+    if (playClock) E.tickPlayClock(playClock, Date.now());
+    if (game && !game.winner && !editing) store.set(GAME_KEY, { game, startedAt, settings, match, series, playClock });
+  }
+
+  // Seconds actually played: the moves so far plus the last one up to now (capped like any other gap).
+  function playedSeconds() {
+    if (!playClock) return Math.max(0, Math.min(86400, Math.round((Date.now() - startedAt) / 1000)));
+    return E.playSeconds(E.tickPlayClock({ ...playClock }, Date.now()));
   }
 
   // Between games in a series: the current game is over (nothing to resume there) but the series
@@ -887,7 +897,8 @@
     series = SERIES_TARGETS.includes(target) ? E.createSeries({ target, first: settings.first }) : null;
     game = E.createGame({ kind: settings.kind, startScore: settings.startScore, doubleOut: settings.doubleOut, first: series ? series.nextFirst : settings.first });
     startedAt = Date.now(); reviewing = false; lastMessage = ""; pendingRecord = null;
-    store.set(GAME_KEY, { game, startedAt, settings, match, series });
+    playClock = E.createPlayClock(startedAt);
+    store.set(GAME_KEY, { game, startedAt, settings, match, series, playClock });
     showGame();
     render();
     if (game.turn === "bot" && !versus()) runBot();
@@ -900,7 +911,8 @@
     cancelAutoPass(); cancelNextGameTimer(); editing = null;
     game = E.createGame({ kind: settings.kind, startScore: settings.startScore, doubleOut: settings.doubleOut, first: series.nextFirst });
     startedAt = Date.now(); reviewing = false; lastMessage = ""; pendingRecord = null;
-    store.set(GAME_KEY, { game, startedAt, settings, match, series });
+    playClock = E.createPlayClock(startedAt);
+    store.set(GAME_KEY, { game, startedAt, settings, match, series, playClock });
     store.remove(SERIES_KEY);
     showGame();
     render();
@@ -978,6 +990,7 @@
     const saved = store.get(GAME_KEY);
     if (!saved || !looksLikeGame(saved.game)) { checkResume(); return; }
     game = saved.game; startedAt = Number(saved.startedAt) || Date.now();
+    playClock = E.resumePlayClock(saved.playClock, Date.now()); // the time away doesn't count
     match = saved.match && saved.match.names && typeof saved.match.human === "boolean" ? saved.match : { human: false, names: { player: "You", bot: rankName(settings.rank) + " bot" }, opponentEmail: "" };
     series = saved.series && looksLikeSeries(saved.series) ? saved.series : null;
     E.upgradeGame(game);
@@ -1482,7 +1495,7 @@
     const s = E.summarize(game);
     const record = {
       uid: user.uid, timestamp: localStamp(startedAt), kind: game.kind, rank: settings.rank, first: game.first, result,
-      durationSec: Math.max(0, Math.min(86400, Math.round((Date.now() - startedAt) / 1000))),
+      durationSec: playedSeconds(),
       rounds: game.round, playerAvg: s.player.avg, botAvg: s.bot.avg, playerScore: s.player.score, botScore: s.bot.score,
       playerDarts: game.darts.player.map(dartRecord),
       botDarts: game.darts.bot.map(dartRecord),
@@ -1504,7 +1517,7 @@
     const s = E.summarize(game);
     const record = {
       uid: user.uid, timestamp: localStamp(startedAt), kind: game.kind, first: game.first, result,
-      durationSec: Math.max(0, Math.min(86400, Math.round((Date.now() - startedAt) / 1000))),
+      durationSec: playedSeconds(),
       rounds: game.round, playerName: nameOf("player"), playerEmail: String(user.email), opponentName: nameOf("bot"), opponentEmail: match.opponentEmail,
       playerAvg: s.player.avg, opponentAvg: s.bot.avg, playerScore: s.player.score, opponentScore: s.bot.score,
       playerDarts: game.darts.player.map(dartRecord), opponentDarts: game.darts.bot.map(dartRecord), log: visitLog(),
@@ -1623,7 +1636,7 @@
       add(s.player.darts, "your darts");
       if (game.kind === "x01") add(s.player.best, "your best visit");
     }
-    add(Math.max(1, Math.round((Date.now() - startedAt) / 60000)) + " min", "time");
+    add(Math.max(1, Math.round(playedSeconds() / 60)) + " min", "time");
     add(game.round, "rounds");
     lastMessage = "";
     const typed = game.darts.player.filter((d) => !hasPosition(d)).length + (versus() ? game.darts.bot.filter((d) => !hasPosition(d)).length : 0);
