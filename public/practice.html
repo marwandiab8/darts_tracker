@@ -70,6 +70,10 @@
   .status { min-height: 82px; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,.04); border: 1px solid var(--border); margin-bottom: 12px; font-size: 15px; }
   .status strong { color: var(--accent); }
   .hint { font-size: 14px; color: #bbf7d0; margin-top: 6px; min-height: 20px; }
+  /* The checkout route has to be readable from the oche, so it is the biggest text in the box. */
+  .checkout { margin-top: 8px; padding: 8px 10px; border-radius: 10px; background: rgba(34,197,94,.12); border: 1px solid rgba(34,197,94,.45); text-align: center; }
+  .checkout .co-label { display: block; font-size: 13px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: #86efac; }
+  .checkout .co-route { display: block; font-size: clamp(26px, 7.5vw, 52px); font-weight: 950; line-height: 1.1; color: #f0fdf4; overflow-wrap: anywhere; }
   .canvas-wrap { width: 100%; max-width: 520px; margin: 0 auto; }
   canvas { display: block; width: 100%; height: auto; aspect-ratio: 1; touch-action: manipulation; border-radius: 50%; }
   /* A tap on the board is a dart: never let it pan or zoom the page (pinch-zoom still works elsewhere). */
@@ -136,6 +140,8 @@
   .compact .side .big { font-size: 38px; }
   .compact .side { padding: 8px; }
   .compact .status { min-height: 66px; padding: 6px 10px; margin-bottom: 8px; font-size: 14px; }
+  .compact .checkout { margin-top: 6px; padding: 4px 8px; }
+  .compact .checkout .co-route { font-size: clamp(26px, 7.5vw, 44px); }
   .compact .boards { margin-bottom: 8px; gap: 8px; }
   .compact .match-score { padding: 4px 10px; margin-bottom: 6px; }
   .compact .match-score .ms-num { font-size: 32px; }
@@ -1119,7 +1125,11 @@
     if (lastMessage) box.append(el("div", "muted", lastMessage));
     if (game.kind === "x01" && humanTurn() && !game.visitDone && game.remaining[game.turn] <= 170) {
       const route = E.checkoutRoute(game.remaining[game.turn], 3 - game.visitDarts.length, game.doubleOut);
-      if (route) box.append(el("div", "hint", "Checkout: " + route.map((d) => short(d.label)).join(" · ")));
+      if (route) {
+        const co = el("div", "checkout");
+        co.append(el("span", "co-label", "Checkout"), el("span", "co-route", route.map((d) => short(d.label)).join(" · ")));
+        box.append(co);
+      }
     }
   }
 
@@ -1262,10 +1272,8 @@
   function keypadHint() {
     if (!game || game.visitDone) return { text: lastMessage, cls: game && game.visitBust ? "bad" : "good" };
     const left = game.remaining[game.turn];
-    if (!kpText) {
-      const route = left <= 170 ? E.checkoutRoute(left, 3, game.doubleOut) : null;
-      return { text: route ? left + " left. Checkout: " + route.map((d) => short(d.label)).join(" · ") : left + " left", cls: "" };
-    }
+    // The route itself is shown big in the status box above, so the keypad just says what is left.
+    if (!kpText) return { text: left + " left", cls: "" };
     if (kpDartMode()) {
       const terms = kpTerms(), typed = terms.filter((t) => t !== "").map(Number);
       const partial = terms[terms.length - 1] === "";
