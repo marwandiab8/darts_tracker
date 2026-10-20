@@ -66,14 +66,26 @@
   .match-score .ms-num.bot { color: var(--bot); }
   .match-score .ms-dash { font-size: 28px; font-weight: 700; color: var(--muted); }
   .match-score .ms-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
-  /* Room for three lines, so the board below doesn't jump as messages and checkout hints come and go. */
-  .status { min-height: 82px; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,.04); border: 1px solid var(--border); margin-bottom: 12px; font-size: 15px; }
+  /* The status box above the board keeps ONE height for the whole game, so the board never moves: the turn line (two
+     lines at most), then the last message - or, on your turn near a finish, the checkout box, with the last message in
+     its header. The height is the checkout layout's: 22px padding and border, a 20px turn line, the box's 20px of
+     margin, padding and border, its 16px header, and the route line (1.1 x its font size). */
+  .status { box-sizing: border-box; height: calc(78px + 1.1 * clamp(26px, 7.5vw, 52px)); overflow: hidden; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,.04); border: 1px solid var(--border); margin-bottom: 12px; font-size: 15px; }
+  .status.no-checkout { height: 81px; } /* cricket: two turn lines and a message */
   .status strong { color: var(--accent); }
-  .hint { font-size: 14px; color: #bbf7d0; margin-top: 6px; min-height: 20px; }
+  .status .st-main { line-height: 20px; max-height: 40px; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  .status.has-checkout .st-main { max-height: 20px; -webkit-line-clamp: 1; }
+  .status .st-msg { font-size: 14px; line-height: 19px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .status .st-msg.edit { color: #bbf7d0; }
   /* The checkout route has to be readable from the oche, so it is the biggest text in the box. */
-  .checkout { margin-top: 8px; padding: 8px 10px; border-radius: 10px; background: rgba(34,197,94,.12); border: 1px solid rgba(34,197,94,.45); text-align: center; }
-  .checkout .co-label { display: block; font-size: 13px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: #86efac; }
-  .checkout .co-route { display: block; font-size: clamp(26px, 7.5vw, 52px); font-weight: 950; line-height: 1.1; color: #f0fdf4; overflow-wrap: anywhere; }
+  .checkout { margin-top: 6px; padding: 6px 10px; border-radius: 10px; background: rgba(34,197,94,.12); border: 1px solid rgba(34,197,94,.45); text-align: center; }
+  .checkout .co-head { display: flex; justify-content: center; align-items: baseline; gap: 10px; height: 16px; line-height: 16px; overflow: hidden; }
+  .checkout .co-label { flex: none; font-size: 13px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: #86efac; }
+  .checkout .co-note { min-width: 0; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .checkout .co-route { display: block; font-size: clamp(26px, 7.5vw, 52px); font-weight: 950; line-height: 1.1; color: #f0fdf4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* The timer's pause note stays on the timer's own line, so pausing doesn't push the board down either. */
+  #practiceTimer .pt-note { order: 2; flex: 1 1 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #practiceTimer .pt-btn { order: 3; }
   .canvas-wrap { width: 100%; max-width: 520px; margin: 0 auto; }
   canvas { display: block; width: 100%; height: auto; aspect-ratio: 1; touch-action: manipulation; border-radius: 50%; }
   /* A tap on the board is a dart: never let it pan or zoom the page (pinch-zoom still works elsewhere). */
@@ -139,7 +151,11 @@
   /* Keypad mode has to fit a phone screen without scrolling, or ENTER ends up below the fold. */
   .compact .side .big { font-size: 38px; }
   .compact .side { padding: 8px; }
-  .compact .status { min-height: 66px; padding: 6px 10px; margin-bottom: 8px; font-size: 14px; }
+  .compact .status { height: calc(65px + 1.1 * clamp(26px, 7.5vw, 44px)); padding: 6px 10px; margin-bottom: 8px; font-size: 14px; }
+  .compact .status.no-checkout { height: 70px; }
+  .compact .status .st-main { line-height: 19px; max-height: 38px; }
+  .compact .status.has-checkout .st-main { max-height: 19px; }
+  .compact .status .st-msg { font-size: 13px; line-height: 18px; }
   .compact .checkout { margin-top: 6px; padding: 4px 8px; }
   .compact .checkout .co-route { font-size: clamp(26px, 7.5vw, 44px); }
   .compact .boards { margin-bottom: 8px; gap: 8px; }
@@ -953,6 +969,7 @@
   }
 
   function showSetup() {
+    releaseGameHeight();
     cancelAutoPass(); cancelNextGameTimer(); editing = null;
     botToken++; botBusy = false;
     game = null; reviewing = false;
@@ -1104,14 +1121,20 @@
     if (!rounds.size) { const tr = el("tr"), td = el("td", "empty", "Nothing thrown yet."); td.colSpan = 3; tr.append(td); body.append(tr); }
   }
 
+  // Fixed slots, so the box (and the board under it) never changes height: the turn line, then the edit note or the
+  // last message - or, near a finish on your turn, the checkout box with that note in its header.
   function renderStatus() {
     const box = $("status"); box.textContent = "";
+    box.classList.toggle("no-checkout", !!game && game.kind !== "x01");
+    box.classList.remove("has-checkout");
     if (reviewing) return;
+    let note = lastMessage, noteClass = "st-msg";
     if (editing) {
       const was = editing.original, what = game.kind === "x01" ? (was.bust ? "a bust" : was.scored) : was.marks + " marks" + (was.points ? ", +" + was.points : "");
-      box.append(el("div", "hint", "Editing " + (versus() ? nameOf(editing.who) + "'s" : "your") + " visit in round " + was.round + " (it was " + what + "). Enter it again."));
+      note = "Editing " + (versus() ? nameOf(editing.who) + "'s" : "your") + " visit in round " + was.round + " (it was " + what + "). Enter it again.";
+      noteClass = "st-msg edit";
     }
-    const line = el("div");
+    const line = el("div", "st-main");
     if (humanTurn() && !game.visitDone && keypadActive()) {
       line.append(el("strong", "", turnWord()), document.createTextNode(" · enter " + (versus() ? "the" : "your") + " three-dart score."));
     } else if (humanTurn() && !game.visitDone) {
@@ -1122,14 +1145,17 @@
       line.append(el("strong", "", "Bot's turn"), document.createTextNode(" · " + (botBusy ? "throwing…" : "waiting")));
     }
     box.append(line);
-    if (lastMessage) box.append(el("div", "muted", lastMessage));
-    if (game.kind === "x01" && humanTurn() && !game.visitDone && game.remaining[game.turn] <= 170) {
-      const route = E.checkoutRoute(game.remaining[game.turn], 3 - game.visitDarts.length, game.doubleOut);
-      if (route) {
-        const co = el("div", "checkout");
-        co.append(el("span", "co-label", "Checkout"), el("span", "co-route", route.map((d) => short(d.label)).join(" · ")));
-        box.append(co);
-      }
+    const route = game.kind === "x01" && humanTurn() && !game.visitDone && game.remaining[game.turn] <= 170
+      ? E.checkoutRoute(game.remaining[game.turn], 3 - game.visitDarts.length, game.doubleOut) : null;
+    if (route) {
+      box.classList.add("has-checkout");
+      const co = el("div", "checkout"), head = el("div", "co-head");
+      head.append(el("span", "co-label", "Checkout"));
+      if (note) head.append(el("span", "co-note", note));
+      co.append(head, el("span", "co-route", route.map((d) => short(d.label)).join(" · ")));
+      box.append(co);
+    } else if (note) {
+      box.append(el("div", noteClass, note));
     }
   }
 
@@ -1158,6 +1184,24 @@
     if (!game) return;
     renderScoreboard(); renderLog(); renderStatus(); renderControls(); renderEntry(); drawGameBoard();
     timerView.refresh();
+    holdGameHeight();
+  }
+
+  // During a game the page never gets shorter. Buttons under the board come and go every visit; when the page is
+  // scrolled to the bottom (as it is after scrolling down to Start game), a shorter page makes the browser scroll up,
+  // and the board slides down the screen. So the game area keeps its tallest height - across the games of a match too -
+  // until you go back to the setup.
+  let heldGameHeight = 0;
+  function holdGameHeight() {
+    const card = $("gameCard");
+    if (card.offsetHeight > heldGameHeight) {
+      heldGameHeight = card.offsetHeight;
+      card.style.minHeight = heldGameHeight + "px";
+    }
+  }
+  function releaseGameHeight() {
+    heldGameHeight = 0;
+    $("gameCard").style.minHeight = "";
   }
 
   // --- the score keypad -------------------------------------------------------------------------------
@@ -1333,7 +1377,9 @@
     const keypad = keypadActive();
     $("boardWrap").classList.toggle("hidden", keypad);
     $("keypad").classList.toggle("hidden", !keypad);
-    $("gameCard").classList.toggle("compact", keypad);
+    // The compact layout follows how you chose to play, not whose turn it is: switching it every turn resized the scores
+    // and the status box, and the whole screen moved.
+    $("gameCard").classList.toggle("compact", game.kind === "x01" && settings.entry === "keypad" && !reviewing);
     const canSwitch = game.kind === "x01" && !reviewing && humanTurn() && !game.visitDone && !game.visitDarts.length && !game.winner && !botBusy;
     const showConfirm = !keypad && !reviewing && humanTurn() && !botBusy;
     $("confirmToggle").classList.toggle("hidden", !showConfirm);
