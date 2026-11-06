@@ -16,6 +16,7 @@ positions: { "20": [ {x: 0, y: -0.58}, {x: 0.02, y: -0.95}, null ], "BULL": [ {x
 - Only targets that have at least one position are stored, and the field is left out entirely for a session with no tapped darts.
 - Retyping a slot in the table drops that slot's position, because the dart it described has changed. Slots that keep the same value keep their position. Undo restores both.
 - Taps that land off the board count as a miss, as before, and are not recorded.
+- Darts entered by the cameras ([camera-scoring.md](camera-scoring.md)) are stored the same way. The cameras measure on a real board, whose rings are narrower than the drawn one, so the position is stretched ring by ring to the spot on the drawn board that scores the same.
 - Positions also travel with the live draft, so a second device shows the same dots.
 - Positions stay in the app. They are not sent to Time Left.
 

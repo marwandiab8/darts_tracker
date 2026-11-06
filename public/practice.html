@@ -169,6 +169,10 @@
   .entry-toggle.below { margin: 10px 0 0; flex-wrap: wrap; }
   /* The Press Enter switch is a setting, so it is outlined; the Enter button below is the solid one. */
   .entry-toggle #confirmToggle[aria-pressed="true"] { background: transparent; color: var(--accent); border-color: var(--accent); }
+  .entry-toggle #cameraToggle[aria-pressed="true"] { background: transparent; color: var(--good); border-color: var(--good); }
+  .cam-status { text-align: center; font-size: 14px; color: var(--muted); margin-top: 8px; min-height: 1.3em; }
+  .cam-status.warn { color: var(--accent); }
+  .cam-status a { color: var(--accent); font-weight: 700; }
   #nextBtn { min-width: 170px; min-height: 52px; font-size: 19px; }
   @media (max-width: 800px) {
     .play-grid { grid-template-columns: 1fr; }
@@ -183,6 +187,7 @@
     <div class="head-left">
       <a class="back" href="./">&larr; Tracker</a>
       <a class="back" href="challenge.html">JDC Challenge</a>
+      <a class="back" href="camera.html">Cameras</a>
       <h1>Practice</h1>
     </div>
     <div class="head-right">
@@ -316,7 +321,9 @@
             <button type="button" class="secondary" id="entryBoard" aria-pressed="true">Board</button>
             <button type="button" class="secondary" id="entryKeypad" aria-pressed="false">Keypad</button>
             <button type="button" class="secondary" id="confirmToggle" aria-pressed="false" title="When on, your turn only passes to the bot when you press Enter">Press Enter: off</button>
+            <button type="button" class="secondary hidden" id="cameraToggle" aria-pressed="false" title="Let the cameras by the board enter your darts (set them up on the Cameras page)">Camera: off</button>
           </div>
+          <div class="cam-status hidden" id="camStatus" aria-live="polite"></div>
           <div class="controls">
             <button type="button" class="secondary" id="undoBtn">Undo dart</button>
             <button type="button" class="secondary" id="missBtn">Missed the board</button>
@@ -394,6 +401,8 @@
      one, which throws inside announce()'s catch-all and looks like "no sound at all". -->
 <script src="practice-engine.js?v=6"></script>
 <script src="practice-timer.js?v=1"></script>
+<script src="board-vision.js?v=1"></script>
+<script src="board-camera.js?v=1"></script>
 <script>
 (function () {
   "use strict";
@@ -423,7 +432,7 @@
   };
 
   let user = null;
-  let settings = Object.assign({ kind: "x01", startScore: 501, doubleOut: true, rank: "club", first: "player", entry: "board", confirm: false, mute: false, opponent: "bot", oppName: "", oppEmail: "", seriesTarget: 1 }, store.get(SETTINGS_KEY) || {});
+  let settings = Object.assign({ kind: "x01", startScore: 501, doubleOut: true, rank: "club", first: "player", entry: "board", confirm: false, camera: false, mute: false, opponent: "bot", oppName: "", oppEmail: "", seriesTarget: 1 }, store.get(SETTINGS_KEY) || {});
   // Who is playing the running game. Against the bot the two sides are "You" and the bot; with another
   // player they are two people sharing the phone, and the email address of the second one is kept
   // here so the result can be sent to both.
@@ -839,7 +848,7 @@
     const kind = document.querySelector('input[name="kind"]:checked');
     const seriesTarget = Number($("seriesTarget").value);
     settings = { kind: kind ? kind.value : "x01", startScore: Number($("startScore").value), doubleOut: $("outRule").value !== "straight", rank: $("rank").value, first: $("first").value, entry: $("entry").value, confirm: $("handover").value === "enter",
-      opponent: (document.querySelector('input[name="opp"]:checked') || {}).value === "human" ? "human" : "bot", oppName: $("oppName").value.trim().slice(0, 40), oppEmail: $("oppEmail").value.trim(), mute: settings.mute,
+      opponent: (document.querySelector('input[name="opp"]:checked') || {}).value === "human" ? "human" : "bot", oppName: $("oppName").value.trim().slice(0, 40), oppEmail: $("oppEmail").value.trim(), mute: settings.mute, camera: !!settings.camera && $("entry").value !== "keypad",
       seriesTarget: SERIES_TARGETS.includes(seriesTarget) ? seriesTarget : 1 };
     store.set(SETTINGS_KEY, settings);
     syncSetupVisibility();
@@ -973,6 +982,7 @@
     cancelAutoPass(); cancelNextGameTimer(); editing = null;
     botToken++; botBusy = false;
     game = null; reviewing = false;
+    stopCamera();
     $("gameCard").classList.add("hidden");
     $("setupCard").classList.remove("hidden");
     showRecord(true);
@@ -1138,7 +1148,7 @@
     if (humanTurn() && !game.visitDone && keypadActive()) {
       line.append(el("strong", "", turnWord()), document.createTextNode(" · enter " + (versus() ? "the" : "your") + " three-dart score."));
     } else if (humanTurn() && !game.visitDone) {
-      line.append(el("strong", "", turnWord()), document.createTextNode(" · dart " + (game.visitDarts.length + 1) + " of 3. Tap where it landed."));
+      line.append(el("strong", "", turnWord()), document.createTextNode(" · dart " + (game.visitDarts.length + 1) + " of 3. " + (cam ? "Throw, or tap where it landed." : "Tap where it landed.")));
     } else if (humanTurn()) {
       line.append(el("strong", "", game.winner ? (versus() ? nameOf(game.winner) + " won the game!" : "You won the game!") : "Visit finished"), document.createTextNode(game.winner ? " Check the darts, then finish." : editing ? ". Saving your change. Undo to change a dart." : passTimer ? ". " + (versus() ? nameOf(game.turn === "player" ? "bot" : "player") : "The bot") + " is up next. Undo to change a dart." : settings.confirm && !keypadActive() ? ". Check the darts. Press Enter when they are right, or Undo to change one." : ". Pass to " + (versus() ? nameOf(game.turn === "player" ? "bot" : "player") : "the bot") + " when you are ready."));
     } else {
@@ -1183,6 +1193,7 @@
   function render() {
     if (!game) return;
     renderScoreboard(); renderLog(); renderStatus(); renderControls(); renderEntry(); drawGameBoard();
+    syncCamera();
     timerView.refresh();
     holdGameHeight();
   }
@@ -1385,7 +1396,12 @@
     $("confirmToggle").classList.toggle("hidden", !showConfirm);
     $("confirmToggle").setAttribute("aria-pressed", String(!!settings.confirm));
     $("confirmToggle").textContent = "Press Enter: " + (settings.confirm ? "on" : "off");
-    $("entryToggle").classList.toggle("hidden", !canSwitch && !showConfirm);
+    const showCamera = !keypad && !reviewing && !!window.DartCamera;
+    $("cameraToggle").classList.toggle("hidden", !showCamera);
+    $("cameraToggle").setAttribute("aria-pressed", String(!!settings.camera));
+    $("cameraToggle").textContent = "Camera: " + (settings.camera ? "on" : "off");
+    $("entryToggle").classList.toggle("hidden", !canSwitch && !showConfirm && !showCamera);
+    renderCamera();
     $("entryBoard").classList.toggle("hidden", !canSwitch);
     $("entryKeypad").classList.toggle("hidden", !canSwitch);
     $("entryBoard").setAttribute("aria-pressed", String(settings.entry !== "keypad"));
@@ -1405,7 +1421,9 @@
   }
 
   function setEntry(mode) {
-    settings.entry = mode; store.set(SETTINGS_KEY, settings);
+    settings.entry = mode;
+    if (mode === "keypad" && settings.camera) settings.camera = false; // the cameras enter darts on the board
+    store.set(SETTINGS_KEY, settings);
     kpText = ""; kpAsking = false;
     if (game) render();
   }
@@ -1462,6 +1480,93 @@
     cancelAutoPass();
     if (!game || !game.visitDone || game.winner || !humanTurn()) return;
     passTimer = setTimeout(() => { passTimer = null; passTurn(); }, game.visitBust ? PASS_DELAY_BUST : PASS_DELAY);
+  }
+
+  // --- the cameras ----------------------------------------------------------------------------------------
+  // With "Camera" on, the cameras set up on the Cameras page (camera.html, docs/camera-scoring.md) enter
+  // your darts: each dart they see goes in as if you had tapped where it landed, and Undo works as usual.
+  // Pulling your darts out of the board ends the visit: darts the cameras did not see (a bounce-out, a
+  // miss) count as misses, and with Press Enter on, it counts as pressing Enter.
+  let cam = null, camText = "", camWarn = false, camFailed = false;
+  const camSetUp = () => !!window.DartCamera && DartCamera.ready(DartCamera.load()).length > 0;
+
+  function setCamera(on) {
+    settings.camera = on;
+    if (on && settings.entry === "keypad") settings.entry = "board";
+    store.set(SETTINGS_KEY, settings);
+    camFailed = false;
+    if (!on) stopCamera();
+    if (game) render();
+  }
+
+  // Keeps the cameras running while a game is on the screen with Camera on, and off otherwise.
+  function syncCamera() {
+    const want = !!settings.camera && !!game && !reviewing && settings.entry !== "keypad";
+    if (want && !cam && !camFailed) startCamera();
+    else if (!want && cam) stopCamera();
+  }
+
+  async function startCamera() {
+    if (!camSetUp()) { camFailed = true; camText = "setup"; camWarn = true; renderCamera(); return; }
+    const watcher = DartCamera.createWatcher(DartCamera.load(), { onEvent: onCameraEvent });
+    cam = watcher;
+    try {
+      await watcher.start();
+    } catch (error) {
+      if (cam === watcher) cam = null;
+      camFailed = true;
+      camText = error.message; camWarn = true;
+      renderCamera();
+    }
+  }
+
+  function stopCamera() {
+    if (cam) cam.stop();
+    cam = null; camText = ""; camWarn = false;
+    renderCamera();
+  }
+
+  function renderCamera() {
+    const box = $("camStatus");
+    const show = !!settings.camera && !!game && !reviewing && settings.entry !== "keypad";
+    box.classList.toggle("hidden", !show);
+    box.classList.toggle("warn", camWarn);
+    box.textContent = "";
+    if (!show) return;
+    if (camText === "setup") {
+      box.append(document.createTextNode("No cameras are set up in this browser yet. "));
+      const a = el("a", "", "Set them up"); a.href = "camera.html";
+      box.append(a);
+      return;
+    }
+    box.textContent = camText || "Camera on.";
+  }
+
+  function cameraSays(text, warn) { camText = text; camWarn = !!warn; renderCamera(); }
+
+  function onCameraEvent(e) {
+    if (!game) return;
+    if (e.type === "status") return cameraSays(e.text);
+    if (e.type === "error") return cameraSays(e.text, true);
+    if (e.type === "ready") return cameraSays("Camera on: watching the board.");
+    if (e.type === "blocked") return cameraSays("Camera: something is in front of the board.");
+    if (e.type === "unreadable") return cameraSays("The cameras saw something but couldn't read it. Tap the board for that dart.", true);
+    const myThrow = humanTurn() && !reviewing && !botBusy && !game.winner && !keypadActive();
+    if (e.type === "dart") {
+      if (!myThrow) return cameraSays("Camera saw " + describe(e.label) + ", but it isn't your turn to throw.", true);
+      if (game.visitDone) return cameraSays("Camera saw " + describe(e.label) + ", but this visit's darts are all in. Undo one first if one was wrong.", true);
+      noteActivity();
+      playerThrow({ x: Math.round(e.app.x * 10000) / 10000, y: Math.round(e.app.y * 10000) / 10000 });
+      return cameraSays(e.uncertain ? "Camera: " + describe(e.label) + "? It wasn't sure. If it's wrong, Undo and tap where it landed." : "Camera: " + describe(e.label) + ".", e.uncertain);
+    }
+    if (e.type === "takeout") {
+      if (!myThrow || !game.visitDarts.length) return cameraSays("Camera on: watching the board.");
+      noteActivity();
+      let missed = 0;
+      while (!game.visitDone && game.visitDarts.length < 3) { missDart(); missed += 1; }
+      if (game.visitDone && !game.winner && settings.confirm && !passTimer) passTurn();
+      return cameraSays(missed ? "Darts out. " + (missed === 1 ? "One dart the cameras didn't see counts as a miss." : missed + " darts the cameras didn't see count as misses.") : "Darts out.");
+    }
   }
 
   // --- correcting a previous visit -------------------------------------------------------------------
@@ -1768,6 +1873,7 @@
     event.preventDefault();
   });
   $("confirmToggle").addEventListener("click", () => setConfirm(!settings.confirm));
+  $("cameraToggle").addEventListener("click", () => setCamera(!settings.camera));
   $("soundBtn").addEventListener("click", () => setMute(!settings.mute));
   document.addEventListener("pointerdown", warmUpSpeech, { once: true });
   document.addEventListener("keydown", warmUpSpeech, { once: true });

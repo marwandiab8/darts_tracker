@@ -373,6 +373,10 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
   .dt-pill select { flex: 1 1 auto; min-width: 0; max-width: 100%; }
   .board-note { margin-top: 6px; font-size: 12px; color: var(--accent); }
   .board-note:empty { display: none; }
+  .cam-note { margin-top: 6px; font-size: 13px; color: var(--muted); }
+  .cam-note:empty { display: none; }
+  .cam-note.warn { color: var(--accent); }
+  .cam-note a { color: var(--accent); font-weight: 700; }
   #userName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   @media (max-width: 1024px) { .dt-grid-main { grid-template-columns: minmax(0, 1fr); } }
   @media (max-width: 560px) {
@@ -405,6 +409,7 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
         <div class="dt-header-actions" style="display:flex; gap:10px; align-items:center;">
           <a href="practice.html" class="dt-pill" style="text-decoration:none; color:var(--accent); font-weight:800;">Play the bot</a>
           <a href="challenge.html" class="dt-pill" style="text-decoration:none; color:var(--accent); font-weight:800;">JDC Challenge</a>
+          <a href="camera.html" class="dt-pill" style="text-decoration:none; color:var(--accent); font-weight:800;">Cameras</a>
           <div id="syncPill" class="dt-pill"><div class="status-dot"></div> <span id="syncText">Syncing...</span></div>
 
           <div class="dt-pill" style="display:flex; align-items:center; gap:10px;">
@@ -455,6 +460,10 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
                   <input id="voiceToggle" type="checkbox">
                   <span>Voice</span>
                 </label>
+                <label class="dt-toggle" title="Let the cameras by the board enter your darts (set them up on the Cameras page)">
+                  <input id="cameraToggle" type="checkbox">
+                  <span>Camera</span>
+                </label>
                 <button id="undoTapBtn" class="secondary" style="padding:8px 10px;">Undo</button>
                 <button id="clearAllBtn" class="secondary" style="padding:8px 10px;">Clear</button>
               </div>
@@ -468,6 +477,7 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
               Each tap is remembered as a dot on the board and saved with the session.
             </div>
             <div id="boardNote" class="board-note" aria-live="polite"></div>
+            <div id="camNote" class="cam-note" aria-live="polite"></div>
           </div>
        
           
@@ -519,6 +529,8 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="practice-timer.js?v=1"></script>
+<script src="board-vision.js?v=1"></script>
+<script src="board-camera.js?v=1"></script>
 
 <script>
 (function() {
@@ -1353,6 +1365,57 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
     // Voice says only the word (as requested)
     speak(word);
   }
+
+  // ---- Cameras -------------------------------------------------------------------------------------
+  // With "Camera" ticked, the cameras set up on the Cameras page (camera.html, docs/camera-scoring.md)
+  // enter each dart they see as if it had been tapped there: same slot, same dot, same Undo.
+  let boardCam = null;
+  function setCamNote(text, warn, linkToSetup) {
+    const box = document.getElementById("camNote");
+    if (!box) return;
+    box.textContent = text || "";
+    box.classList.toggle("warn", !!warn);
+    if (linkToSetup) {
+      const a = document.createElement("a");
+      a.href = "camera.html"; a.textContent = "Set them up";
+      box.append(" ", a);
+    }
+  }
+  async function setTrackerCamera(on) {
+    const toggle = document.getElementById("cameraToggle");
+    if (!on) { if (boardCam) boardCam.stop(); boardCam = null; setCamNote(""); return; }
+    if (!window.DartCamera || !DartCamera.ready(DartCamera.load()).length) {
+      toggle.checked = false;
+      setCamNote("No cameras are set up in this browser yet.", true, true);
+      return;
+    }
+    const watcher = DartCamera.createWatcher(DartCamera.load(), { onEvent: onTrackerCamera });
+    boardCam = watcher;
+    try {
+      await watcher.start();
+    } catch (error) {
+      if (boardCam === watcher) boardCam = null;
+      toggle.checked = false;
+      setCamNote(error.message, true);
+    }
+  }
+  function onTrackerCamera(e) {
+    if (e.type === "status") setCamNote(e.text);
+    else if (e.type === "error") setCamNote(e.text, true);
+    else if (e.type === "ready" || e.type === "takeout") setCamNote("Camera on: watching the board.");
+    else if (e.type === "unreadable") setCamNote("The cameras saw something but couldn't read it. Tap the board for that dart.", true);
+    else if (e.type === "dart") {
+      const x = Math.round(e.app.x * 10000) / 10000, y = Math.round(e.app.y * 10000) / 10000;
+      const hit = BoardVision.classify(x, y, BoardVision.APP);
+      if (!hit.target) { tapFeedback("MISS"); setCamNote("Camera: missed the board."); return; }
+      applyBoardHit({ target: hit.target, ring: hit.ring, x, y });
+      setCamNote("Camera: " + hit.label + (e.uncertain ? ". It wasn't sure: if it's wrong, Undo and tap where it landed." : "."), e.uncertain);
+    }
+  }
+  (function bindCameraToggle(){
+    const toggle = document.getElementById("cameraToggle");
+    if (toggle) toggle.addEventListener("change", () => setTrackerCamera(!!toggle.checked));
+  })();
 
   // Wire up UI toggles (persisted)
   (function bindTapToggles(){

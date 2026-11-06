@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cameras - Darts Tracker</title>
+<style>
+  :root {
+    --bg: #0b0f17; --muted: #94a3b8; --text: #e5e7eb; --accent: #f59e0b; --bot: #38bdf8;
+    --good: #22c55e; --warn: #ef4444; --border: rgba(148, 163, 184, .18); --chip: #0f172a;
+  }
+  * { box-sizing: border-box; }
+  html, body { touch-action: manipulation; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; }
+  .shell { background: radial-gradient(1200px 600px at 20% 0%, rgba(245, 158, 11, .12), transparent 55%), var(--bg); min-height: 100vh; padding: 12px 16px 16px; }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  header { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  header h1 { margin: 0; font-size: 22px; }
+  .links { display: flex; gap: 8px; flex-wrap: wrap; }
+  a.back { color: var(--accent); text-decoration: none; font-weight: 700; font-size: 14px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 999px; }
+  .card { background: rgba(255,255,255,.02); border: 1px solid var(--border); border-radius: 16px; padding: 16px; margin-bottom: 16px; min-width: 0; }
+  .card h2 { margin: 0 0 8px; font-size: 18px; }
+  .muted { color: var(--muted); }
+  p { line-height: 1.45; margin: 6px 0 10px; }
+  .hidden { display: none !important; }
+  button { font: inherit; font-weight: 700; border-radius: 12px; border: 1px solid var(--accent); background: var(--accent); color: #111827; padding: 10px 14px; min-height: 44px; cursor: pointer; }
+  button.secondary { background: transparent; color: var(--text); border-color: var(--border); }
+  button.small { min-height: 36px; padding: 6px 12px; font-size: 14px; }
+  button:disabled { opacity: .45; cursor: default; }
+  select { font: inherit; color: var(--text); background: var(--chip); border: 1px solid var(--border); border-radius: 10px; padding: 9px 10px; min-height: 44px; max-width: 100%; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .row { display: grid; grid-template-columns: 1fr; gap: 12px; }
+  @media (min-width: 760px) { .row.two { grid-template-columns: 1fr 1fr; } }
+  .slot { border: 1px solid var(--border); border-radius: 12px; padding: 12px; min-width: 0; }
+  .slot h3 { margin: 0 0 8px; font-size: 16px; display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+  .slot select { width: 100%; }
+  .slot video { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 8px; margin-top: 8px; display: block; object-fit: contain; }
+  .slot .busy { font-size: 13px; color: var(--muted); margin-top: 6px; }
+  .tag { font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
+  .tag.ok { color: var(--good); border-color: rgba(34,197,94,.5); }
+  .tag.no { color: var(--accent); border-color: rgba(245,158,11,.5); }
+  .msg { padding: 10px 12px; border-radius: 10px; background: rgba(239,68,68,.12); border: 1px solid rgba(239,68,68,.4); margin: 8px 0; }
+  .msg.info { background: rgba(56,189,248,.08); border-color: rgba(56,189,248,.35); }
+  .tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .tabs button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+  .cal-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+  @media (min-width: 900px) { .cal-grid { grid-template-columns: minmax(0, 1fr) 230px; } }
+  .cal-stage { position: relative; min-width: 0; }
+  #calCanvas { width: 100%; height: auto; display: block; background: #000; border-radius: 10px; touch-action: none; cursor: crosshair; }
+  #loupe { position: absolute; left: 8px; top: 8px; width: 170px; height: 170px; border-radius: 50%; border: 2px solid var(--accent); background: #000; pointer-events: none; box-shadow: 0 6px 24px rgba(0,0,0,.6); }
+  .steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  .steps li { padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; font-size: 14px; display: flex; gap: 8px; align-items: center; cursor: pointer; }
+  .steps li.current { border-color: var(--accent); }
+  .steps li.done .dot { background: var(--good); }
+  .steps .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--border); flex: none; }
+  .guide { display: flex; gap: 10px; align-items: center; margin: 6px 0 10px; }
+  .guide canvas { width: 96px; height: 96px; flex: none; }
+  .fit { font-weight: 700; }
+  .fit.good { color: var(--good); }
+  .fit.bad { color: var(--warn); }
+  .test-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+  @media (min-width: 900px) { .test-grid { grid-template-columns: minmax(0, 420px) minmax(0, 1fr); } }
+  #testBoard { width: 100%; max-width: 420px; aspect-ratio: 1; display: block; margin: 0 auto; cursor: pointer; touch-action: manipulation; }
+  .status { font-weight: 700; min-height: 1.4em; }
+  .log { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 6px; max-height: 320px; overflow: auto; }
+  .log li { border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; font-size: 14px; }
+  .log li b { font-size: 16px; }
+  .log li.unsure { border-color: rgba(245,158,11,.6); }
+  .debug { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+  .debug canvas { width: 100%; height: auto; background: #000; border-radius: 8px; display: block; }
+  .debug .cap { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .big { font-size: 40px; font-weight: 800; text-align: center; min-height: 52px; letter-spacing: .02em; }
+  .big.unsure { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="shell"><div class="wrap">
+  <header>
+    <h1>Cameras</h1>
+    <div class="links"><a class="back" href="practice.html">Play the bot</a><a class="back" href="index.html">Tracker</a></div>
+  </header>
+
+  <section class="card">
+    <h2>Score darts with cameras</h2>
+    <p class="muted">Two cameras beside the board watch each dart go in, and the practice pages enter it for you, as if you had tapped where it landed. Set the cameras up once here: choose them, then show each one where the board is by tapping five points on its picture. The setup is kept in this browser, on this computer.</p>
+    <p class="muted">Mount the cameras close to the board, one each side, where they will stay. If a camera moves, calibrate it again.</p>
+  </section>
+
+  <!-- 1. Which cameras -->
+  <section class="card" id="pickCard">
+    <h2>1. Choose the cameras</h2>
+    <div id="accessBox">
+      <p class="muted">The browser will ask to use your cameras. Nothing leaves this computer: the pictures are only looked at here, in the page.</p>
+      <div class="actions"><button type="button" id="accessBtn">Find my cameras</button></div>
+    </div>
+    <div id="pickMsg" class="msg hidden" role="alert"></div>
+    <div class="row two hidden" id="slots">
+      <div class="slot" data-slot="0">
+        <h3>Camera 1 <span class="tag" id="tag0">Not set up</span></h3>
+        <select id="sel0" aria-label="Camera 1"></select>
+        <video id="prev0" muted playsinline></video>
+        <div class="busy hidden" id="busy0">This camera is being watched in "Try it" below.</div>
+      </div>
+      <div class="slot" data-slot="1">
+        <h3>Camera 2 <span class="tag" id="tag1">Not set up</span></h3>
+        <select id="sel1" aria-label="Camera 2"></select>
+        <video id="prev1" muted playsinline></video>
+        <div class="busy hidden" id="busy1">This camera is being watched in "Try it" below.</div>
+      </div>
+    </div>
+    <p class="muted hidden" id="obsHint" style="font-size:13px;">Using OBS? While OBS is open it has the cameras, and the browser can't use them. Either close OBS, or choose "OBS Virtual Camera" for both cameras and calibrate each half of its picture (one board each side).</p>
+  </section>
+
+  <!-- 2. Calibrate -->
+  <section class="card hidden" id="calCard">
+    <h2>2. Show each camera where the board is</h2>
+    <div class="tabs" id="calTabs" role="group" aria-label="Which camera"></div>
+    <div class="cal-grid">
+      <div class="cal-stage">
+        <canvas id="calCanvas" width="1280" height="720" aria-label="Picture from the camera. Press, slide to the exact spot, and let go."></canvas>
+        <canvas id="loupe" width="170" height="170" class="hidden"></canvas>
+      </div>
+      <div>
+        <div class="guide"><canvas id="guide" width="192" height="192" aria-hidden="true"></canvas><div id="stepText" style="font-size:14px;"></div></div>
+        <ol class="steps" id="steps"></ol>
+        <p class="muted" style="font-size:13px;">Press on the picture, slide until the cross in the magnifier sits exactly on the spot, and let go. Drag a dot to move it. Take the board out of the picture? Use "New picture" with the darts out of the board.</p>
+        <div class="fit" id="fit"></div>
+        <div class="actions">
+          <button type="button" id="saveCalBtn" disabled>Save</button>
+          <button type="button" class="secondary small" id="snapBtn">New picture</button>
+          <button type="button" class="secondary small" id="resetCalBtn">Start over</button>
+        </div>
+        <div class="muted" id="calSaved" role="status" style="font-size:14px;margin-top:8px;"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. Test -->
+  <section class="card hidden" id="testCard">
+    <h2>3. Try it</h2>
+    <p class="muted">Start watching, take the darts out of the board, and throw. Each dart shows on the board below. If one is wrong, tap the board where it really is: that is kept with the test pictures, which help tune it for your board.</p>
+    <div class="actions">
+      <button type="button" id="watchBtn">Start watching</button>
+      <button type="button" class="secondary" id="clearBtn" disabled>The board is clear now</button>
+      <button type="button" class="secondary" id="saveTestBtn" disabled>Save test pictures</button>
+    </div>
+    <div id="testMsg" class="msg hidden" role="alert"></div>
+    <div class="status" id="watchStatus" aria-live="polite"></div>
+    <div class="test-grid">
+      <div>
+        <div class="big" id="lastDart" aria-live="polite"></div>
+        <canvas id="testBoard" width="600" height="600" aria-label="Where the cameras saw each dart. Tap to say where the last one really is."></canvas>
+      </div>
+      <div>
+        <ul class="log" id="log"></ul>
+        <div class="debug" id="debug"></div>
+      </div>
+    </div>
+  </section>
+</div></div>
+
+<script src="board-vision.js"></script>
+<script src="board-camera.js"></script>
+<script>
+(function () {
+  "use strict";
+  const V = window.BoardVision, C = window.DartCamera;
+  const $ = (id) => document.getElementById(id);
+  const P = V.CAL_POINTS;
+
+  let setup = C.load();
+  let cameras = []; // plugged in now
+  // Per slot: what is chosen, its preview, the still being calibrated and the points on it.
+  const slots = [0, 1].map((i) => {
+    const saved = setup.cameras[i] || null;
+    return { i, deviceId: saved ? saved.deviceId : "", label: saved ? saved.label : "", stream: null, video: $("prev" + i), still: null, points: saved && saved.cal ? saved.cal.points.slice() : P.map(() => null), cal: saved ? saved.cal : null, saved: !!(saved && saved.cal) };
+  });
+  let active = 0, current = Math.max(0, slots[0].points.findIndex((q) => !q));
+  if (slots[0].points.every(Boolean)) current = P.length;
+
+  // ---- messages ----------------------------------------------------------------------------------
+  function show(id, text, info) {
+    const box = $(id);
+    box.textContent = text || "";
+    box.classList.toggle("hidden", !text);
+    box.classList.toggle("info", !!info);
+  }
+
+  // ---- 1. choosing cameras -------------------------------------------------------------------------
+  async function findCameras(ask) {
+    try {
+      cameras = ask ? await C.requestAccess() : await C.listCameras();
+    } catch (error) {
+      show("pickMsg", C.explain(error));
+      return;
+    }
+    const named = cameras.some((c) => c.label && !/^Camera \d+$/.test(c.label));
+    if (!named && !ask) return; // no permission yet: wait for the button
+    show("pickMsg", cameras.length ? "" : "No cameras found. Plug them in (not through the Targus dock) and try again.");
+    $("accessBox").classList.add("hidden");
+    $("slots").classList.remove("hidden");
+    $("obsHint").classList.toggle("hidden", !cameras.some((c) => /obs/i.test(c.label)));
+    slots.forEach((slot) => {
+      const sel = $("sel" + slot.i);
+      sel.innerHTML = "";
+      sel.append(new Option("None", ""));
+      cameras.forEach((cam) => sel.append(new Option(cam.label, cam.deviceId)));
+      // A saved camera may have a new id: find it by its name.
+      const match = cameras.find((c) => c.deviceId === slot.deviceId) || cameras.find((c) => slot.label && c.label === slot.label);
+      sel.value = match ? match.deviceId : "";
+      if (match) slot.deviceId = match.deviceId;
+    });
+    for (const slot of slots) if (slot.deviceId) await preview(slot);
+    refresh();
+  }
+
+  async function preview(slot) {
+    stopPreview(slot);
+    if (!slot.deviceId) return;
+    // The other slot showing the same camera (OBS's two-in-one picture) shares its stream.
+    const twin = slots.find((s) => s !== slot && s.deviceId === slot.deviceId && s.stream);
+    try {
+      slot.stream = twin ? twin.stream : await C.openStream(slot.deviceId, slot.label);
+      slot.shared = !!twin;
+      slot.video.srcObject = slot.stream;
+      await slot.video.play().catch(() => {});
+      show("pickMsg", "");
+    } catch (error) {
+      slot.stream = null;
+      show("pickMsg", error.message);
+    }
+  }
+
+  function stopPreview(slot) {
+    if (slot.stream && !slots.some((s) => s !== slot && s.stream === slot.stream)) slot.stream.getTracks().forEach((t) => t.stop());
+    slot.stream = null;
+    slot.video.srcObject = null;
+  }
+
+  function stopAllPreviews() {
+    slots.forEach((s) => { if (s.stream) s.stream.getTracks().forEach((t) => t.stop()); s.stream = null; s.video.srcObject = null; });
+  }
+
+  // While "Try it" is watching, it has the cameras: the previews say so rather than going black.
+  function previewsBusy(busy) {
+    slots.forEach((s) => {
+      s.video.classList.toggle("hidden", busy && !!s.deviceId);
+      $("busy" + s.i).classList.toggle("hidden", !(busy && s.deviceId));
+    });
+  }
+
+  slots.forEach((slot) => {
+    $("sel" + slot.i).addEventListener("change", async (e) => {
+      const deviceId = e.target.value;
+      if (deviceId === slot.deviceId) return;
+      slot.deviceId = deviceId;
+      slot.label = (cameras.find((c) => c.deviceId === deviceId) || {}).label || "";
+      // A different camera needs its own calibration.
+      slot.points = P.map(() => null); slot.cal = null; slot.still = null; slot.saved = false;
+      persist();
+      await preview(slot);
+      if (active === slot.i) { current = 0; takeStill(); }
+      refresh();
+    });
+  });
+
+  $("accessBtn").addEventListener("click", () => findCameras(true));
+
+  // ---- 2. calibrating ---------------------------------------------------------------------------------
+  const calCanvas = $("calCanvas"), cx = calCanvas.getContext("2d");
+  const loupe = $("loupe"), lx = loupe.getContext("2d");
+
+  function takeStill() {
+    const slot = slots[active];
+    if (!slot.video.videoWidth) { slot.still = null; drawCal(); return; }
+    slot.still = C.still(slot.video);
+    calCanvas.width = slot.still.width; calCanvas.height = slot.still.height;
+    // A calibration made at another picture size is scaled to this one.
+    if (slot.cal && slot.cal.width && slot.cal.width !== slot.still.width) {
+      const k = slot.still.width / slot.cal.width, ky = slot.still.height / slot.cal.height;
+      slot.points = slot.points.map((p) => (p ? { x: p.x * k, y: p.y * ky } : null));
+      fit();
+    }
+    drawCal();
+  }
+
+  function fit() {
+    const slot = slots[active];
+    const placed = slot.points.filter(Boolean).length;
+    slot.cal = placed >= 4 && slot.still ? V.calibrate(slot.points, slot.still.width, slot.still.height) : null;
+    return slot.cal;
+  }
+
+  // The board's wires as this calibration says the camera sees them.
+  function drawWires(ctx, H, scale) {
+    const Hi = V.inv3(H);
+    if (!Hi) return;
+    const at = (x, y) => V.applyH(Hi, x, y);
+    ctx.save();
+    ctx.lineWidth = Math.max(1.5, 2 * scale);
+    ctx.strokeStyle = "rgba(56,189,248,.95)";
+    for (const key of ["bullIn", "bullOut", "tripleIn", "tripleOut", "doubleIn", "edge"]) {
+      const r = V.REAL[key];
+      ctx.beginPath();
+      for (let k = 0; k <= 96; k += 1) {
+        const a = (k / 96) * Math.PI * 2, p = at(Math.cos(a) * r, Math.sin(a) * r);
+        if (!p) continue;
+        k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
+      }
+      ctx.stroke();
+    }
+    for (let i = 0; i < 20; i += 1) {
+      const a = -Math.PI / 2 + Math.PI / 20 + (i * Math.PI) / 10;
+      const p = at(Math.cos(a) * V.REAL.bullOut, Math.sin(a) * V.REAL.bullOut), q = at(Math.cos(a), Math.sin(a));
+      if (!p || !q) continue;
+      ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
+    }
+    // Numbers, so a board turned the wrong way shows.
+    ctx.fillStyle = "rgba(56,189,248,.95)";
+    ctx.font = `700 ${Math.round(22 * scale)}px system-ui, sans-serif`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    V.SEG_ORDER.forEach((n, i) => {
+      const a = -Math.PI / 2 + (i * Math.PI) / 10, p = at(Math.cos(a) * 1.13, Math.sin(a) * 1.13);
+      if (p) ctx.fillText(String(n), p.x, p.y);
+    });
+    ctx.restore();
+  }
+
+  function drawCal() {
+    const slot = slots[active];
+    const w = calCanvas.width, h = calCanvas.height, scale = w / 1280;
+    cx.fillStyle = "#000"; cx.fillRect(0, 0, w, h);
+    if (slot.still) cx.drawImage(slot.still, 0, 0);
+    else {
+      cx.fillStyle = "#94a3b8"; cx.font = "20px system-ui"; cx.textAlign = "center";
+      cx.fillText(slot.deviceId ? "Waiting for the camera's picture…" : "Choose a camera above.", w / 2, h / 2);
+    }
+    if (slot.cal) drawWires(cx, slot.cal.H, scale);
+    slot.points.forEach((p, i) => {
+      if (!p) return;
+      const r = Math.max(6, 9 * scale);
+      cx.beginPath(); cx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      cx.fillStyle = i === current ? "rgba(245,158,11,.35)" : "rgba(34,197,94,.3)"; cx.fill();
+      cx.lineWidth = 2; cx.strokeStyle = i === current ? "#f59e0b" : "#22c55e"; cx.stroke();
+      cx.beginPath(); cx.moveTo(p.x - r * 1.6, p.y); cx.lineTo(p.x + r * 1.6, p.y); cx.moveTo(p.x, p.y - r * 1.6); cx.lineTo(p.x, p.y + r * 1.6); cx.stroke();
+      cx.fillStyle = "#fff"; cx.font = `700 ${Math.round(16 * scale)}px system-ui`; cx.textAlign = "left";
+      cx.fillText(P[i].short, p.x + r + 4, p.y - r - 2);
+    });
+    drawSteps();
+  }
+
+  function drawSteps() {
+    const slot = slots[active];
+    const list = $("steps");
+    list.innerHTML = "";
+    P.forEach((point, i) => {
+      const li = document.createElement("li");
+      li.className = (slot.points[i] ? "done " : "") + (i === current ? "current" : "");
+      li.innerHTML = `<span class="dot"></span><span>${i + 1}. ${point.short}</span>`;
+      li.addEventListener("click", () => { current = i; drawCal(); });
+      list.append(li);
+    });
+    $("stepText").innerHTML = current < P.length ? `<b>Point ${current + 1} of ${P.length}</b><br>${P[current].text}.` : "All five points are in.";
+    drawGuide();
+    const cal = slot.cal;
+    const fitBox = $("fit");
+    if (cal) {
+      const goodFit = cal.error <= 3;
+      fitBox.className = "fit " + (goodFit ? "good" : "bad");
+      fitBox.textContent = goodFit
+        ? `The lines sit ${cal.error < 1 ? "within a millimetre" : "within " + cal.error.toFixed(1) + " mm"} of your points. Check the blue lines follow the wires.`
+        : `The points don't fit together (${cal.error.toFixed(1)} mm out). One is probably on the wrong spot: check each against its picture.`;
+    } else {
+      fitBox.className = "fit";
+      fitBox.textContent = "";
+    }
+    $("saveCalBtn").disabled = !cal || slot.points.filter(Boolean).length < 5;
+  }
+
+  // A little board showing where the current point is.
+  function drawGuide() {
+    const g = $("guide"), gx = g.getContext("2d"), s = g.width, R = s * 0.36;
+    drawBoardPicture(gx, s / 2, s / 2, R, false);
+    if (current < P.length) {
+      const p = P[current];
+      gx.beginPath(); gx.arc(s / 2 + p.x * R, s / 2 + p.y * R, 9, 0, Math.PI * 2);
+      gx.lineWidth = 4; gx.strokeStyle = "#f59e0b"; gx.stroke();
+    }
+  }
+
+  // A regulation board, drawn real size relative to R (the outside of the double ring).
+  function drawBoardPicture(ctx, cX, cY, R, numbers) {
+    ctx.save();
+    ctx.clearRect(cX - R * 1.4, cY - R * 1.4, R * 2.8, R * 2.8);
+    ctx.beginPath(); ctx.arc(cX, cY, R * 1.3, 0, Math.PI * 2); ctx.fillStyle = "#111"; ctx.fill();
+    const wedge = Math.PI / 10;
+    for (let i = 0; i < 20; i += 1) {
+      const a0 = -Math.PI / 2 - wedge / 2 + i * wedge, a1 = a0 + wedge, dark = i % 2 === 0;
+      const ring = (r0, r1, colour) => {
+        ctx.beginPath(); ctx.arc(cX, cY, R * r1, a0, a1); ctx.arc(cX, cY, R * r0, a1, a0, true); ctx.closePath();
+        ctx.fillStyle = colour; ctx.fill();
+      };
+      ring(V.REAL.bullOut, V.REAL.tripleIn, dark ? "#1a1a1a" : "#e8dcc2");
+      ring(V.REAL.tripleIn, V.REAL.tripleOut, dark ? "#c62828" : "#1b8a4a");
+      ring(V.REAL.tripleOut, V.REAL.doubleIn, dark ? "#1a1a1a" : "#e8dcc2");
+      ring(V.REAL.doubleIn, 1, dark ? "#c62828" : "#1b8a4a");
+    }
+    ctx.beginPath(); ctx.arc(cX, cY, R * V.REAL.bullOut, 0, Math.PI * 2); ctx.fillStyle = "#1b8a4a"; ctx.fill();
+    ctx.beginPath(); ctx.arc(cX, cY, R * V.REAL.bullIn, 0, Math.PI * 2); ctx.fillStyle = "#c62828"; ctx.fill();
+    if (numbers) {
+      ctx.fillStyle = "#e5e7eb"; ctx.font = `700 ${Math.round(R * 0.11)}px system-ui, sans-serif`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      V.SEG_ORDER.forEach((n, i) => {
+        const a = -Math.PI / 2 + i * wedge;
+        ctx.fillText(String(n), cX + Math.cos(a) * R * 1.15, cY + Math.sin(a) * R * 1.15);
+      });
+    }
+    ctx.restore();
+  }
+
+  // Press, slide, let go: the loupe shows the spot under the finger four times larger.
+  let drag = null;
+  const toImage = (e) => {
+    const rect = calCanvas.getBoundingClientRect();
+    return { x: ((e.clientX - rect.left) / rect.width) * calCanvas.width, y: ((e.clientY - rect.top) / rect.height) * calCanvas.height, k: calCanvas.width / rect.width };
+  };
+  function showLoupe(p) {
+    const slot = slots[active];
+    if (!slot.still) return;
+    loupe.classList.remove("hidden");
+    // Keep the loupe away from the finger: top left, or top right if the finger is there.
+    const rect = calCanvas.getBoundingClientRect(), fx = ((p.x / calCanvas.width) * rect.width);
+    loupe.style.left = fx < 200 ? "auto" : "8px";
+    loupe.style.right = fx < 200 ? "8px" : "auto";
+    const z = 4, s = loupe.width, src = s / z;
+    lx.fillStyle = "#000"; lx.fillRect(0, 0, s, s);
+    lx.imageSmoothingEnabled = false;
+    lx.drawImage(slot.still, p.x - src / 2, p.y - src / 2, src, src, 0, 0, s, s);
+    if (slot.cal) {
+      lx.save();
+      lx.translate(s / 2, s / 2); lx.scale(z, z); lx.translate(-p.x, -p.y);
+      drawWires(lx, slot.cal.H, 0.25);
+      lx.restore();
+    }
+    lx.strokeStyle = "#f59e0b"; lx.lineWidth = 1.5;
+    lx.beginPath(); lx.moveTo(s / 2, 0); lx.lineTo(s / 2, s / 2 - 6); lx.moveTo(s / 2, s / 2 + 6); lx.lineTo(s / 2, s); lx.moveTo(0, s / 2); lx.lineTo(s / 2 - 6, s / 2); lx.moveTo(s / 2 + 6, s / 2); lx.lineTo(s, s / 2); lx.stroke();
+  }
+  calCanvas.addEventListener("pointerdown", (e) => {
+    const slot = slots[active];
+    if (!slot.still) return;
+    const p = toImage(e);
+    let index = -1, best = 26 * p.k;
+    slot.points.forEach((q, i) => { if (q && Math.hypot(q.x - p.x, q.y - p.y) < best) { best = Math.hypot(q.x - p.x, q.y - p.y); index = i; } });
+    if (index < 0) {
+      if (current >= P.length) return;
+      index = current;
+    }
+    current = index;
+    drag = { index, startX: p.x, startY: p.y, from: slot.points[index] ? { ...slot.points[index] } : { x: p.x, y: p.y } };
+    slot.points[index] = { x: p.x, y: p.y };
+    calCanvas.setPointerCapture(e.pointerId);
+    fit(); drawCal(); showLoupe(p);
+    e.preventDefault();
+  });
+  calCanvas.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    const slot = slots[active], p = toImage(e);
+    slot.points[drag.index] = { x: p.x, y: p.y };
+    fit(); drawCal(); showLoupe(p);
+  });
+  const endDrag = () => {
+    if (!drag) return;
+    const slot = slots[active];
+    drag = null;
+    loupe.classList.add("hidden");
+    slot.saved = false;
+    const next = slot.points.findIndex((q) => !q);
+    current = next < 0 ? P.length : next;
+    fit(); drawCal(); refresh();
+  };
+  calCanvas.addEventListener("pointerup", endDrag);
+  calCanvas.addEventListener("pointercancel", endDrag);
+
+  $("snapBtn").addEventListener("click", takeStill);
+  $("resetCalBtn").addEventListener("click", () => {
+    const slot = slots[active];
+    slot.points = P.map(() => null); slot.cal = null; slot.saved = false; current = 0;
+    persist(); drawCal(); refresh();
+  });
+  $("saveCalBtn").addEventListener("click", () => {
+    const slot = slots[active];
+    if (!fit()) return;
+    slot.saved = true;
+    persist();
+    $("calSaved").textContent = `Saved for ${slot.label || "this camera"}.` + (slots.some((s) => s.deviceId && !s.saved) ? " Now the other camera." : " Try it below.");
+    const other = slots.find((s) => s.deviceId && !s.saved);
+    if (other) selectTab(other.i);
+    refresh();
+  });
+
+  function selectTab(i) {
+    active = i;
+    const slot = slots[i];
+    const next = slot.points.findIndex((q) => !q);
+    current = next < 0 ? P.length : next;
+    $("calSaved").textContent = "";
+    takeStill();
+    refresh();
+  }
+
+  function persist() {
+    setup = { version: 1, cameras: slots.filter((s) => s.deviceId).map((s) => ({ deviceId: s.deviceId, label: s.label, cal: s.saved && s.cal ? s.cal : null })) };
+    C.save(setup);
+  }
+
+  // ---- what to show -------------------------------------------------------------------------------------
+  function refresh() {
+    const chosen = slots.filter((s) => s.deviceId);
+    $("calCard").classList.toggle("hidden", !chosen.length);
+    const tabs = $("calTabs");
+    tabs.innerHTML = "";
+    chosen.forEach((slot) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "secondary small";
+      b.textContent = `Camera ${slot.i + 1}` + (slot.saved ? " ✓" : "");
+      b.setAttribute("aria-pressed", String(slot.i === active));
+      b.addEventListener("click", () => selectTab(slot.i));
+      tabs.append(b);
+    });
+    if (chosen.length && !slots[active].deviceId) selectTab(chosen[0].i);
+    slots.forEach((slot) => {
+      const tag = $("tag" + slot.i);
+      tag.textContent = !slot.deviceId ? "Not used" : slot.saved ? "Calibrated" : "Needs calibrating";
+      tag.className = "tag " + (!slot.deviceId ? "" : slot.saved ? "ok" : "no");
+    });
+    const readyCount = C.ready(setup).length;
+    $("testCard").classList.toggle("hidden", !readyCount);
+  }
+
+  // ---- 3. trying it ----------------------------------------------------------------------------------------
+  let watcher = null, visit = [], log = [], captures = [], lastCapture = null, debugCtx = [], lastFrames = null;
+  const board = $("testBoard"), bx = board.getContext("2d");
+
+  function drawTestBoard() {
+    const s = board.width, R = s * 0.38;
+    bx.fillStyle = "#0b0f17"; bx.fillRect(0, 0, s, s);
+    drawBoardPicture(bx, s / 2, s / 2, R, true);
+    visit.forEach((d, i) => {
+      const x = s / 2 + d.real.x * R, y = s / 2 + d.real.y * R, last = i === visit.length - 1;
+      if (d.truth) {
+        bx.beginPath(); bx.arc(s / 2 + d.truth.x * R, s / 2 + d.truth.y * R, 6, 0, Math.PI * 2);
+        bx.fillStyle = "#22c55e"; bx.fill();
+        bx.beginPath(); bx.moveTo(x, y); bx.lineTo(s / 2 + d.truth.x * R, s / 2 + d.truth.y * R); bx.strokeStyle = "#22c55e"; bx.lineWidth = 2; bx.stroke();
+      }
+      bx.beginPath(); bx.arc(x, y, last ? 8 : 6, 0, Math.PI * 2);
+      bx.fillStyle = d.uncertain ? "#f59e0b" : "#38bdf8"; bx.fill();
+      bx.lineWidth = 2; bx.strokeStyle = "#0b0f17"; bx.stroke();
+    });
+  }
+
+  function addLog(d) {
+    const li = document.createElement("li");
+    if (d.uncertain) li.className = "unsure";
+    const cams = d.labels && d.labels.length > 1 ? ` · cameras: ${d.labels.join(", ")}` : "";
+    li.innerHTML = `<b>${d.label}</b> <span class="muted">${d.method}, ${Math.round((d.confidence || 0) * 100)}% sure${d.nearWire ? ", by a wire" : ""}${cams}</span>`;
+    $("log").prepend(li);
+  }
+
+  function onEvent(e) {
+    if (e.type === "status") { $("watchStatus").textContent = e.text; return; }
+    if (e.type === "error") { show("testMsg", e.text); return; }
+    if (e.type === "ready") { $("watchStatus").textContent = "Watching. Throw a dart."; return; }
+    if (e.type === "moving") { $("watchStatus").textContent = "Something moved…"; return; }
+    if (e.type === "dart") {
+      visit.push(e);
+      $("lastDart").textContent = e.label;
+      $("lastDart").className = "big" + (e.uncertain ? " unsure" : "");
+      $("watchStatus").textContent = `Dart ${e.index}: ${e.label}${e.uncertain ? " (not sure: check it)" : ""}`;
+      addLog(e);
+      keepCapture(e);
+      drawTestBoard();
+      drawDebug(e);
+      return;
+    }
+    if (e.type === "takeout") {
+      $("watchStatus").textContent = e.darts ? "Darts out. Ready for the next throw." : "Board clear.";
+      visit = []; drawTestBoard(); $("lastDart").textContent = "";
+      return;
+    }
+    if (e.type === "blocked") { $("watchStatus").textContent = "Something big in the way (a hand?). Waiting…"; return; }
+    if (e.type === "unreadable") { $("watchStatus").textContent = "Something changed, but neither camera could read a dart in it."; return; }
+    if (e.type === "quiet") { $("watchStatus").textContent = "A small change, not a dart. Watching."; }
+  }
+
+  // The camera pictures as the detector sees them, with the last change and its reading drawn on.
+  function setupDebug() {
+    const box = $("debug");
+    box.innerHTML = "";
+    debugCtx = watcher.views.map((view, i) => {
+      const wrap = document.createElement("div");
+      const c = document.createElement("canvas");
+      c.width = view.width; c.height = view.height;
+      const cap = document.createElement("div");
+      cap.className = "cap"; cap.textContent = watcher.cameras[i].label || "Camera " + (i + 1);
+      wrap.append(c, cap); box.append(wrap);
+      return c.getContext("2d");
+    });
+  }
+  let lastDebugDraw = 0;
+  function onFrames(frames) {
+    lastFrames = frames;
+    const now = performance.now();
+    if (now - lastDebugDraw < 400) return; // a live view twice a second is plenty here
+    lastDebugDraw = now;
+    frames.forEach((f, i) => {
+      if (!debugCtx[i] || debugCtx[i].frozenUntil > now) return;
+      debugCtx[i].putImageData(new ImageData(new Uint8ClampedArray(f.data), f.width, f.height), 0, 0);
+    });
+  }
+  function drawDebug(e) {
+    const last = watcher.detector && watcher.detector.last;
+    if (!last) return;
+    e.readings.forEach((r, i) => {
+      const ctx = debugCtx[i];
+      if (!ctx) return;
+      const view = watcher.views[i];
+      const img = new ImageData(new Uint8ClampedArray(last.after[i]), view.width, view.height);
+      const mask = last.masks[i];
+      for (let p = 0; p < mask.length; p += 1) if (mask[p]) { img.data[p * 4] = 255; img.data[p * 4 + 1] = 40; img.data[p * 4 + 2] = 200; }
+      ctx.putImageData(img, 0, 0);
+      if (r && r.ok) {
+        const mark = (pt, colour) => { ctx.beginPath(); ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2); ctx.lineWidth = 3; ctx.strokeStyle = colour; ctx.stroke(); };
+        if (r.other) mark(r.other.tipPx, "#94a3b8");
+        mark(r.tipPx, "#22c55e");
+        ctx.beginPath(); ctx.moveTo(r.tipPx.x, r.tipPx.y); ctx.lineTo(r.tipPx.x + r.dirPx.x * 60, r.tipPx.y + r.dirPx.y * 60); ctx.strokeStyle = "#22c55e"; ctx.lineWidth = 2; ctx.stroke();
+        // Where the combined reading puts the dart, as this camera sees it.
+        const q = V.applyH(view.Hinv, e.real.x, e.real.y);
+        if (q) mark(q, "#f59e0b");
+      }
+      ctx.frozenUntil = performance.now() + 2500; // keep this up for a moment before the live view returns
+    });
+  }
+
+  // Test pictures: the before and after crops from each camera for every dart, with what was read.
+  function toJpeg(data, w, h) {
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    c.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(data), w, h), 0, 0);
+    return c.toDataURL("image/jpeg", 0.95);
+  }
+  function keepCapture(e) {
+    const last = watcher.detector && watcher.detector.last;
+    if (!last) return;
+    const views = watcher.views;
+    lastCapture = {
+      time: new Date().toISOString(),
+      read: { real: e.real, label: e.label, method: e.method, confidence: e.confidence, uncertain: e.uncertain, labels: e.labels },
+      cameras: e.readings.map((r, i) => ({
+        ok: !!(r && r.ok),
+        tipPx: r && r.tipPx, dirPx: r && r.dirPx, other: r && r.other ? r.other.tipPx : null, quality: r && r.quality, area: r && r.area,
+        before: toJpeg(last.before[i], views[i].width, views[i].height),
+        after: toJpeg(last.after[i], views[i].width, views[i].height),
+      })),
+      truth: null,
+    };
+    e.capture = lastCapture;
+    captures.push(lastCapture);
+    if (captures.length > 60) captures.shift();
+    $("saveTestBtn").disabled = false;
+  }
+
+  board.addEventListener("click", (ev) => {
+    const d = visit[visit.length - 1];
+    if (!d) return;
+    const rect = board.getBoundingClientRect(), s = board.width, R = s * 0.38;
+    const x = (((ev.clientX - rect.left) / rect.width) * s - s / 2) / R, y = (((ev.clientY - rect.top) / rect.height) * s - s / 2) / R;
+    d.truth = { x, y };
+    const label = V.classify(x, y).label;
+    if (d.capture) d.capture.truth = { x, y, label };
+    $("watchStatus").textContent = `Noted: that dart was really ${label}${label === d.label ? " (the same score)" : ""}.`;
+    drawTestBoard();
+  });
+
+  $("saveTestBtn").addEventListener("click", () => {
+    const file = {
+      saved: new Date().toISOString(),
+      userAgent: navigator.userAgent,
+      cameras: watcher ? watcher.cameras.map((c, i) => ({ label: c.label, cal: c.cal, crop: watcher.views[i] && watcher.views[i].crop, size: watcher.views[i] && [watcher.views[i].width, watcher.views[i].height], frame: watcher.views[i] && [watcher.views[i].frameW, watcher.views[i].frameH] })) : setup.cameras,
+      darts: captures,
+    };
+    const blob = new Blob([JSON.stringify(file)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `dart-camera-test-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.json`;
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  });
+
+  $("watchBtn").addEventListener("click", async () => {
+    if (watcher && watcher.running) {
+      watcher.stop(); watcher = null;
+      $("watchBtn").textContent = "Start watching";
+      $("clearBtn").disabled = true;
+      $("watchStatus").textContent = "Stopped.";
+      previewsBusy(false);
+      for (const slot of slots) if (slot.deviceId) await preview(slot);
+      return;
+    }
+    show("testMsg", "");
+    // The previews hold the cameras; let the watcher have them.
+    stopAllPreviews();
+    previewsBusy(true);
+    watcher = C.createWatcher(setup, { onEvent, onFrames });
+    $("watchBtn").disabled = true;
+    try {
+      await watcher.start();
+      setupDebug();
+      $("watchBtn").textContent = "Stop watching";
+      $("clearBtn").disabled = false;
+      visit = []; drawTestBoard();
+    } catch (error) {
+      show("testMsg", error.message);
+      watcher = null;
+      previewsBusy(false);
+      for (const slot of slots) if (slot.deviceId) await preview(slot);
+    } finally {
+      $("watchBtn").disabled = false;
+    }
+  });
+  $("clearBtn").addEventListener("click", () => {
+    if (!watcher) return;
+    watcher.markEmpty();
+    visit = []; drawTestBoard(); $("lastDart").textContent = "";
+    $("watchStatus").textContent = "Got it: that is the empty board.";
+  });
+
+  // ---- start ----------------------------------------------------------------------------------------------
+  drawTestBoard();
+  refresh();
+  (async () => {
+    let granted = false;
+    try { granted = (await navigator.permissions.query({ name: "camera" })).state === "granted"; } catch (_) { /* not supported */ }
+    if (granted) findCameras(false);
+  })();
+  slots.forEach((slot) => slot.video.addEventListener("loadeddata", () => { if (slot.i === active && !slot.still) takeStill(); }));
+})();
+</script>
+</body>
+</html>
