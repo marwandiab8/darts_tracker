@@ -377,3 +377,43 @@ test("challenge rounds with the wrong shape are refused", async () => {
   delete bare.durationSec; delete bare.trebles;
   await assertSucceeds(addDoc(collection(db, "challengeGames"), bare));
 });
+
+// --- the camera station (station.html, public/board-camera.js) --------------------------------
+const station = (overrides = {}) => ({
+  uid: me,
+  setup: { version: 1, cameras: [{ deviceId: "dev-a", label: "OBS", cal: { H: [1, 0, 0, 0, 1, 0, 0, 0, 1], width: 1280, height: 720 } }] },
+  station: { name: "Linux laptop", seen: 1700000000000, running: true, status: "Watching." },
+  ...overrides,
+});
+
+test("only its owner reads or writes a camera station, its pictures and its darts", async () => {
+  const mine = asUser(me), theirs = asUser(other);
+  await assertSucceeds(setDoc(doc(mine, "cameraStations", me), station()));
+  await assertSucceeds(setDoc(doc(mine, "cameraStations", me), { ask: { still: "abc" } }, { merge: true }));
+  await assertSucceeds(setDoc(doc(mine, "cameraStations", me, "stills", "0"), { jpeg: "data:image/jpeg;base64,AAAA", width: 1280, height: 720, label: "OBS", taken: 1, for: "abc" }));
+  await assertSucceeds(setDoc(doc(mine, "cameraStations", me, "events", "latest"), { seq: 5, events: [{ seq: 5, type: "dart", label: "T20" }], updated: 1 }));
+  await assertSucceeds(getDoc(doc(mine, "cameraStations", me)));
+  await assertSucceeds(getDoc(doc(mine, "cameraStations", me, "events", "latest")));
+  for (const path of [["cameraStations", me], ["cameraStations", me, "stills", "0"], ["cameraStations", me, "events", "latest"]]) {
+    await assertFails(getDoc(doc(theirs, ...path)));
+    await assertFails(deleteDoc(doc(theirs, ...path)));
+  }
+  await assertFails(setDoc(doc(theirs, "cameraStations", me), station({ uid: other })));
+  await assertFails(setDoc(doc(theirs, "cameraStations", me), { ask: { clear: "x" } }, { merge: true }));
+  await assertFails(setDoc(doc(theirs, "cameraStations", me, "events", "latest"), { seq: 6, events: [], updated: 1 }));
+  await assertSucceeds(deleteDoc(doc(mine, "cameraStations", me, "stills", "0")));
+});
+
+test("camera station documents with the wrong shape are refused", async () => {
+  const db = asUser(me);
+  await assertFails(setDoc(doc(db, "cameraStations", me), station({ uid: other })));
+  await assertFails(setDoc(doc(db, "cameraStations", me), station({ extra: 1 })));
+  await assertFails(setDoc(doc(db, "cameraStations", me), station({ setup: { cameras: [{}, {}, {}] } })));
+  await assertFails(setDoc(doc(db, "cameraStations", me), station({ station: "online" })));
+  await assertFails(setDoc(doc(db, "cameraStations", me), { ask: { still: "x" } }), "a new station needs its owner");
+  await assertFails(setDoc(doc(db, "cameraStations", me, "stills", "2"), { jpeg: "x", width: 1, height: 1 }));
+  await assertFails(setDoc(doc(db, "cameraStations", me, "stills", "0"), { jpeg: "x".repeat(900001), width: 1, height: 1 }));
+  await assertFails(setDoc(doc(db, "cameraStations", me, "stills", "0"), { jpeg: "x", width: 1, height: 1, script: "y" }));
+  await assertFails(setDoc(doc(db, "cameraStations", me, "events", "other"), { seq: 1, events: [], updated: 1 }));
+  await assertFails(setDoc(doc(db, "cameraStations", me, "events", "latest"), { seq: 1, events: Array(21).fill({ type: "dart" }), updated: 1 }));
+});

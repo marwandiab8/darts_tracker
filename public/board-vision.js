@@ -6,14 +6,17 @@
 // 1. Calibration. For each camera you tap five known points of the board on its picture: where four
 //    of the wires between numbers meet the outside of the double ring, and the centre of the bull.
 //    From those a homography is worked out: a map from any pixel of that camera to the point of the
-//    board (the flat face, where darts go in) that the pixel looks at.
+//    board (the flat face, where darts go in) that the pixel looks at. Then it is matched to the
+//    board's own rings and wires in the picture, several hundred edges of them, which corrects the
+//    taps and the bend of the camera's wide lens (refineCalibration).
 // 2. Spotting a dart. The page keeps the picture from just before each throw. When the picture
 //    changes and then holds still again, the difference between the two is the new dart.
 // 3. Finding its point. Seen from a camera to one side, a dart is a streak: thin at the point and
 //    barrel, wide at the flight. Mapped onto the board, that streak lies along a straight line that
-//    passes exactly through the hole the dart made, whichever way the dart leans. Each camera gives
-//    one such line, and where the two lines cross is the dart's point. With one camera, the thin
-//    end of the streak is used instead.
+//    passes exactly through the hole the dart made, whichever way the dart leans. The point is
+//    where both cameras see dart on the board (the rest of the dart stands off it, so it lands in
+//    different places for the two cameras), near an end of each streak. With one camera, the thin
+//    end of the streak is used.
 //
 // Board coordinates are real ones here: fractions of the radius of the outside of the double ring
 // (170 mm), centre 0,0, y growing downward. The app's drawn board has wider trebles, doubles and
@@ -218,6 +221,325 @@
     return { H, width, height, points: tapped.map((p) => (p ? { x: p.x, y: p.y } : null)), error: Math.sqrt(sum / src.length) * MM.edge };
   }
 
+  // --- the lens ----------------------------------------------------------------------------------
+  //
+  // A webcam's wide lens bends the picture: the farther from the middle of the lens, the more it
+  // is squeezed in (barrel distortion). A homography alone can't follow that, so a calibration fitted
+  // to points on the double ring puts the trebles and the bull a little off between them. One number
+  // describes the bend well enough (the "division model"): a picture point p is where a perfect lens
+  // would have put  c + (p - c) / (1 + k |p - c|² / s²),  c being the middle of the lens and s half
+  // the picture's diagonal. k < 0 is the usual barrel bend; 0 is none. A calibration's `lens` is
+  // { cx, cy, s, k } (or missing, for none), and its H then maps the straightened picture to the board.
+
+  function undistort(lens, x, y) {
+    if (!lens || !lens.k) return { x, y };
+    const dx = (x - lens.cx) / lens.s, dy = (y - lens.cy) / lens.s;
+    const f = 1 / (1 + lens.k * (dx * dx + dy * dy));
+    return { x: lens.cx + (x - lens.cx) * f, y: lens.cy + (y - lens.cy) * f };
+  }
+
+  // The other way: where the lens puts the point a perfect lens would show at (x, y).
+  function distort(lens, x, y) {
+    if (!lens || !lens.k) return { x, y };
+    const dx = (x - lens.cx) / lens.s, dy = (y - lens.cy) / lens.s, ru2 = dx * dx + dy * dy;
+    // ru = rd / (1 + k rd²), solved for rd (the root that is ru when k is 0).
+    const disc = 1 - 4 * lens.k * ru2;
+    if (disc < 0) return null;
+    const f = 2 / (1 + Math.sqrt(disc));
+    return { x: lens.cx + (x - lens.cx) * f, y: lens.cy + (y - lens.cy) * f };
+  }
+
+  // Picture pixel <-> board for a calibration, through its lens and homography.
+  function mapper(cal) {
+    const H = cal.H, Hi = inv3(cal.H), lens = cal.lens && cal.lens.k ? cal.lens : null;
+    return {
+      toBoard(x, y) {
+        const u = lens ? undistort(lens, x, y) : { x, y };
+        return applyH(H, u.x, u.y);
+      },
+      toPixel(bx, by) {
+        const u = Hi && applyH(Hi, bx, by);
+        return u && (lens ? distort(lens, u.x, u.y) : u);
+      },
+    };
+  }
+
+  // --- matching the board in the picture -----------------------------------------------------------
+  //
+  // Five taps are only as good as the taps, and with a bent lens even perfect ones leave the rings
+  // drawn between them a little off. So, starting from the taps, this looks at the picture itself:
+  // near where each ring and wire should be, it finds where the colour steps (the red and green rings
+  // against the black, cream and silver around them; black segments against cream ones), several
+  // hundred places all round the board, and fits the homography and the lens's bend to all of them
+  // at once. A dart left in the board or a glare spoils a few of those places; they are left out.
+
+  const WIRE_HALF = 0.5 / MM.edge; // the coloured beds stop about half a wire short of its middle
+
+  // Colour at a point of an RGBA picture (pixel i covers i to i + 1), smoothly between pixels.
+  function sampler(image) {
+    const { data, width, height } = image, rgb = [0, 0, 0];
+    return (x, y) => {
+      const fx = x - 0.5, fy = y - 0.5, ix = Math.floor(fx), iy = Math.floor(fy);
+      if (ix < 0 || iy < 0 || ix + 1 >= width || iy + 1 >= height) return null;
+      const ax = fx - ix, ay = fy - iy, i = (iy * width + ix) * 4, j = i + width * 4;
+      for (let c = 0; c < 3; c += 1) {
+        rgb[c] = (data[i + c] * (1 - ax) + data[i + 4 + c] * ax) * (1 - ay) + (data[j + c] * (1 - ax) + data[j + 4 + c] * ax) * ay;
+      }
+      return rgb;
+    };
+  }
+
+  // What tells the parts of the board apart, and how big a step in it counts.
+  const SIGNALS = {
+    colour: { of: (c) => Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2]), step: 35 }, // red and green rings
+    red: { of: (c) => c[0] - c[1], step: 60 }, // red against green
+    light: { of: (c) => c[0] + c[1] + c[2], step: 110 }, // cream against black
+  };
+
+  // Along a path over the board (t -> board point), the place within `win` of t0 where the signal
+  // steps up (dir 1) or down (-1) the most, as a picture point; null without a clear step there.
+  function findStep(m, sample, signal, path, t0, win, dir) {
+    const p0 = path(t0), p1 = path(t0 + win * 0.1);
+    const a = m.toPixel(p0.x, p0.y), b = m.toPixel(p1.x, p1.y);
+    if (!a || !b) return null;
+    const pxPerT = Math.hypot(b.x - a.x, b.y - a.y) / (win * 0.1);
+    if (!(pxPerT > 0)) return null;
+    win = Math.max(win, 7 / pxPerT); // room for the levels either side, however small the board is
+    const dt = 0.5 / pxPerT, n = Math.round((2 * win) / dt) + 1; // half a pixel apart
+    if (n < 16 || n > 4000) return null;
+    const vals = new Float64Array(n);
+    for (let k = 0; k < n; k += 1) {
+      const q = path(t0 - win + k * dt), p = m.toPixel(q.x, q.y), c = p && sample(p.x, p.y);
+      if (!c) return null;
+      vals[k] = signal.of(c);
+    }
+    const d = new Float64Array(n);
+    let best = -Infinity, bk = -1;
+    for (let k = 2; k < n - 2; k += 1) {
+      d[k] = dir * (vals[k + 1] + vals[k + 2] - vals[k - 1] - vals[k - 2]);
+      if (d[k] > best) { best = d[k]; bk = k; }
+    }
+    if (bk < 6 || bk > n - 7) return null; // at the end of the window: the real step may be beyond it
+    // The levels either side, one to three pixels off, must differ clearly.
+    let lo = 0, hi = 0;
+    for (let k = 2; k <= 6; k += 1) { lo += vals[bk - k]; hi += vals[bk + k]; }
+    if ((dir * (hi - lo)) / 5 < signal.step) return null;
+    const den = d[bk - 1] - 2 * d[bk] + d[bk + 1];
+    const off = den < 0 ? Math.max(-0.5, Math.min(0.5, (0.5 * (d[bk - 1] - d[bk + 1])) / den)) : 0;
+    const q = path(t0 - win + (bk + off) * dt);
+    return m.toPixel(q.x, q.y);
+  }
+
+  // The board's edges in a picture, looked for within `win` (board radii) of where calibration
+  // `cal` puts them. Each is { p (picture point), ring (its radius) } or { p, wire (its angle) }.
+  function boardEdges(image, cal, win) {
+    const m = mapper(cal), sample = sampler(image), out = [];
+    const ray = (a) => (t) => ({ x: Math.cos(a) * t, y: Math.sin(a) * t });
+    const arc = (r) => (t) => ({ x: Math.cos(t) * r, y: Math.sin(t) * r });
+    const add = (p, what) => { if (p) out.push(Object.assign({ p }, what)); };
+    // Rings: going outward, into and out of the treble and the double, along rays through the
+    // middle and both sides of every segment (clear of the wires between segments).
+    const rings = [
+      { r: REAL.tripleIn + WIRE_HALF, dir: 1 },
+      { r: REAL.tripleOut - WIRE_HALF, dir: -1 },
+      { r: REAL.doubleIn + WIRE_HALF, dir: 1 },
+      { r: 1 - WIRE_HALF, dir: -1 },
+    ];
+    for (let i = 0; i < 20; i += 1) {
+      for (const f of [-0.3, 0, 0.3]) {
+        const along = ray(-Math.PI / 2 + (i + f) * WEDGE);
+        for (const ring of rings) add(findStep(m, sample, SIGNALS.colour, along, ring.r, win, ring.dir), { ring: ring.r });
+      }
+      // The bull: red inside green, then out into the singles.
+      const along = ray(-Math.PI / 2 + i * WEDGE);
+      add(findStep(m, sample, SIGNALS.red, along, REAL.bullIn, Math.min(win, REAL.bullIn * 0.7), -1), { ring: REAL.bullIn });
+      add(findStep(m, sample, SIGNALS.colour, along, REAL.bullOut - WIRE_HALF, Math.min(win, 0.04), -1), { ring: REAL.bullOut - WIRE_HALF });
+    }
+    // The wires between segments: going round, black to cream (or back) in the singles and red to
+    // green in the rings. Segment i is a black one (red rings) when i is even.
+    const arcs = [0.3, 0.42, 0.52, (REAL.tripleIn + REAL.tripleOut) / 2, 0.7, 0.8, 0.89, (REAL.doubleIn + 1) / 2];
+    for (let i = 0; i < 20; i += 1) {
+      const w = wireAngle(i), blackFirst = i % 2 === 0;
+      for (const r of arcs) {
+        const inRing = r > REAL.tripleIn && r < REAL.tripleOut ? true : r > REAL.doubleIn;
+        const signal = inRing ? SIGNALS.red : SIGNALS.light;
+        const dir = inRing ? (blackFirst ? -1 : 1) : (blackFirst ? 1 : -1);
+        // Black against a silver wire is a bigger step than silver against cream, so in the singles
+        // the step sits a little to the black side of the wire's middle.
+        const at = inRing ? w : w - (dir * WIRE_HALF * 0.5) / r;
+        add(findStep(m, sample, signal, arc(r), at, Math.min(0.3 * WEDGE, (win * 1.5) / r), dir), { wire: at });
+      }
+    }
+    return out;
+  }
+
+  // The homography and lens bend that best fit `edges` (and, a little, the taps), starting from
+  // calibration `start`. The lens's middle and size stay as given. Gauss-Newton with damping
+  // (Levenberg-Marquardt), reweighted so the few edges that don't fit (a dart, a glare) drop out.
+  function fitBoard(edges, taps, start, center, s, withLens) {
+    const T = [1 / s, 0, -center.x / s, 0, 1 / s, -center.y / s, 0, 0, 1];
+    const Ti = [s, 0, center.x, 0, s, center.y, 0, 0, 1];
+    // In lens units (picture point minus the lens's middle, over s), straightened, to the board.
+    const h0 = mul3(start.H, Ti).map((v, _, all) => v / all[8]);
+    const k0 = withLens && start.lens && start.lens.k ? start.lens.k : 0;
+    let q = h0.slice(0, 8).concat([k0]);
+    const P = withLens ? 9 : 8;
+    const pts = edges.map((e) => ({ x: (e.p.x - center.x) / s, y: (e.p.y - center.y) / s, ring: e.ring, wire: e.wire }));
+    const tps = taps.map((t) => ({ x: (t.p.x - center.x) / s, y: (t.p.y - center.y) / s, b: t.b }));
+    const nRes = pts.length + tps.length * 2 + 1;
+    const weights = new Float64Array(pts.length).fill(1);
+    const TAP_W = 0.2, K_W = 0.01; // taps count for little next to hundreds of edges; k is kept modest
+    const res = (qq, out, weighted) => {
+      const k = withLens ? qq[8] : 0;
+      const to = (x, y) => {
+        const f = 1 / (1 + k * (x * x + y * y)), u = x * f, v = y * f, w = qq[6] * u + qq[7] * v + 1;
+        return { x: (qq[0] * u + qq[1] * v + qq[2]) / w, y: (qq[3] * u + qq[4] * v + qq[5]) / w };
+      };
+      let j = 0;
+      for (let i = 0; i < pts.length; i += 1) {
+        const pt = pts[i], b = to(pt.x, pt.y), r = Math.hypot(b.x, b.y);
+        let d;
+        if (pt.ring !== undefined) d = r - pt.ring;
+        else {
+          let da = Math.atan2(b.y, b.x) - pt.wire;
+          da -= Math.round(da / (Math.PI * 2)) * Math.PI * 2;
+          d = r * da;
+        }
+        out[j++] = Number.isFinite(d) ? d * (weighted ? weights[i] : 1) : 1;
+      }
+      for (const t of tps) {
+        const b = to(t.x, t.y);
+        out[j++] = (b.x - t.b.x) * TAP_W; out[j++] = (b.y - t.b.y) * TAP_W;
+      }
+      out[j++] = k * K_W;
+      return out;
+    };
+    const r0 = new Float64Array(nRes), r1 = new Float64Array(nRes);
+    const sumSq = (r) => { let t = 0; for (let i = 0; i < r.length; i += 1) t += r[i] * r[i]; return t; };
+    const J = Array.from({ length: P }, () => new Float64Array(nRes));
+    const solve = () => {
+      let lambda = 1e-3;
+      for (let it = 0; it < 40; it += 1) {
+        res(q, r0, true);
+        const c0 = sumSq(r0);
+        for (let p = 0; p < P; p += 1) {
+          const qp = q.slice(), step = 1e-7 * Math.max(1, Math.abs(q[p]));
+          qp[p] += step;
+          res(qp, r1, true);
+          for (let i = 0; i < nRes; i += 1) J[p][i] = (r1[i] - r0[i]) / step;
+        }
+        const A = Array.from({ length: P }, () => new Array(P).fill(0)), g = new Array(P).fill(0);
+        for (let a = 0; a < P; a += 1) {
+          for (let b = a; b < P; b += 1) {
+            let t = 0;
+            for (let i = 0; i < nRes; i += 1) t += J[a][i] * J[b][i];
+            A[a][b] = A[b][a] = t;
+          }
+          let t = 0;
+          for (let i = 0; i < nRes; i += 1) t += J[a][i] * r0[i];
+          g[a] = -t;
+        }
+        let improved = false, tiny = false;
+        for (let tries = 0; tries < 10 && !improved; tries += 1) {
+          const M = A.map((row, a) => row.map((v, b) => (a === b ? v * (1 + lambda) + 1e-15 : v)));
+          const delta = solveLinear(M, g);
+          if (!delta) { lambda *= 10; continue; }
+          const qn = q.slice();
+          for (let p = 0; p < P; p += 1) qn[p] += delta[p];
+          if (withLens && Math.abs(qn[8]) > 0.6) qn[8] = Math.sign(qn[8]) * 0.6;
+          const c1 = sumSq(res(qn, r1, true));
+          if (c1 < c0) {
+            tiny = c0 - c1 < 1e-10 * c0;
+            q = qn; lambda = Math.max(1e-9, lambda / 3); improved = true;
+          } else lambda *= 5;
+        }
+        if (!improved || tiny) break;
+      }
+    };
+    let sigma = 0;
+    for (let round = 0; round < 4; round += 1) {
+      solve();
+      res(q, r0, false);
+      const abs = Array.from(r0.subarray(0, pts.length), Math.abs).sort((a, b) => a - b);
+      sigma = Math.max(0.6 / MM.edge, 1.4826 * abs[abs.length >> 1]);
+      for (let i = 0; i < pts.length; i += 1) {
+        const a = Math.abs(r0[i]);
+        weights[i] = a > 4 * sigma ? 0 : a > 1.5 * sigma ? Math.sqrt((1.5 * sigma) / a) : 1;
+      }
+    }
+    solve();
+    res(q, r0, false);
+    let used = 0, sq = 0;
+    for (let i = 0; i < pts.length; i += 1) if (weights[i] > 0) { used += 1; sq += r0[i] * r0[i]; }
+    const h = q.slice(0, 8).concat([1]);
+    const k = withLens ? q[8] : 0;
+    return { H: mul3(h, T), lens: k ? { cx: center.x, cy: center.y, s, k } : null, used, rms: used ? Math.sqrt(sq / used) : Infinity };
+  }
+
+  // A calibration matched to the board in `image` (RGBA { data, width, height }, the same size as
+  // the picture `cal` was made on), starting from `cal`: one just tapped (from calibrate), or one
+  // saved earlier, to check it against what the camera shows now. Null when too little of the
+  // board could be made out, or the fit is not to be trusted. Otherwise the new calibration, whose
+  // `refined` says how it went:
+  //   edges   how many edges of the board it was fitted to
+  //   rms     how far, on average, they sit from the fitted rings and wires (mm)
+  //   shift   how far the rings moved from where `cal` had them, at worst (mm): for a tapped one,
+  //           how far off the taps alone put them; for a saved one, how far the camera has moved
+  //   offBy   for each tapped point, how far it is from where the fit puts it (mm)
+  // Options: taps (false: ignore cal's tapped points, e.g. when the camera may have moved since),
+  // center (the middle of the lens in the picture; default cal's lens's, else the picture's
+  // middle), size (half the camera picture's diagonal; default likewise), lens (false: no bend),
+  // maxShift (mm; a bigger move than this is not trusted), log (called after every round).
+  function refineCalibration(cal, image, options) {
+    const o = Object.assign({ taps: true, lens: true, center: null, size: null, maxShift: 25, windows: [0.05, 0.03, 0.018, 0.012], minEdges: 80 }, options);
+    if (!cal || !cal.H || !inv3(cal.H) || !image || !image.data || !image.width) return null;
+    const w = image.width, h = image.height;
+    if (cal.width && (cal.width !== w || cal.height !== h)) return null;
+    const lens0 = cal.lens && cal.lens.k ? cal.lens : null;
+    const center = o.center || (lens0 ? { x: lens0.cx, y: lens0.cy } : { x: w / 2, y: h / 2 });
+    const s = o.size || (lens0 ? lens0.s : Math.hypot(w, h) / 2);
+    const taps = [];
+    if (o.taps) {
+      CAL_POINTS.forEach((pt, i) => {
+        const t = cal.points && cal.points[i];
+        if (t) taps.push({ p: t, b: { x: pt.x, y: pt.y } });
+      });
+    }
+    let cur = { H: cal.H, lens: lens0 }, fit = null;
+    for (const win of o.windows) {
+      const edges = boardEdges(image, cur, win);
+      if (edges.length < o.minEdges) return null;
+      fit = fitBoard(edges, taps, cur, center, s, o.lens);
+      if (o.log) o.log({ win, found: edges.length, used: fit.used, rms: fit.rms * MM.edge, k: fit.lens ? fit.lens.k : 0 });
+      if (fit.used < o.minEdges || !fit.H.every(Number.isFinite) || !inv3(fit.H)) return null;
+      cur = { H: fit.H, lens: fit.lens };
+    }
+    if (fit.rms * MM.edge > 2.5) return null;
+    const refined = mapper(cur), before = mapper(cal);
+    let shift = 0;
+    for (const r of [REAL.bullOut, (REAL.tripleIn + REAL.tripleOut) / 2, (REAL.doubleIn + 1) / 2]) {
+      for (let k = 0; k < 72; k += 1) {
+        const a = (k / 72) * Math.PI * 2, p = refined.toPixel(Math.cos(a) * r, Math.sin(a) * r), b = p && before.toBoard(p.x, p.y);
+        shift = Math.max(shift, b ? Math.hypot(b.x - Math.cos(a) * r, b.y - Math.sin(a) * r) * MM.edge : Infinity);
+      }
+    }
+    // Moved this far, it has probably latched onto the wrong ring.
+    if (!(shift <= o.maxShift)) return null;
+    const offBy = (cal.points || []).map((t, i) => {
+      if (!t) return null;
+      const b = refined.toBoard(t.x, t.y);
+      return b ? Math.hypot(b.x - CAL_POINTS[i].x, b.y - CAL_POINTS[i].y) * MM.edge : Infinity;
+    });
+    const placed = offBy.filter((d) => d !== null);
+    const error = placed.length ? Math.sqrt(placed.reduce((t, d) => t + d * d, 0) / placed.length) : 0;
+    return {
+      H: cur.H, lens: cur.lens, width: w, height: h,
+      points: (cal.points || []).map((p) => (p ? { x: p.x, y: p.y } : null)),
+      error,
+      refined: { edges: fit.used, rms: fit.rms * MM.edge, shift, offBy },
+    };
+  }
+
   // --- a camera's view of the board ----------------------------------------------------------------
 
   // The part of one camera's picture that is worth looking at, sized for working on quickly.
@@ -226,19 +548,25 @@
   // view crops the picture (frameW x frameH, which can be another size of the same picture) to the
   // board and a margin around it (out to `roiR` board radii), scaled so its longer side is at most
   // `maxSide` pixels (640 keeps about 1.5 pixels per millimetre of board from a 720p camera).
-  // `center` is where the camera's lens points in the calibrated picture, if not its middle. Frames handed to the detector are that crop: { data (RGBA), width, height }.
+  // `center` is where the camera's lens points in the calibrated picture, if not its middle (a
+  // calibration with a `lens` knows that itself). Frames handed to the detector are that crop:
+  // { data (RGBA), width, height }. view.toBoard(ax, ay) and view.toCrop(bx, by) map between crop
+  // pixels and the board.
   function makeView(cal, frameW, frameH, options) {
     const o = Object.assign({ roiR: 1.2, maxSide: 640 }, options);
-    let H = cal.H;
-    if (cal.width && cal.height && (cal.width !== frameW || cal.height !== frameH)) {
-      H = mul3(H, [cal.width / frameW, 0, 0, 0, cal.height / frameH, 0, 0, 0, 1]);
-    }
-    const Hi = inv3(H);
-    if (!Hi) return null;
+    if (!cal || !cal.H || !inv3(cal.H)) return null;
+    // A calibration made at another size of the same picture is scaled to this one.
+    const fx = cal.width && frameW ? cal.width / frameW : 1, fy = cal.height && frameH ? cal.height / frameH : 1;
+    const m = mapper(cal);
+    const frameToBoard = (x, y) => m.toBoard(x * fx, y * fy);
+    const boardToFrame = (bx, by) => {
+      const p = m.toPixel(bx, by);
+      return p && { x: p.x / fx, y: p.y / fy };
+    };
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (let k = 0; k < 96; k += 1) {
       const a = (k / 96) * Math.PI * 2;
-      const p = applyH(Hi, Math.cos(a) * o.roiR, Math.sin(a) * o.roiR);
+      const p = boardToFrame(Math.cos(a) * o.roiR, Math.sin(a) * o.roiR);
       if (!p) continue;
       x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y);
     }
@@ -250,23 +578,27 @@
     const width = Math.max(8, Math.round(sw * scale)), height = Math.max(8, Math.round(sh * scale));
     // The middle of crop pixel (ax, ay) is picture pixel (x0 + (ax + 0.5) * sw / width, ...).
     const kx = sw / width, ky = sh / height;
-    const Ha = mul3(H, [kx, 0, x0 + 0.5 * kx, 0, ky, y0 + 0.5 * ky, 0, 0, 1]);
-    const Hai = inv3(Ha);
+    const toBoard = (ax, ay) => frameToBoard(x0 + (ax + 0.5) * kx, y0 + (ay + 0.5) * ky);
+    const toCrop = (bx, by) => {
+      const p = boardToFrame(bx, by);
+      return p && { x: (p.x - x0) / kx - 0.5, y: (p.y - y0) / ky - 0.5 };
+    };
     const n = width * height;
     const bx = new Float32Array(n), by = new Float32Array(n), roi = new Uint8Array(n);
     for (let ay = 0; ay < height; ay += 1) {
       for (let ax = 0; ax < width; ax += 1) {
-        const i = ay * width + ax, p = applyH(Ha, ax, ay);
+        const i = ay * width + ax, p = toBoard(ax, ay);
         if (!p) continue;
         bx[i] = p.x; by[i] = p.y;
         if (Math.hypot(p.x, p.y) <= o.roiR) roi[i] = 1;
       }
     }
     // Crop pixels per board radius, around the middle of the board.
-    const c = applyH(Hai, 0, 0), ex = applyH(Hai, 0.2, 0), ey = applyH(Hai, 0, 0.2);
+    const c = toCrop(0, 0), ex = toCrop(0.2, 0), ey = toCrop(0, 0.2);
     const pxPerR = c && ex && ey ? (Math.hypot(ex.x - c.x, ex.y - c.y) + Math.hypot(ey.x - c.x, ey.y - c.y)) / 0.4 : Math.min(width, height) / 2;
-    const pose = cameraPose(cal.H, cal.width || frameW, cal.height || frameH, o.center);
-    const view = { crop: { sx: x0, sy: y0, sw, sh }, width, height, H: Ha, Hinv: Hai, bx, by, roi, pxPerR, roiR: o.roiR, frameW, frameH, pose };
+    const lensCenter = cal.lens && cal.lens.k ? { x: cal.lens.cx, y: cal.lens.cy } : null;
+    const pose = cameraPose(cal.H, cal.width || frameW, cal.height || frameH, lensCenter || o.center);
+    const view = { crop: { sx: x0, sy: y0, sw, sh }, width, height, toBoard, toCrop, bx, by, roi, pxPerR, roiR: o.roiR, frameW, frameH, pose };
     finishRoi(view);
     return view;
   }
@@ -283,7 +615,7 @@
   // For a picture holding two cameras side by side (OBS): the middle of the half this calibration's
   // board is in, which is where that camera's lens points.
   function halfCenter(cal) {
-    const Hi = inv3(cal.H), c = Hi && applyH(Hi, 0, 0);
+    const c = cal && cal.H ? mapper(cal).toPixel(0, 0) : null;
     const w = cal.width, h = cal.height;
     if (!c || !w || !h) return null;
     return { x: c.x < w / 2 ? w / 4 : (w * 3) / 4, y: h / 2 };
@@ -298,7 +630,7 @@
     };
     const radiusIn = (view, p) => {
       const ax = ((p.x - view.crop.sx) * view.width) / view.crop.sw - 0.5, ay = ((p.y - view.crop.sy) * view.height) / view.crop.sh - 0.5;
-      const q = applyH(view.H, ax, ay);
+      const q = view.toBoard(ax, ay);
       return q ? Math.hypot(q.x, q.y) : Infinity;
     };
     for (const [mine, other] of [[a, b], [b, a]]) {
@@ -673,10 +1005,10 @@
     // One end of the streak taken as the point, on the board: where it is, and which way the
     // dart's line runs from there toward the flight.
     const onBoard = (end) => {
-      const tip = applyH(view.H, end.tip.x, end.tip.y);
+      const tip = view.toBoard(end.tip.x, end.tip.y);
       if (!tip) return null;
       const step = Math.max(6, streak.length * 0.25);
-      const along = applyH(view.H, end.tip.x + end.dir.x * step, end.tip.y + end.dir.y * step);
+      const along = view.toBoard(end.tip.x + end.dir.x * step, end.tip.y + end.dir.y * step);
       let dir = null;
       if (along) {
         const len = Math.hypot(along.x - tip.x, along.y - tip.y);
@@ -770,9 +1102,9 @@
   }
 
   // Where both cameras' darts cover the same bit of board, as the middles of those patches,
-  // biggest first. That is where the point is: everything that stands off the board lands in
-  // different places for two cameras in different places.
-  function overlaps(a, b, cell) {
+  // biggest first (or, with `cellsOnly`, every grid cell of them). That is where the point is:
+  // everything that stands off the board lands in different places for two cameras in different places.
+  function overlaps(a, b, cell, cellsOnly) {
     const half = 1.3, size = Math.ceil((half * 2) / cell);
     const grid = new Uint8Array(size * size);
     const mark = (board, bit) => {
@@ -788,6 +1120,11 @@
     };
     mark(a, 1);
     mark(b, 2);
+    if (cellsOnly) {
+      const cells = [];
+      for (let i = 0; i < grid.length; i += 1) if (grid[i] === 3) cells.push({ x: ((i % size) + 0.5) * cell - half, y: (((i / size) | 0) + 0.5) * cell - half });
+      return cells;
+    }
     const seen = new Uint8Array(size * size), out = [], stack = [];
     for (let start = 0; start < grid.length; start += 1) {
       if (grid[start] !== 3 || seen[start]) continue;
@@ -824,12 +1161,16 @@
   // With two cameras, the point is the one place on the board where both see dart: the point goes
   // into the board, and the rest of the dart stands off it, so it lands in different places for
   // cameras in different places. The candidates are each camera's two line ends, where the two
-  // lines cross, and where the two darts overlap on the board; the winner is the one closest to
-  // dart in both cameras and to an end of each streak. Then, if both lines run through it, their
-  // crossing gives the exact spot (the end of a streak is less exact: the steel point is thin and
-  // often lost against the board).
+  // lines cross, and every bit of board where the two darts overlap; the winner is the one closest
+  // to dart in both cameras and to an end of each streak.
+  //
+  // `snap` (off by default) would then move it onto the crossing of the two lines when both run
+  // near it. That used to be on, but a camera's line is the least exact part of a reading: a
+  // flight wing seen almost edge-on looks like part of the dart and tilts it. In the test rig,
+  // leaving the point where both cameras see dart reads more darts right (290 of 320 against 280)
+  // and halves the typical error.
   function fuse(readings, options) {
-    const o = Object.assign({ cell: 0.006, endPenalty: 0.02, snap: 0.035, unsure: 0.05 }, options);
+    const o = Object.assign({ cell: 0.006, endPenalty: 0.02, snap: 0, unsure: 0.05, everyCell: true }, options);
     const good = readings.map((r, i) => (r && r.ok ? Object.assign({ camera: i }, r) : null)).filter(Boolean).sort((x, y) => y.quality - x.quality);
     if (!good.length) return null;
     const result = (point, method, extra) => {
@@ -849,7 +1190,10 @@
     for (const e of EA.concat(EB)) cands.push({ p: e.tip, from: "end", penalty: o.endPenalty * e.flipped });
     const cr = a.lineOk && b.lineOk ? crossing(a, b) : null;
     if (cr) cands.push({ p: cr, from: "crossing", penalty: 0 });
-    for (const patch of overlaps(a.board, b.board, o.cell).slice(0, 4)) cands.push({ p: patch, from: "overlap", penalty: 0 });
+    // Every bit of board both cameras see dart on, not just the middle of each such patch: the
+    // middle of a patch that runs along the dart is not where its point is.
+    const patches = o.everyCell ? overlaps(a.board, b.board, o.cell, true) : overlaps(a.board, b.board, o.cell).slice(0, 4);
+    for (const patch of patches) cands.push({ p: patch, from: "overlap", penalty: 0 });
     const cap = 0.25;
     const toEnd = (E, q) => Math.min(cap, ...E.map((e) => Math.hypot(e.tip.x - q.x, e.tip.y - q.y)));
     let best = null;
@@ -858,8 +1202,8 @@
       if (!best || cost < best.cost) best = Object.assign({ cost }, c);
     }
     let point = best.p, method = best.from;
-    // Pin it down with the crossing of the two lines, if both run through it.
-    if (cr && best.from !== "crossing" && lineGap(a, point) < o.snap && lineGap(b, point) < o.snap && Math.hypot(cr.x - point.x, cr.y - point.y) < o.snap * 1.5) {
+    // Pin it down with the crossing of the two lines, if both run through it (when `snap` is on).
+    if (o.snap > 0 && cr && best.from !== "crossing" && lineGap(a, point) < o.snap && lineGap(b, point) < o.snap && Math.hypot(cr.x - point.x, cr.y - point.y) < o.snap * 1.5) {
       point = cr; method = "crossing";
     }
     const labels = [a, b].map((r) => {
@@ -992,6 +1336,11 @@
     applyH,
     homography,
     calibrate,
+    undistort,
+    distort,
+    mapper,
+    boardEdges,
+    refineCalibration,
     makeView,
     separateViews,
     halfCenter,

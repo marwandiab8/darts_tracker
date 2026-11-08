@@ -22,8 +22,10 @@ function cross(a, b) {
 }
 
 // A camera at `pos` looking at `look` (default the bull), with a picture width x height and a
-// horizontal field of view in degrees. `roll` turns the picture (degrees).
-function camera({ pos, look = { x: 0, y: 0, z: 0 }, width = 960, height = 540, hfov = 76, roll = 0 }) {
+// horizontal field of view in degrees. `roll` turns the picture (degrees). `bend` is its lens's
+// barrel distortion, as the k of BoardVision's division model about the middle of the picture
+// (0 for a perfect lens; -0.1 is a typical wide webcam).
+function camera({ pos, look = { x: 0, y: 0, z: 0 }, width = 960, height = 540, hfov = 76, roll = 0, bend = 0 }) {
   const f = norm(sub(look, pos));
   // The picture's right and down follow the board's x and y as far as the camera's angle allows.
   let right = norm(sub({ x: 1, y: 0, z: 0 }, scaleV(f, f.x)));
@@ -35,15 +37,34 @@ function camera({ pos, look = { x: 0, y: 0, z: 0 }, width = 960, height = 540, h
     right = r2; down = d2;
   }
   const fpx = width / 2 / Math.tan((hfov * Math.PI) / 360);
+  const cx = width / 2, cy = height / 2, s = Math.hypot(width, height) / 2;
+  // The lens: a perfect picture point (x, y) lands at bent(x, y), and back (written out here rather
+  // than borrowed from board-vision.js, so the tests check its maths rather than repeat it).
+  const bent = (x, y) => {
+    if (!bend) return { x, y };
+    const dx = (x - cx) / s, dy = (y - cy) / s, ru = Math.hypot(dx, dy);
+    if (!ru) return { x, y };
+    // Solve ru = rd / (1 + bend rd²) for rd by Newton's method.
+    let rd = ru;
+    for (let i = 0; i < 30; i += 1) rd -= (rd / (1 + bend * rd * rd) - ru) / ((1 - bend * rd * rd) / (1 + bend * rd * rd) ** 2);
+    return { x: cx + (x - cx) * (rd / ru), y: cy + (y - cy) * (rd / ru) };
+  };
+  const straight = (x, y) => {
+    if (!bend) return { x, y };
+    const dx = (x - cx) / s, dy = (y - cy) / s, k = 1 / (1 + bend * (dx * dx + dy * dy));
+    return { x: cx + (x - cx) * k, y: cy + (y - cy) * k };
+  };
   return {
-    pos, f, right, down, fpx, width, height, cx: width / 2, cy: height / 2,
+    pos, f, right, down, fpx, width, height, cx, cy, bend,
     project(p) {
       const v = sub(p, pos), z = dot(v, f);
       if (z <= 1) return null;
-      return { x: this.cx + (this.fpx * dot(v, right)) / z, y: this.cy + (this.fpx * dot(v, down)) / z, depth: z };
+      const q = bent(this.cx + (this.fpx * dot(v, right)) / z, this.cy + (this.fpx * dot(v, down)) / z);
+      return { x: q.x, y: q.y, depth: z };
     },
     // Where the ray through picture pixel (u, v) meets the board, in mm.
-    onBoard(u, v) {
+    onBoard(u0, v0) {
+      const { x: u, y: v } = straight(u0, v0);
       const d = addV(f, addV(scaleV(right, (u - this.cx) / this.fpx), scaleV(down, (v - this.cy) / this.fpx)));
       if (d.z >= 0) return null;
       const t = -pos.z / d.z;
@@ -135,18 +156,28 @@ function rng(seed) {
 
 // A renderer for one camera and one view's crop: picture pixel = crop.sx + (ax + 0.5) * sw / width.
 // It draws the board once and the darts on top for each frame.
-function renderer(cam, view, { light = { x: 0.35, y: -0.6, z: 1 }, shadow = 0.72, noise = 3, seed = 1 } = {}) {
+// `smooth` (2 or more) draws the board from smooth x smooth samples a pixel, softening its edges as
+// a real lens does.
+function renderer(cam, view, { light = { x: 0.35, y: -0.6, z: 1 }, shadow = 0.72, noise = 3, seed = 1, smooth = 1 } = {}) {
   const { width, height } = view;
   const kx = view.crop.sw / width, ky = view.crop.sh / height;
   const base = new Float32Array(width * height * 3);
   const depth = new Float32Array(width * height);
   for (let ay = 0; ay < height; ay += 1) {
     for (let ax = 0; ax < width; ax += 1) {
-      const u = view.crop.sx + (ax + 0.5) * kx, v = view.crop.sy + (ay + 0.5) * ky;
-      const hit = cam.onBoard(u, v), i = ay * width + ax;
-      const c = hit ? boardColour(hit.x, hit.y) : [10, 10, 10];
-      base[i * 3] = c[0]; base[i * 3 + 1] = c[1]; base[i * 3 + 2] = c[2];
-      depth[i] = hit ? hit.dist : 1e9;
+      const i = ay * width + ax;
+      let r = 0, g = 0, b = 0;
+      for (let sy = 0; sy < smooth; sy += 1) {
+        for (let sx = 0; sx < smooth; sx += 1) {
+          const u = view.crop.sx + (ax + (sx + 0.5) / smooth) * kx, v = view.crop.sy + (ay + (sy + 0.5) / smooth) * ky;
+          const hit = cam.onBoard(u, v);
+          const c = hit ? boardColour(hit.x, hit.y) : [10, 10, 10];
+          r += c[0]; g += c[1]; b += c[2];
+          if (sx === 0 && sy === 0) depth[i] = hit ? hit.dist : 1e9;
+        }
+      }
+      const n = smooth * smooth;
+      base[i * 3] = r / n; base[i * 3 + 1] = g / n; base[i * 3 + 2] = b / n;
     }
   }
   const random = rng(seed);
@@ -217,4 +248,29 @@ function tapCalibration(cam, jitter, random) {
   return V.calibrate(taps, cam.width, cam.height);
 }
 
-module.exports = { camera, renderer, tapCalibration, rng, dartSamples, boardColour, R };
+// A frame as a webcam's video delivers it: brightness for every pixel, but colour only for every
+// 2 x 2 block (YUV 4:2:0, as in most compressed camera video), which smears colour at edges.
+function yuv420(frame) {
+  const { width: w, height: h, data } = frame, out = new Uint8ClampedArray(data.length);
+  const Y = new Float32Array(w * h), U = new Float32Array(w * h), Vc = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i += 1) {
+    const r = data[i * 4], g = data[i * 4 + 1], b = data[i * 4 + 2];
+    Y[i] = 0.299 * r + 0.587 * g + 0.114 * b; U[i] = b - Y[i]; Vc[i] = r - Y[i];
+  }
+  for (let y = 0; y < h; y += 2) {
+    for (let x = 0; x < w; x += 2) {
+      const x1 = Math.min(w - 1, x + 1), y1 = Math.min(h - 1, y + 1);
+      const block = [y * w + x, y * w + x1, y1 * w + x, y1 * w + x1];
+      let u = 0, v = 0;
+      for (const i of block) { u += U[i]; v += Vc[i]; }
+      u /= 4; v /= 4;
+      for (const i of block) {
+        const r = Y[i] + v, b = Y[i] + u;
+        out[i * 4] = r; out[i * 4 + 1] = (Y[i] - 0.299 * r - 0.114 * b) / 0.587; out[i * 4 + 2] = b; out[i * 4 + 3] = 255;
+      }
+    }
+  }
+  return { data: out, width: w, height: h };
+}
+
+module.exports = { camera, renderer, tapCalibration, rng, dartSamples, boardColour, yuv420, R, DART };

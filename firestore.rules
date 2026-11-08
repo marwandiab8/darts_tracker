@@ -140,6 +140,40 @@ service cloud.firestore {
         && optionalNumber(data, 'durationSec', 0, 86400);
     }
 
+    // The camera station (station.html and public/board-camera.js): the computer the cameras are
+    // plugged into reads the darts and passes them, with pictures of the board and its state, to its
+    // owner's other computers, which keep the cameras' calibration here. Only the owner reads or
+    // writes any of it.
+    function validStation(data, uid) {
+      return data.keys().hasOnly(['uid', 'setup', 'station', 'ask'])
+        && data.uid == uid
+        && (!data.keys().hasAny(['setup']) || (data.setup is map
+            && (!data.setup.keys().hasAny(['cameras']) || (data.setup.cameras is list && data.setup.cameras.size() <= 2))))
+        && (!data.keys().hasAny(['station']) || data.station is map)
+        && (!data.keys().hasAny(['ask']) || data.ask is map);
+    }
+
+    match /cameraStations/{uid} {
+      allow read, delete: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid && validStation(request.resource.data, uid);
+
+      // Each camera's latest picture, as a JPEG data URL (a document holds at most 1 MiB).
+      match /stills/{camera} {
+        allow read, delete: if signedIn() && request.auth.uid == uid;
+        allow create, update: if signedIn() && request.auth.uid == uid && camera in ['0', '1']
+          && request.resource.data.keys().hasOnly(['jpeg', 'width', 'height', 'label', 'taken', 'for'])
+          && request.resource.data.jpeg is string && request.resource.data.jpeg.size() <= 900000;
+      }
+
+      // The station's last 20 events (darts, take-outs...), each with a rising number.
+      match /events/{name} {
+        allow read, delete: if signedIn() && request.auth.uid == uid;
+        allow create, update: if signedIn() && request.auth.uid == uid && name == 'latest'
+          && request.resource.data.keys().hasOnly(['seq', 'events', 'updated'])
+          && request.resource.data.events is list && request.resource.data.events.size() <= 20;
+      }
+    }
+
     // Live typing sync per user.
     match /liveDrafts/{uid} {
       allow read, delete: if signedIn() && request.auth.uid == uid;

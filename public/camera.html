@@ -77,13 +77,28 @@
 <div class="shell"><div class="wrap">
   <header>
     <h1>Cameras</h1>
-    <div class="links"><a class="back" href="practice.html">Play the bot</a><a class="back" href="index.html">Tracker</a></div>
+    <div class="links"><a class="back" href="station.html">Camera station</a><a class="back" href="practice.html">Play the bot</a><a class="back" href="index.html">Tracker</a></div>
   </header>
 
   <section class="card">
     <h2>Score darts with cameras</h2>
-    <p class="muted">Two cameras beside the board watch each dart go in, and the practice pages enter it for you, as if you had tapped where it landed. Set the cameras up once here: choose them, then show each one where the board is by tapping five points on its picture. The setup is kept in this browser, on this computer.</p>
+    <p class="muted">Two cameras beside the board watch each dart go in, and the practice pages enter it for you, as if you had tapped where it landed. Set the cameras up once here: choose them, then show each one where the board is by tapping five points on its picture.</p>
+    <p class="muted">Cameras plugged into another computer? Open the <a href="station.html" style="color:var(--accent)">Camera station</a> page on that computer and leave it running: then set them up here, from any computer signed in to the same account, and play anywhere.</p>
     <p class="muted">Mount the cameras close to the board, one each side, where they will stay. If a camera moves, calibrate it again.</p>
+  </section>
+
+  <!-- Where the cameras are -->
+  <section class="card hidden" id="whereCard">
+    <h2>Where are the cameras?</h2>
+    <div class="tabs" role="group" aria-label="Where the cameras are">
+      <button type="button" class="secondary small" id="modeStation" aria-pressed="false">On my camera station</button>
+      <button type="button" class="secondary small" id="modeLocal" aria-pressed="false">Plugged into this computer</button>
+    </div>
+    <p id="stationInfo" class="muted" style="margin-bottom:0;"></p>
+  </section>
+  <section class="card hidden" id="signCard">
+    <p class="muted" style="margin:0 0 8px;">Sign in to use a camera station: cameras plugged into another computer, set up from here.</p>
+    <button type="button" class="secondary small" id="signInBtn">Sign in with Google</button>
   </section>
 
   <!-- 1. Which cameras -->
@@ -159,12 +174,32 @@
   </section>
 </div></div>
 
-<script src="board-vision.js"></script>
-<script src="board-camera.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
+<script src="board-vision.js?v=3"></script>
+<script src="board-camera.js?v=3"></script>
 <script>
 (function () {
   "use strict";
   const V = window.BoardVision, C = window.DartCamera;
+  // The account, for a camera station on another computer. The page works without it (cameras
+  // plugged into this computer), so a failure to load Firebase only turns that off.
+  const firebaseConfig = {
+    apiKey: "AIzaSyCAfRz72zGeDxKQGk3TGPAra1US64BGF90",
+    authDomain: "dartstracker2026.firebaseapp.com",
+    projectId: "dartstracker2026",
+    storageBucket: "dartstracker2026.firebasestorage.app",
+    messagingSenderId: "151826966768",
+    appId: "1:151826966768:web:a409ac8d409bf0f796ba35"
+  };
+  let auth = null, db = null;
+  try {
+    if (window.firebase) {
+      if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+      auth = firebase.auth(); db = firebase.firestore();
+    }
+  } catch (_) { auth = null; db = null; }
   const $ = (id) => document.getElementById(id);
   const P = V.CAL_POINTS;
 
@@ -177,6 +212,27 @@
   });
   let active = 0, current = Math.max(0, slots[0].points.findIndex((q) => !q));
   if (slots[0].points.every(Boolean)) current = P.length;
+
+  // "local": cameras plugged into this computer, set up in this browser. "station": the account's
+  // camera station on another computer (station.html), whose setup is kept in the account.
+  let mode = "local", user = null, stationDoc = null, stationUnsub = null;
+  const MODE_KEY = "dt_cameraMode";
+  const stationCams = () => (stationDoc && stationDoc.setup && stationDoc.setup.cameras) || [];
+
+  // The slots as a list of saved cameras has them.
+  function loadSlots(cams) {
+    slots.forEach((slot) => {
+      const saved = cams[slot.i] || null;
+      Object.assign(slot, {
+        deviceId: saved ? saved.deviceId || "station-" + slot.i : "", label: saved ? saved.label || "" : "", still: null,
+        points: saved && saved.cal && saved.cal.points ? saved.cal.points.slice() : P.map(() => null),
+        cal: saved ? saved.cal : null, saved: !!(saved && saved.cal), snapTried: false,
+      });
+    });
+    active = Math.max(0, slots.findIndex((s) => s.deviceId));
+    const next = slots[active].points.findIndex((q) => !q);
+    current = next < 0 ? P.length : next;
+  }
 
   // ---- messages ----------------------------------------------------------------------------------
   function show(id, text, info) {
@@ -270,32 +326,78 @@
   const calCanvas = $("calCanvas"), cx = calCanvas.getContext("2d");
   const loupe = $("loupe"), lx = loupe.getContext("2d");
 
-  function takeStill() {
+  // A new picture from the camera to calibrate on. With `again`, the outline is matched to the
+  // board in it afresh (after the darts are taken out, say).
+  function takeStill(again) {
+    if (mode === "station") { stationStill(again); return; }
     const slot = slots[active];
     if (!slot.video.videoWidth) { slot.still = null; drawCal(); return; }
     slot.still = C.still(slot.video);
+    useStill(again);
+  }
+
+  // Pictures from the camera station (both cameras at once). Kept while switching between the
+  // cameras; "New picture" asks for fresh ones.
+  let stillsAsked = null;
+  async function stationStill(again) {
+    const slot = slots[active];
+    if (slot.still && !again) { useStill(false); return; }
+    if (!user || !db) return;
+    const asked = {};
+    stillsAsked = asked;
+    $("calSaved").textContent = "Getting pictures from the camera station…";
+    drawCal();
+    try {
+      const canvases = await C.requestStills(db, user.uid);
+      if (stillsAsked !== asked || mode !== "station") return;
+      canvases.forEach((c, i) => { if (slots[i] && c) slots[i].still = c; });
+      $("calSaved").textContent = "";
+      useStill(again);
+    } catch (error) {
+      if (stillsAsked === asked) $("calSaved").textContent = error.message;
+    }
+  }
+
+  function useStill(again) {
+    const slot = slots[active];
+    if (!slot.still) { drawCal(); return; }
     calCanvas.width = slot.still.width; calCanvas.height = slot.still.height;
     // A calibration made at another picture size is scaled to this one.
     if (slot.cal && slot.cal.width && slot.cal.width !== slot.still.width) {
       const k = slot.still.width / slot.cal.width, ky = slot.still.height / slot.cal.height;
       slot.points = slot.points.map((p) => (p ? { x: p.x * k, y: p.y * ky } : null));
-      fit();
+      fit(true);
+      slot.saved = false;
+    } else if (again && slot.points.every(Boolean)) {
+      fit(true);
+      slot.saved = false;
     }
     drawCal();
   }
 
-  function fit() {
+  // OBS's virtual camera holds both cameras, side by side: each half has its own lens.
+  const sharedPicture = (slot) => slots.some((s) => s !== slot && s.deviceId && s.deviceId === slot.deviceId) || /obs/i.test(slot.label || "");
+
+  // The calibration from the taps and, once all five are in (`snap`), matched to the board's own
+  // rings and wires in the picture, which also takes out the lens's bend.
+  function fit(snap) {
     const slot = slots[active];
     const placed = slot.points.filter(Boolean).length;
-    slot.cal = placed >= 4 && slot.still ? V.calibrate(slot.points, slot.still.width, slot.still.height) : null;
+    const tapped = placed >= 4 && slot.still ? V.calibrate(slot.points, slot.still.width, slot.still.height) : null;
+    slot.snapTried = false;
+    let snapped = null;
+    if (tapped && snap && placed === P.length) {
+      slot.snapTried = true;
+      try { snapped = C.snap(tapped, slot.still, sharedPicture(slot)); } catch (_) { snapped = null; }
+    }
+    slot.cal = snapped || tapped;
     return slot.cal;
   }
 
   // The board's wires as this calibration says the camera sees them.
-  function drawWires(ctx, H, scale) {
-    const Hi = V.inv3(H);
-    if (!Hi) return;
-    const at = (x, y) => V.applyH(Hi, x, y);
+  function drawWires(ctx, cal, scale) {
+    const m = V.mapper(cal);
+    const at = (x, y) => m.toPixel(x, y);
     ctx.save();
     ctx.lineWidth = Math.max(1.5, 2 * scale);
     ctx.strokeStyle = "rgba(56,189,248,.95)";
@@ -333,9 +435,9 @@
     if (slot.still) cx.drawImage(slot.still, 0, 0);
     else {
       cx.fillStyle = "#94a3b8"; cx.font = "20px system-ui"; cx.textAlign = "center";
-      cx.fillText(slot.deviceId ? "Waiting for the camera's picture…" : "Choose a camera above.", w / 2, h / 2);
+      cx.fillText(!slot.deviceId ? "Choose a camera above." : mode === "station" ? "Getting a picture from the camera station…" : "Waiting for the camera's picture…", w / 2, h / 2);
     }
-    if (slot.cal) drawWires(cx, slot.cal.H, scale);
+    if (slot.cal) drawWires(cx, slot.cal, scale);
     slot.points.forEach((p, i) => {
       if (!p) return;
       const r = Math.max(6, 9 * scale);
@@ -364,12 +466,23 @@
     drawGuide();
     const cal = slot.cal;
     const fitBox = $("fit");
-    if (cal) {
+    if (cal && cal.refined) {
+      // Matched to the board itself.
+      const r = cal.refined;
+      let off = null;
+      (r.offBy || []).forEach((d, i) => { if (d !== null && d > 4 && (!off || d > off.d)) off = { i, d }; });
+      fitBox.className = "fit good";
+      fitBox.textContent = `Matched to the board: the blue lines follow ${r.edges} edges of its rings and wires, ${r.rms < 1 ? "within a millimetre" : "within " + r.rms.toFixed(1) + " mm"} on average.`
+        + (r.shift >= 1 ? ` From your five points alone they were up to ${r.shift.toFixed(1)} mm off.` : "")
+        + (off ? ` Point "${P[off.i].short}" is ${Math.round(off.d)} mm from where the board puts it: is it on the right spot?` : "")
+        + " Check the lines sit on the wires, then Save.";
+    } else if (cal) {
       const goodFit = cal.error <= 3;
-      fitBox.className = "fit " + (goodFit ? "good" : "bad");
-      fitBox.textContent = goodFit
+      const why = slot.snapTried ? "The rings couldn't be made out in this picture (too dark or blurry, or something in the way?), so the lines follow your five points only. " : "";
+      fitBox.className = "fit " + (goodFit && !slot.snapTried ? "good" : "bad");
+      fitBox.textContent = why + (goodFit
         ? `The lines sit ${cal.error < 1 ? "within a millimetre" : "within " + cal.error.toFixed(1) + " mm"} of your points. Check the blue lines follow the wires.`
-        : `The points don't fit together (${cal.error.toFixed(1)} mm out). One is probably on the wrong spot: check each against its picture.`;
+        : `The points don't fit together (${cal.error.toFixed(1)} mm out). One is probably on the wrong spot: check each against its picture.`);
     } else {
       fitBox.className = "fit";
       fitBox.textContent = "";
@@ -439,7 +552,7 @@
     if (slot.cal) {
       lx.save();
       lx.translate(s / 2, s / 2); lx.scale(z, z); lx.translate(-p.x, -p.y);
-      drawWires(lx, slot.cal.H, 0.25);
+      drawWires(lx, slot.cal, 0.25);
       lx.restore();
     }
     lx.strokeStyle = "#f59e0b"; lx.lineWidth = 1.5;
@@ -476,12 +589,12 @@
     slot.saved = false;
     const next = slot.points.findIndex((q) => !q);
     current = next < 0 ? P.length : next;
-    fit(); drawCal(); refresh();
+    fit(true); drawCal(); refresh();
   };
   calCanvas.addEventListener("pointerup", endDrag);
   calCanvas.addEventListener("pointercancel", endDrag);
 
-  $("snapBtn").addEventListener("click", takeStill);
+  $("snapBtn").addEventListener("click", () => { takeStill(true); refresh(); });
   $("resetCalBtn").addEventListener("click", () => {
     const slot = slots[active];
     slot.points = P.map(() => null); slot.cal = null; slot.saved = false; current = 0;
@@ -489,10 +602,10 @@
   });
   $("saveCalBtn").addEventListener("click", () => {
     const slot = slots[active];
-    if (!fit()) return;
+    if (!slot.cal) return;
     slot.saved = true;
     persist();
-    $("calSaved").textContent = `Saved for ${slot.label || "this camera"}.` + (slots.some((s) => s.deviceId && !s.saved) ? " Now the other camera." : " Try it below.");
+    $("calSaved").textContent = `Saved ${mode === "station" ? "to your account " : ""}for ${slot.label ? `"${slot.label}"` : "this camera"}${mode === "station" ? ` (Camera ${slot.i + 1})` : ""}.` + (slots.some((s) => s.deviceId && !s.saved) ? " Now the other camera." : mode === "station" ? " The station uses it straight away. Try it below." : " Try it below.");
     const other = slots.find((s) => s.deviceId && !s.saved);
     if (other) selectTab(other.i);
     refresh();
@@ -510,7 +623,10 @@
 
   function persist() {
     setup = { version: 1, cameras: slots.filter((s) => s.deviceId).map((s) => ({ deviceId: s.deviceId, label: s.label, cal: s.saved && s.cal ? s.cal : null })) };
-    C.save(setup);
+    if (mode === "station") {
+      // Kept in the account, for the station (and every other computer) to use.
+      if (user && db) C.saveStationSetup(db, user.uid, setup.cameras).catch((error) => { $("calSaved").textContent = "Couldn't save to your account: " + error.message; });
+    } else C.save(setup);
   }
 
   // ---- what to show -------------------------------------------------------------------------------------
@@ -567,6 +683,12 @@
   }
 
   function onEvent(e) {
+    if (e.type === "check") {
+      // How each calibration compared with what its camera shows now.
+      const lines = e.cameras.map((c) => (c.ok ? `"${c.label}": ${c.moved < 1 ? "where it was calibrated" : `followed, it had moved ${c.moved.toFixed(1)} mm`}` : `"${c.label}": couldn't be checked`));
+      show("testMsg", (e.warning ? e.warning + " " : "") + "Checked against the board: " + lines.join("; ") + ".", !e.warning);
+      return;
+    }
     if (e.type === "status") { $("watchStatus").textContent = e.text; return; }
     if (e.type === "error") { show("testMsg", e.text); return; }
     if (e.type === "ready") { $("watchStatus").textContent = "Watching. Throw a dart."; return; }
@@ -634,7 +756,7 @@
         mark(r.tipPx, "#22c55e");
         ctx.beginPath(); ctx.moveTo(r.tipPx.x, r.tipPx.y); ctx.lineTo(r.tipPx.x + r.dirPx.x * 60, r.tipPx.y + r.dirPx.y * 60); ctx.strokeStyle = "#22c55e"; ctx.lineWidth = 2; ctx.stroke();
         // Where the combined reading puts the dart, as this camera sees it.
-        const q = V.applyH(view.Hinv, e.real.x, e.real.y);
+        const q = view.toCrop(e.real.x, e.real.y);
         if (q) mark(q, "#f59e0b");
       }
       ctx.frozenUntil = performance.now() + 2500; // keep this up for a moment before the live view returns
@@ -681,11 +803,27 @@
     drawTestBoard();
   });
 
+  // The cameras as last watched: the calibrations in use, how they checked out, and each camera's
+  // whole picture from the start (for checking the calibration again later).
+  let lastWatch = null;
+  function describeWatch(w) {
+    const stillUrl = new Map();
+    return w.cameras.map((c, i) => {
+      const still = w.stills[i];
+      if (still && !stillUrl.has(still)) stillUrl.set(still, still.toDataURL("image/jpeg", 0.92));
+      return {
+        label: c.label, cal: c.cal, saved: (setup.cameras.find((s) => s.deviceId === c.deviceId && s.cal) || {}).cal || null, check: w.checks[i] || null,
+        crop: w.views[i] && w.views[i].crop, size: w.views[i] && [w.views[i].width, w.views[i].height], frame: w.views[i] && [w.views[i].frameW, w.views[i].frameH],
+        still: still ? stillUrl.get(still) : null,
+      };
+    });
+  }
+
   $("saveTestBtn").addEventListener("click", () => {
     const file = {
       saved: new Date().toISOString(),
       userAgent: navigator.userAgent,
-      cameras: watcher ? watcher.cameras.map((c, i) => ({ label: c.label, cal: c.cal, crop: watcher.views[i] && watcher.views[i].crop, size: watcher.views[i] && [watcher.views[i].width, watcher.views[i].height], frame: watcher.views[i] && [watcher.views[i].frameW, watcher.views[i].frameH] })) : setup.cameras,
+      cameras: watcher ? describeWatch(watcher) : lastWatch || setup.cameras,
       darts: captures,
     };
     const blob = new Blob([JSON.stringify(file)], { type: "application/json" });
@@ -698,22 +836,30 @@
 
   $("watchBtn").addEventListener("click", async () => {
     if (watcher && watcher.running) {
+      lastWatch = describeWatch(watcher);
       watcher.stop(); watcher = null;
       $("watchBtn").textContent = "Start watching";
       $("clearBtn").disabled = true;
       $("watchStatus").textContent = "Stopped.";
+      if (mode === "station") return;
       previewsBusy(false);
       for (const slot of slots) if (slot.deviceId) await preview(slot);
       return;
     }
     show("testMsg", "");
-    // The previews hold the cameras; let the watcher have them.
-    stopAllPreviews();
-    previewsBusy(true);
-    watcher = C.createWatcher(setup, { onEvent, onFrames });
+    if (mode === "station") {
+      // The station reads the darts; this page shows what it sends.
+      watcher = C.createRemoteWatcher(db, user.uid, { onEvent });
+    } else {
+      // The previews hold the cameras; let the watcher have them.
+      stopAllPreviews();
+      previewsBusy(true);
+      watcher = C.createWatcher(setup, { onEvent, onFrames });
+    }
     $("watchBtn").disabled = true;
     try {
       await watcher.start();
+      lastWatch = null;
       setupDebug();
       $("watchBtn").textContent = "Stop watching";
       $("clearBtn").disabled = false;
@@ -721,8 +867,10 @@
     } catch (error) {
       show("testMsg", error.message);
       watcher = null;
-      previewsBusy(false);
-      for (const slot of slots) if (slot.deviceId) await preview(slot);
+      if (mode !== "station") {
+        previewsBusy(false);
+        for (const slot of slots) if (slot.deviceId) await preview(slot);
+      }
     } finally {
       $("watchBtn").disabled = false;
     }
@@ -734,14 +882,97 @@
     $("watchStatus").textContent = "Got it: that is the empty board.";
   });
 
+  // ---- where the cameras are ----------------------------------------------------------------------------
+  function stationText() {
+    if (!stationDoc) return "No camera station yet. Open the Camera station page on the computer the cameras are plugged into, sign in there and start it.";
+    const st = stationDoc.station || {};
+    const name = st.name ? `"${st.name}"` : "The camera station";
+    const cams = stationCams().map((c, i) => `Camera ${i + 1}: ${c.label || "?"}${c.cal ? " (calibrated)" : ""}`).join(", ");
+    const ago = st.seen ? Math.round((Date.now() - st.seen) / 60000) : null;
+    const state = C.isOnline(stationDoc) ? (st.running ? "is running and watching the board" : `is running${st.status ? ": " + st.status : ""}`) : `isn't running${ago !== null ? ` (last seen ${ago < 1 ? "just now" : ago < 120 ? ago + " min ago" : Math.round(ago / 60) + " h ago"})` : ""}. Open the Camera station page on that computer.`;
+    return `${name} ${state}` + (cams ? ` ${cams}.` : " No cameras chosen there yet.");
+  }
+
+  // Which cameras are being set up: this computer's, or the station's.
+  async function setMode(next) {
+    if (next === "station" && !(user && db)) next = "local";
+    if (watcher) { watcher.stop(); watcher = null; $("watchBtn").textContent = "Start watching"; $("clearBtn").disabled = true; $("watchStatus").textContent = ""; }
+    const was = mode;
+    mode = next;
+    try { localStorage.setItem(MODE_KEY, next); } catch (_) { /* private mode */ }
+    $("modeStation").setAttribute("aria-pressed", String(next === "station"));
+    $("modeLocal").setAttribute("aria-pressed", String(next === "local"));
+    $("stationInfo").textContent = next === "station" ? stationText() : "Cameras plugged into this computer, set up in this browser.";
+    $("pickCard").classList.toggle("hidden", next === "station");
+    visit = []; captures = []; drawTestBoard();
+    if (next === "station") {
+      stopAllPreviews();
+      setup = { version: 1, cameras: stationCams() };
+      loadSlots(stationCams());
+      refresh();
+      if (slots.some((s) => s.deviceId)) takeStill();
+      else drawCal();
+    } else {
+      setup = C.load();
+      loadSlots(setup.cameras);
+      refresh();
+      if (was !== "local") findCameras(false);
+      drawCal();
+    }
+  }
+  $("modeStation").addEventListener("click", () => setMode("station"));
+  $("modeLocal").addEventListener("click", () => setMode("local"));
+  $("signInBtn").addEventListener("click", () => auth && auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).catch(() => {}));
+
+  // The station document as it changes: its state, and calibrations saved from other computers.
+  function watchStation() {
+    if (stationUnsub) stationUnsub();
+    stationUnsub = null;
+    if (!user || !db) return;
+    let first = true;
+    stationUnsub = db.collection("cameraStations").doc(user.uid).onSnapshot((snap) => {
+      const before = JSON.stringify(stationCams().map((c) => [c.deviceId, c.label]));
+      stationDoc = snap.exists ? snap.data() : null;
+      $("whereCard").classList.remove("hidden");
+      if (first) {
+        first = false;
+        let pref = null;
+        try { pref = localStorage.getItem(MODE_KEY); } catch (_) { /* private mode */ }
+        // A station, and no cameras set up in this browser: that is where the cameras are.
+        const startMode = pref || (stationDoc && !C.ready(C.load()).length ? "station" : "local");
+        setMode(startMode);
+        return;
+      }
+      if (mode !== "station") return;
+      $("stationInfo").textContent = stationText();
+      // Different cameras chosen on the station: start again with those.
+      if (JSON.stringify(stationCams().map((c) => [c.deviceId, c.label])) !== before) setMode("station");
+      else { setup = { version: 1, cameras: stationCams() }; refresh(); }
+    }, () => { $("stationInfo").textContent = "Couldn't read the camera station from your account."; });
+  }
+  setInterval(() => { if (mode === "station") $("stationInfo").textContent = stationText(); }, 30000);
+
   // ---- start ----------------------------------------------------------------------------------------------
   drawTestBoard();
   refresh();
   (async () => {
     let granted = false;
     try { granted = (await navigator.permissions.query({ name: "camera" })).state === "granted"; } catch (_) { /* not supported */ }
-    if (granted) findCameras(false);
+    if (granted && mode === "local") findCameras(false);
   })();
+  if (auth) {
+    auth.onAuthStateChanged((u) => {
+      user = u;
+      $("signCard").classList.toggle("hidden", !!u);
+      if (u) watchStation();
+      else {
+        if (stationUnsub) stationUnsub();
+        stationUnsub = null; stationDoc = null;
+        $("whereCard").classList.add("hidden");
+        if (mode === "station") setMode("local");
+      }
+    });
+  }
   slots.forEach((slot) => slot.video.addEventListener("loadeddata", () => { if (slot.i === active && !slot.still) takeStill(); }));
 })();
 </script>

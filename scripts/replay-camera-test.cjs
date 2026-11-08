@@ -37,10 +37,23 @@ async function decode(dataUrl, width, height) {
     return V.makeView(cam.cal, cam.frame[0], cam.frame[1], shared ? { center: V.halfCenter(cam.cal) } : {});
   });
   for (let i = 0; i < cams.length; i += 1) for (let j = i + 1; j < cams.length; j += 1) if (cams[i].label === cams[j].label) V.separateViews(views[i], views[j]);
-  views.forEach((view, i) => {
+  for (const [i, view] of views.entries()) {
+    const cam = cams[i];
     const pose = view.pose ? `camera at ${(view.pose.x * 170).toFixed(0)}, ${(view.pose.y * 170).toFixed(0)} mm, ${(view.pose.height * 170).toFixed(0)} mm out` : "camera position unknown";
-    console.log(`Camera ${i + 1} "${cams[i].label}": crop ${view.width}x${view.height}, ${(view.pxPerR / 170).toFixed(2)} px/mm, ${pose}, calibration fit ${cams[i].cal.error.toFixed(2)} mm`);
-  });
+    const lens = cam.cal.lens && cam.cal.lens.k ? `, lens bend k ${cam.cal.lens.k.toFixed(3)}` : ", no lens bend";
+    console.log(`Camera ${i + 1} "${cam.label}": crop ${view.width}x${view.height}, ${(view.pxPerR / 170).toFixed(2)} px/mm, ${pose}${lens}`);
+    if (cam.check) console.log(`    checked at the start: ${cam.check.ok ? `matched ${cam.check.edges} edges within ${cam.check.rms.toFixed(2)} mm, moved ${cam.check.moved.toFixed(1)} mm` : "could not be checked"}`);
+    // The camera's whole picture from the start: match the board in it again, from the saved
+    // calibration, to see how well calibration works on this board.
+    if (cam.still && cam.frame) {
+      const still = { data: await decode(cam.still, cam.frame[0], cam.frame[1]), width: cam.frame[0], height: cam.frame[1] };
+      const shared = cams.filter((c) => c.label === cam.label).length > 1;
+      const from = cam.saved || cam.cal;
+      const lensOpts = shared && !(from.lens && from.lens.k) ? { center: V.halfCenter(from), size: Math.hypot(from.width / 2, from.height) / 2 } : {};
+      const again = V.refineCalibration(from, still, Object.assign({ taps: false }, lensOpts));
+      console.log(`    matched again from its start picture: ${again ? `${again.refined.edges} edges within ${again.refined.rms.toFixed(2)} mm, ${again.refined.shift.toFixed(1)} mm from the saved calibration${again.lens ? `, lens bend k ${again.lens.k.toFixed(3)}` : ""}` : "the board couldn't be made out"}`);
+    }
+  }
 
   let agreed = 0, withTruth = 0, rightVsTruth = 0;
   for (const [n, dart] of test.darts.entries()) {

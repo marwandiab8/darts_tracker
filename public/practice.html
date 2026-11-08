@@ -401,8 +401,8 @@
      one, which throws inside announce()'s catch-all and looks like "no sound at all". -->
 <script src="practice-engine.js?v=6"></script>
 <script src="practice-timer.js?v=1"></script>
-<script src="board-vision.js?v=1"></script>
-<script src="board-camera.js?v=1"></script>
+<script src="board-vision.js?v=3"></script>
+<script src="board-camera.js?v=3"></script>
 <script>
 (function () {
   "use strict";
@@ -1487,8 +1487,9 @@
   // your darts: each dart they see goes in as if you had tapped where it landed, and Undo works as usual.
   // Pulling your darts out of the board ends the visit: darts the cameras did not see (a bounce-out, a
   // miss) count as misses, and with Press Enter on, it counts as pressing Enter.
+  // The cameras are either plugged into this computer (set up in this browser) or read by the
+  // camera station on another computer (station.html), which sends the darts through the account.
   let cam = null, camText = "", camWarn = false, camFailed = false;
-  const camSetUp = () => !!window.DartCamera && DartCamera.ready(DartCamera.load()).length > 0;
 
   function setCamera(on) {
     settings.camera = on;
@@ -1507,8 +1508,14 @@
   }
 
   async function startCamera() {
-    if (!camSetUp()) { camFailed = true; camText = "setup"; camWarn = true; renderCamera(); return; }
-    const watcher = DartCamera.createWatcher(DartCamera.load(), { onEvent: onCameraEvent });
+    // Holds the place while it looks for the cameras, so switching off meanwhile stops it.
+    const pending = { stop() { this.stopped = true; }, stopped: false };
+    cam = pending;
+    cameraSays("Looking for the cameras…");
+    let watcher = null;
+    try { watcher = window.DartCamera ? await DartCamera.chooseWatcher({ db, user: auth.currentUser, onEvent: onCameraEvent }) : null; } catch (_) { watcher = null; }
+    if (pending.stopped || cam !== pending) return;
+    if (!watcher) { cam = null; camFailed = true; camText = "setup"; camWarn = true; renderCamera(); return; }
     cam = watcher;
     try {
       await watcher.start();
@@ -1534,7 +1541,7 @@
     box.textContent = "";
     if (!show) return;
     if (camText === "setup") {
-      box.append(document.createTextNode("No cameras are set up in this browser yet. "));
+      box.append(document.createTextNode("No cameras yet: no camera station is running for your account, and none are set up in this browser. "));
       const a = el("a", "", "Set them up"); a.href = "camera.html";
       box.append(a);
       return;
@@ -1542,13 +1549,16 @@
     box.textContent = camText || "Camera on.";
   }
 
+  let camCheckWarning = "";
   function cameraSays(text, warn) { camText = text; camWarn = !!warn; renderCamera(); }
 
   function onCameraEvent(e) {
     if (!game) return;
     if (e.type === "status") return cameraSays(e.text);
     if (e.type === "error") return cameraSays(e.text, true);
-    if (e.type === "ready") return cameraSays("Camera on: watching the board.");
+    // A calibration that couldn't be checked against the board, or a camera that moved a lot.
+    if (e.type === "check") { camCheckWarning = e.warning || ""; return; }
+    if (e.type === "ready") return camCheckWarning ? cameraSays("Camera on. " + camCheckWarning, true) : cameraSays("Camera on: watching the board.");
     if (e.type === "blocked") return cameraSays("Camera: something is in front of the board.");
     if (e.type === "unreadable") return cameraSays("The cameras saw something but couldn't read it. Tap the board for that dart.", true);
     const myThrow = humanTurn() && !reviewing && !botBusy && !game.winner && !keypadActive();
@@ -1920,6 +1930,8 @@
     $("userPill").classList.toggle("hidden", !u);
     renderSound(); syncSetupVisibility();
     if (!u) { botToken++; return; }
+    // Looked for the cameras before sign-in finished: look again, for the account's camera station.
+    if (camFailed && camText === "setup") { camFailed = false; if (game) render(); }
     const name = u.displayName || u.email || "Signed in";
     $("userName").textContent = name; $("userName").title = name;
     checkResume();

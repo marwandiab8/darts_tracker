@@ -77,13 +77,86 @@ test("a view crops the picture to the board and maps its pixels onto the board",
   assert.ok(view.width <= 640 && view.height <= 640);
   assert.ok(view.pxPerR > 200, `pxPerR ${view.pxPerR}`);
   // The bull is the bull from either side.
-  const c = V.applyH(view.Hinv, 0, 0), b = V.applyH(view.H, c.x, c.y);
+  const c = view.toCrop(0, 0), b = view.toBoard(c.x, c.y);
   near(b.x, 0, 1e-9, "x");
   near(b.y, 0, 1e-9, "y");
   // A camera running at half size uses the same calibration.
   const half = V.makeView(cal, 640, 360);
-  const p = V.applyH(V.inv3(half.H), 0.5, 0.2), q = V.applyH(half.H, p.x, p.y);
+  const p = half.toCrop(0.5, 0.2), q = half.toBoard(p.x, p.y);
   near(q.x, 0.5, 1e-9, "half-size x");
+  // With a lens bend too, both ways agree, and the bull is where the camera shows it.
+  const bentCam = S.camera({ pos: { x: 170, y: -60, z: 420 }, width: 1280, height: 720, hfov: 78, bend: -0.12 });
+  const bentCal = Object.assign({}, cal, { lens: { cx: 640, cy: 360, s: Math.hypot(1280, 720) / 2, k: -0.12 } });
+  const bv = V.makeView(bentCal, 1280, 720);
+  for (const [x, y] of [[0, 0], [0.6, -0.3], [-0.9, 0.4]]) {
+    const at = bv.toCrop(x, y), back = bv.toBoard(at.x, at.y);
+    near(back.x, x, 1e-9, "bent x"); near(back.y, y, 1e-9, "bent y");
+  }
+  // Away from the middle of the picture, the bend moves things, and the lens model says where to.
+  const edge = { x: 170, y: 0, z: 0 }, bentAt = bentCam.project(edge), plainAt = cam.project(edge);
+  assert.ok(Math.hypot(bentAt.x - plainAt.x, bentAt.y - plainAt.y) > 3, "the bend moves the board's edge in the picture");
+  const modelled = V.distort(bentCal.lens, plainAt.x, plainAt.y);
+  near(modelled.x, bentAt.x, 1e-6, "bent edge x"); near(modelled.y, bentAt.y, 1e-6, "bent edge y");
+  for (const [x, y] of [[0.3, 0.2], [-1, 0.1]]) {
+    const u = V.undistort(bentCal.lens, 300 + x * 400, 200 + y * 300);
+    const d = V.distort(bentCal.lens, u.x, u.y);
+    near(d.x, 300 + x * 400, 1e-9, "undistort then distort x");
+    near(d.y, 200 + y * 300, 1e-9, "undistort then distort y");
+  }
+});
+
+// A board drawn as a whole camera picture, for matching the board in it.
+function stillOf(cam, darts = [], options = {}) {
+  const full = { crop: { sx: 0, sy: 0, sw: cam.width, sh: cam.height }, width: cam.width, height: cam.height };
+  return S.renderer(cam, full, Object.assign({ noise: 3, seed: 5, smooth: 3 }, options))(darts);
+}
+
+// How far, at worst, a calibration puts the rings and wires from where the camera really shows them (mm).
+function worstOff(cam, cal) {
+  const m = V.mapper(cal);
+  let worst = 0;
+  for (const r of [V.REAL.bullOut, 0.35, V.REAL.tripleIn, V.REAL.tripleOut, 0.8, V.REAL.doubleIn, 1]) {
+    for (let k = 0; k < 60; k += 1) {
+      const a = (k / 60) * Math.PI * 2, p = cam.project({ x: Math.cos(a) * r * S.R, y: Math.sin(a) * r * S.R, z: 0 });
+      const b = m.toBoard(p.x, p.y);
+      worst = Math.max(worst, Math.hypot(b.x - Math.cos(a) * r, b.y - Math.sin(a) * r) * S.R);
+    }
+  }
+  return worst;
+}
+
+test("calibrating snaps to the board's rings and wires, and measures the lens's bend", () => {
+  for (const bend of [0, -0.15]) {
+    const cam = S.camera({ pos: { x: -190, y: -70, z: 380 }, width: 1280, height: 720, hfov: 84, bend });
+    const tapped = S.tapCalibration(cam, 4, S.rng(7));
+    const still = stillOf(cam);
+    const snapped = V.refineCalibration(tapped, still);
+    assert.ok(snapped, `bend ${bend}: matched`);
+    assert.ok(snapped.refined.edges > 300, `bend ${bend}: ${snapped.refined.edges} edges`);
+    const before = worstOff(cam, tapped), after = worstOff(cam, snapped);
+    assert.ok(before > 1.5, `bend ${bend}: taps alone off by ${before.toFixed(2)} mm`);
+    assert.ok(after < 0.6, `bend ${bend}: snapped off by ${after.toFixed(2)} mm`);
+    near(snapped.refined.shift, before, 0.6, `bend ${bend}: shift reports how far the taps were off`);
+    near(snapped.lens ? snapped.lens.k : 0, bend, 0.04, `bend ${bend}: the lens's bend`);
+  }
+});
+
+test("matching the board copes with darts in it, and with a camera that moved", () => {
+  const cam = S.camera({ pos: { x: 175, y: -55, z: 400 }, width: 1280, height: 720, hfov: 80, bend: -0.1 });
+  const darts = [{ at: { x: 6, y: -101 }, lean: { x: 0.05, y: -0.25 } }, { at: { x: -12, y: -98 }, lean: { x: -0.1, y: -0.2 } }, { at: { x: 40, y: 60 }, lean: { x: 0.1, y: -0.3 } }];
+  const snapped = V.refineCalibration(S.tapCalibration(cam, 3, S.rng(9)), stillOf(cam, darts));
+  assert.ok(snapped && worstOff(cam, snapped) < 0.8, "with three darts in the board");
+  // The camera gets knocked a little: checked against what it shows now, the saved calibration
+  // follows it (without trusting the old taps), and says how far it moved.
+  const moved = S.camera({ pos: { x: 181, y: -50, z: 396 }, look: { x: 4, y: 3, z: 0 }, width: 1280, height: 720, hfov: 80, bend: -0.1 });
+  const before = worstOff(moved, snapped);
+  const again = V.refineCalibration(snapped, stillOf(moved), { taps: false });
+  assert.ok(before > 3, `the knock moved the rings ${before.toFixed(1)} mm`);
+  assert.ok(again && worstOff(moved, again) < 0.6, "followed the camera");
+  near(again.refined.shift, before, 0.8, "how far it moved");
+  // Nothing to match in a blank picture.
+  const blank = { data: new Uint8ClampedArray(1280 * 720 * 4).fill(40), width: 1280, height: 720 };
+  assert.equal(V.refineCalibration(snapped, blank), null);
 });
 
 // Two cameras either side of the board and a little above the bull, like the NexiGo rig. Drawing

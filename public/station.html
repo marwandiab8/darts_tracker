@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Camera station - Darts Tracker</title>
+<style>
+  :root {
+    --bg: #0b0f17; --muted: #94a3b8; --text: #e5e7eb; --accent: #f59e0b; --good: #22c55e; --warn: #ef4444;
+    --border: rgba(148, 163, 184, .18); --chip: #0f172a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; }
+  .shell { background: radial-gradient(1200px 600px at 20% 0%, rgba(245, 158, 11, .12), transparent 55%), var(--bg); min-height: 100vh; padding: 12px 16px 16px; }
+  .wrap { max-width: 820px; margin: 0 auto; }
+  header { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  header h1 { margin: 0; font-size: 22px; }
+  .links { display: flex; gap: 8px; flex-wrap: wrap; }
+  a.back { color: var(--accent); text-decoration: none; font-weight: 700; font-size: 14px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 999px; }
+  .card { background: rgba(255,255,255,.02); border: 1px solid var(--border); border-radius: 16px; padding: 16px; margin-bottom: 16px; }
+  .card h2 { margin: 0 0 8px; font-size: 18px; }
+  .muted { color: var(--muted); }
+  p { line-height: 1.45; margin: 6px 0 10px; }
+  .hidden { display: none !important; }
+  button { font: inherit; font-weight: 700; border-radius: 12px; border: 1px solid var(--accent); background: var(--accent); color: #111827; padding: 10px 14px; min-height: 44px; cursor: pointer; }
+  button.secondary { background: transparent; color: var(--text); border-color: var(--border); }
+  button:disabled { opacity: .45; cursor: default; }
+  select, input[type="text"] { font: inherit; color: var(--text); background: var(--chip); border: 1px solid var(--border); border-radius: 10px; padding: 9px 10px; min-height: 44px; width: 100%; }
+  label.field { display: grid; gap: 6px; font-size: 14px; font-weight: 700; }
+  .row { display: grid; grid-template-columns: 1fr; gap: 12px; margin: 10px 0; }
+  @media (min-width: 640px) { .row.two { grid-template-columns: 1fr 1fr; } }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
+  .check { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 14px; }
+  .state { display: flex; gap: 10px; align-items: center; font-weight: 700; font-size: 18px; margin: 4px 0 6px; }
+  .dot { width: 14px; height: 14px; border-radius: 50%; background: var(--border); flex: none; }
+  .dot.on { background: var(--good); box-shadow: 0 0 12px rgba(34,197,94,.7); }
+  .dot.warn { background: var(--warn); }
+  .status { min-height: 1.4em; }
+  .status.warn { color: var(--warn); }
+  .log { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 6px; max-height: 300px; overflow: auto; }
+  .log li { border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; font-size: 14px; }
+  .log li b { font-size: 16px; }
+</style>
+</head>
+<body>
+<div class="shell"><div class="wrap">
+  <header>
+    <h1>Camera station</h1>
+    <div class="links"><a class="back" href="camera.html">Cameras</a><a class="back" href="practice.html">Play the bot</a><a class="back" href="index.html">Tracker</a></div>
+  </header>
+
+  <section class="card">
+    <h2>Score with these cameras from any computer</h2>
+    <p class="muted">Open this page on the computer the cameras are plugged into, and leave it open. It watches the board, reads every dart here, and sends it to your games on any computer or tablet where you are signed in with the same account (turn "Camera" on there). Calibrate the cameras from any computer on the <a href="camera.html" style="color:var(--accent)">Cameras</a> page: it gets pictures from this station.</p>
+  </section>
+
+  <section class="card" id="signCard">
+    <h2>Your account</h2>
+    <p id="who" class="muted">Checking…</p>
+    <div class="actions"><button type="button" id="signInBtn" class="hidden">Sign in with Google</button></div>
+  </section>
+
+  <section class="card hidden" id="stationCard">
+    <h2>This computer's cameras</h2>
+    <div id="accessBox">
+      <p class="muted">The browser will ask to use the cameras. The pictures stay on this computer, apart from a still of the board when you calibrate from another computer.</p>
+      <div class="actions"><button type="button" id="accessBtn">Find my cameras</button></div>
+    </div>
+    <div id="pickBox" class="hidden">
+      <p class="muted" style="font-size:13px;">Using OBS? While OBS is open it holds the cameras: choose its virtual camera ("OBS Virtual Camera", or "OBS") for both, and calibrate each half of its picture.</p>
+      <div class="row two">
+        <label class="field">Camera 1 <select id="sel0"></select></label>
+        <label class="field">Camera 2 <select id="sel1"></select></label>
+      </div>
+      <label class="field">This computer's name, as your other computers show it <input type="text" id="name" maxlength="40"></label>
+      <div class="actions">
+        <button type="button" id="startBtn">Start the station</button>
+        <button type="button" class="secondary" id="stopBtn" disabled>Stop</button>
+      </div>
+      <label class="check"><input type="checkbox" id="auto"> Start by itself whenever this page opens</label>
+    </div>
+  </section>
+
+  <section class="card hidden" id="runCard">
+    <div class="state"><span class="dot" id="dot"></span><span id="stateText">Not running</span></div>
+    <div class="status" id="status" aria-live="polite"></div>
+    <p class="muted" style="font-size:13px;">Keep this page open (it can be behind other windows). The computer must not go to sleep while you play.</p>
+    <ul class="log" id="log"></ul>
+  </section>
+</div></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
+<script src="board-vision.js?v=3"></script>
+<script src="board-camera.js?v=3"></script>
+<script>
+(function () {
+  "use strict";
+  const firebaseConfig = {
+    apiKey: "AIzaSyCAfRz72zGeDxKQGk3TGPAra1US64BGF90",
+    authDomain: "dartstracker2026.firebaseapp.com",
+    projectId: "dartstracker2026",
+    storageBucket: "dartstracker2026.firebasestorage.app",
+    messagingSenderId: "151826966768",
+    appId: "1:151826966768:web:a409ac8d409bf0f796ba35"
+  };
+  if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+  const auth = firebase.auth(), db = firebase.firestore();
+  const C = window.DartCamera;
+  const $ = (id) => document.getElementById(id);
+  const PREFS = "dt_station";
+
+  let user = null, station = null, cameras = [], wakeLock = null;
+  const prefs = (() => { try { return JSON.parse(localStorage.getItem(PREFS) || "{}") || {}; } catch (_) { return {}; } })();
+  const savePrefs = () => { try { localStorage.setItem(PREFS, JSON.stringify(prefs)); } catch (_) { /* private mode */ } };
+  const defaultName = () => (/Windows/i.test(navigator.userAgent) ? "Windows computer" : /Mac/i.test(navigator.userAgent) ? "Mac" : /Linux/i.test(navigator.userAgent) ? "Linux computer" : "Camera computer");
+  $("name").value = prefs.name || defaultName();
+  $("auto").checked = !!prefs.auto;
+
+  // ---- account ----------------------------------------------------------------------------------------
+  $("signInBtn").addEventListener("click", () => auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).catch((e) => { $("who").textContent = "Sign-in failed: " + e.message; }));
+  auth.onAuthStateChanged(async (u) => {
+    user = u;
+    $("signInBtn").classList.toggle("hidden", !!u);
+    $("stationCard").classList.toggle("hidden", !u);
+    $("who").textContent = u ? `Signed in as ${u.email || u.displayName}. Darts read here go to this account.` : "Sign in with the account you play with, so your other computers get the darts.";
+    if (!u) { if (station) station.stop(); return; }
+    await findCameras(false);
+    if (prefs.auto && cameras.length && !station) start();
+  });
+
+  // ---- cameras ------------------------------------------------------------------------------------------
+  async function findCameras(ask) {
+    try {
+      cameras = ask ? await C.requestAccess() : await C.listCameras();
+    } catch (error) {
+      setStatus(C.explain(error), true);
+      return;
+    }
+    const named = cameras.some((c) => c.label && !/^Camera \d+$/.test(c.label));
+    if (!named) { cameras = []; if (!ask) return; }
+    $("accessBox").classList.add("hidden");
+    $("pickBox").classList.remove("hidden");
+    // What the station used last (from the account), else what was picked here before.
+    const saved = await C.getStation(db, user.uid);
+    const savedCams = (saved && saved.setup && saved.setup.cameras) || [];
+    [0, 1].forEach((i) => {
+      const sel = $("sel" + i);
+      sel.innerHTML = "";
+      sel.append(new Option("None", ""));
+      cameras.forEach((cam, k) => sel.append(new Option(cam.label + (cameras.filter((c) => c.label === cam.label).length > 1 ? ` (${k + 1})` : ""), cam.deviceId)));
+      const want = savedCams[i];
+      const match = want && (cameras.find((c) => c.deviceId === want.deviceId) || cameras.find((c) => c.label === want.label));
+      sel.value = match ? match.deviceId : "";
+    });
+  }
+  $("accessBtn").addEventListener("click", () => findCameras(true));
+
+  const choice = () => [0, 1].map((i) => {
+    const id = $("sel" + i).value;
+    const cam = cameras.find((c) => c.deviceId === id);
+    return cam ? { deviceId: cam.deviceId, label: cam.label } : null;
+  });
+  [0, 1].forEach((i) => $("sel" + i).addEventListener("change", () => { if (station) station.choose(choice()).catch((e) => setStatus(e.message, true)); }));
+  $("name").addEventListener("change", () => { prefs.name = $("name").value.trim() || defaultName(); savePrefs(); });
+  $("auto").addEventListener("change", () => { prefs.auto = $("auto").checked; savePrefs(); });
+
+  // ---- running ------------------------------------------------------------------------------------------
+  function setStatus(text, warn) {
+    $("runCard").classList.remove("hidden");
+    $("status").textContent = text;
+    $("status").classList.toggle("warn", !!warn);
+    const watching = !!(station && station.watching);
+    $("dot").className = "dot" + (watching ? " on" : warn ? " warn" : "");
+    $("stateText").textContent = !station ? "Not running" : watching ? "Watching the board" : "Running";
+  }
+
+  function addLog(html) {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="muted">${new Date().toLocaleTimeString()}</span> ${html}`;
+    $("log").prepend(li);
+    while ($("log").children.length > 40) $("log").lastChild.remove();
+  }
+
+  function onEvent(e) {
+    if (e.type === "dart") addLog(`<b>${e.label}</b> <span class="muted">sent${e.uncertain ? " (not sure)" : ""}</span>`);
+    else if (e.type === "takeout") addLog("Darts out");
+    else if (e.type === "unreadable") addLog("Something changed, but no dart could be read");
+    else if (e.type === "check" && e.warning) addLog(e.warning);
+    else if (e.type === "error") addLog(e.text);
+  }
+
+  async function keepAwake() {
+    try { if ("wakeLock" in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request("screen"); wakeLock.addEventListener("release", () => { wakeLock = null; }); } } catch (_) { /* not allowed now */ }
+  }
+  document.addEventListener("visibilitychange", () => { if (station && document.visibilityState === "visible") keepAwake(); });
+
+  async function start() {
+    if (!user || station) return;
+    const picked = choice();
+    if (!picked.some(Boolean)) { setStatus("Choose at least one camera.", true); return; }
+    prefs.name = $("name").value.trim() || defaultName(); savePrefs();
+    station = C.createStation({ db, uid: user.uid, name: prefs.name, onStatus: setStatus, onEvent });
+    $("startBtn").disabled = true; $("stopBtn").disabled = false;
+    try {
+      await station.choose(picked);
+      await station.start();
+      keepAwake();
+    } catch (error) {
+      station.stop(); station = null;
+      $("startBtn").disabled = false; $("stopBtn").disabled = true;
+      setStatus("Couldn't start: " + error.message, true);
+    }
+  }
+  $("startBtn").addEventListener("click", start);
+  $("stopBtn").addEventListener("click", () => {
+    if (station) station.stop();
+    station = null;
+    if (wakeLock) wakeLock.release().catch(() => {});
+    $("startBtn").disabled = false; $("stopBtn").disabled = true;
+    setStatus("Stopped. Your other computers can't use the cameras until it runs again.");
+  });
+  window.addEventListener("pagehide", () => { if (station) station.stop(); });
+})();
+</script>
+</body>
+</html>
