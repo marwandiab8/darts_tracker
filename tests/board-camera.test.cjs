@@ -113,3 +113,18 @@ test("events are slimmed down for passing on, and chatty ones dropped", () => {
   assert.equal(C.isOnline(station()), true);
   assert.equal(C.isOnline(station({ station: { seen: Date.now() - 5 * 60000 } })), false);
 });
+
+test("starting the station again keeps the calibrations of the cameras it already had", async () => {
+  const db = fakeDb();
+  const other = { H: [2, 0, 0, 0, 2, 0, 0, 0, 1], width: 1280, height: 720 };
+  db.write("cameraStations/me", station({ setup: { version: 1, cameras: [{ deviceId: "a", label: "NexiGo", cal }, { deviceId: "b", label: "NexiGo", cal: other }] } }));
+  // The station page picks its cameras before it starts (a fresh page, nothing read yet).
+  const st = C.createStation({ db, uid: "me", name: "Linux computer" });
+  await st.choose([{ deviceId: "a", label: "NexiGo" }, { deviceId: "b", label: "NexiGo" }]);
+  let cams = db.docs.get("cameraStations/me").setup.cameras;
+  assert.deepEqual(cams.map((c) => c.cal && c.cal.H[0]), [1, 2], "both calibrations kept");
+  // A different second camera loses only its own calibration.
+  await st.choose([{ deviceId: "a", label: "NexiGo" }, { deviceId: "c", label: "Integrated Camera" }]);
+  cams = db.docs.get("cameraStations/me").setup.cameras;
+  assert.deepEqual(cams.map((c) => [c.deviceId, c.cal ? c.cal.H[0] : null]), [["a", 1], ["c", null]]);
+});

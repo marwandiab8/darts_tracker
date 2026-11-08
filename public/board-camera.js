@@ -429,7 +429,10 @@
     async function reconcile() {
       const setup = { version: 1, cameras: chosen() };
       const calibrated = ready(setup);
-      const key = JSON.stringify(calibrated.map((c) => [c.deviceId, c.label, c.cal && c.cal.H, c.cal && c.cal.lens]));
+      // What the watcher depends on, field by field (the account may return a map's fields in
+      // another order, which must not count as a change).
+      const lensKey = (l) => (l ? [l.cx, l.cy, l.s, l.k].join(",") : "");
+      const key = JSON.stringify(calibrated.map((c) => [c.deviceId, c.label, c.cal.H.join(","), lensKey(c.cal.lens)]));
       if (key === watchingKey && (watcher || !calibrated.length)) return;
       if (watcher) { watcher.stop(); watcher = null; }
       watchingKey = key;
@@ -498,6 +501,12 @@
       // This computer's cameras for the station (up to two; null for none). A camera that changes
       // loses its calibration.
       async choose(list) {
+        // Called before start() too (the page picks the cameras, then starts): read what is saved
+        // first, so the calibrations of cameras that stay the same are kept.
+        if (!doc) {
+          const snap = await ref.get();
+          doc = snap.exists ? snap.data() : null;
+        }
         const before = chosen();
         const cameras = list.slice(0, 2).map((c, i) => {
           if (!c) return null;
