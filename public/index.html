@@ -119,6 +119,10 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
   #mainEntryTable td > * { margin-top: 0 !important; margin-bottom: 0 !important; }
 
 
+  /* The number being thrown at, in the table */
+  #entryBody tr.current-target td { background: rgba(245,158,11,.12); }
+  #entryBody tr.current-target .target-label { color: var(--accent); font-weight: 900; }
+
   /* ===== Next Target Banner (big, at-a-distance) ===== */
   .next-target-banner{
     margin: 14px 0 12px;
@@ -149,6 +153,8 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
     color: rgba(255,255,255,0.70);
     min-width: 180px;
     text-align: right;
+    min-height: 1.4em; /* the same height whatever it says, so the board below never moves */
+    white-space: nowrap;
   }
   @media (max-width: 900px){
     .next-target-banner{ flex-wrap: wrap; }
@@ -441,7 +447,7 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
 
           <!-- NEXT TARGET BANNER -->
     <div id="nextTargetBanner" class="next-target-banner" style="display:none;">
-      <div class="nt-label">NEXT TARGET</div>
+      <div class="nt-label">THROWING AT</div>
       <div class="nt-value" id="nextTargetValue">—</div>
       <div class="nt-sub" id="nextTargetSub">—</div>
     </div>
@@ -472,8 +478,9 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
               <canvas id="dartboardCanvas" width="420" height="420" aria-label="Dartboard input"></canvas>
             </div>
             <div style="margin-top:10px; font-size:12px; color:var(--muted); line-height:1.3;">
-              Tap where the dart landed. It will fill the next slot for that number (ring S/D/T). Bulls go to <b>BULL</b>.
-              In Singles-only mode, every hit still counts as 1.
+              Three darts at each number, from 20 down to the bull (the big line above shows which). Tap where each dart
+              landed: a hit in that number fills its next slot (ring S/D/T); a dart in any other number, or a tap outside the
+              board, is a miss for it. In Singles-only mode, every hit still counts as 1.
               Each tap is remembered as a dot on the board and saved with the session.
             </div>
             <div id="boardNote" class="board-note" aria-live="polite"></div>
@@ -528,7 +535,7 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<script src="practice-timer.js?v=1"></script>
+<script src="practice-timer.js?v=2"></script>
 <script src="board-vision.js?v=7"></script>
 <script src="board-camera.js?v=7"></script>
 
@@ -643,6 +650,7 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
   function persistDraft() {
     localStorage.setItem("dt_draft", JSON.stringify(currentEntry));
     localStorage.setItem("dt_draftPos", JSON.stringify(cleanPositions(currentPos, currentEntry)));
+    localStorage.setItem("dt_draftThrown", JSON.stringify(cleanThrown(currentThrown)));
   }
 
   // When a slot is retyped, its old position no longer describes that dart, so it is dropped.
@@ -659,6 +667,37 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
 
   function countPositions(pos) {
     return Object.values(pos || {}).reduce((n, row) => n + row.filter(Boolean).length, 0);
+  }
+
+  // ---- Which number is being thrown at ----
+  // A session goes 20, 19, ... 1, then BULL, three darts at each. A dart entered on the board
+  // (tapped, or seen by the cameras) counts for the number being thrown at: a hit in that number
+  // fills its next slot, and a dart anywhere else (a 1 or a 5 when throwing at 20, or off the
+  // board) is a miss that still uses up one of its three darts. A miss is not kept in the entry (a
+  // slot is a hit or "-"), so the darts thrown at each number are counted here; a typed row counts
+  // as its hits.
+  let currentThrown = (() => { try { return JSON.parse(localStorage.getItem("dt_draftThrown") || "{}") || {}; } catch (_) { return {}; } })();
+  function dartsThrownAt(t) { return Math.min(3, Math.max(Number(currentThrown[t]) || 0, entryToHitsValue(currentEntry[t]))); }
+  function aimTarget() { return TARGETS.find(t => dartsThrownAt(t) < 3) || null; }
+  function cleanThrown(thrown) {
+    const clean = {};
+    TARGETS.forEach(t => { const n = Math.round(Number((thrown || {})[t]) || 0); if (n > 0) clean[t] = Math.min(3, n); });
+    return clean;
+  }
+
+  // The big "next target" line, and the row in the table.
+  function updateNextTarget() {
+    const aim = aimTarget();
+    const box = document.getElementById("nextTargetBanner");
+    if (box) {
+      box.style.display = "flex";
+      document.getElementById("nextTargetValue").textContent = aim ? (aim === "BULL" ? "Bull" : aim) : "Done";
+      const hits = aim ? entryToHitsValue(currentEntry[aim]) : 0;
+      document.getElementById("nextTargetSub").textContent = aim
+        ? `Dart ${dartsThrownAt(aim) + 1} of 3 · ${hits} hit${hits === 1 ? "" : "s"}`
+        : "All 21 numbers done: save the session";
+    }
+    document.querySelectorAll("#entryBody tr").forEach(row => row.classList.toggle("current-target", row.getAttribute("data-target") === aim));
   }
 
   function setBoardNote(text) {
@@ -727,6 +766,7 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
           mode: scoreMode,
           entry: currentEntry,
           positions: cleanPositions(currentPos, currentEntry),
+          thrown: cleanThrown(currentThrown),
           total: parseInt(document.getElementById("sessionTotal").textContent || "0", 10),
           sessionDate: document.getElementById("sessionDate").value || "",
           sessionTime: document.getElementById("sessionTime").value || ""
@@ -757,9 +797,12 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
 
       // Apply incoming state
       const incomingPos = cleanPositions(data.positions, incomingEntry);
-      if (!entryEquals(incomingEntry, currentEntry) || !entryEquals(incomingPos, cleanPositions(currentPos, currentEntry))) {
+      const incomingThrown = data.thrown ? cleanThrown(data.thrown) : null;
+      if (!entryEquals(incomingEntry, currentEntry) || !entryEquals(incomingPos, cleanPositions(currentPos, currentEntry))
+          || (incomingThrown && !entryEquals(incomingThrown, cleanThrown(currentThrown)))) {
         currentEntry = deepClone(incomingEntry);
         currentPos = incomingPos;
+        if (incomingThrown) currentThrown = incomingThrown;
         persistDraft();
         suppressLocalEchoUntil = Date.now() + 250; // prevent ping-pong
         updateUIFromEntry(currentEntry, { skipFocused: true });
@@ -868,6 +911,7 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
       grandTotal += rowScore;
     });
     document.getElementById("sessionTotal").textContent = grandTotal;
+    updateNextTarget();
   }
 
   function resetCurrentSession(opts = {}) {
@@ -876,6 +920,7 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
     saveSessionTimer();
     TARGETS.forEach(t => { currentEntry[t] = ["-","-","-"]; });
     currentPos = {};
+    currentThrown = {};
     setBoardNote("");
     tapStack = [];
     lastTap = null;
@@ -1412,14 +1457,27 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
     else if (e.type === "status") setCamNote(e.text);
     else if (e.type === "error") setCamNote(e.text, true);
     else if (e.type === "ready" && camCheckWarning) setCamNote("Camera on. " + camCheckWarning, true);
-    else if (e.type === "ready" || e.type === "takeout") setCamNote("Camera on: watching the board.");
+    else if (e.type === "ready") setCamNote("Camera on: watching the board.");
+    else if (e.type === "takeout") {
+      // Darts pulled out part way through a number: the cameras missed some (a bounce-out, a dart they
+      // couldn't see), and those count as misses, so the next darts go to the next number.
+      const aim = aimTarget(), n = aim ? dartsThrownAt(aim) : 0;
+      if (aim && n > 0 && n < 3) {
+        tapStack.push({ target: aim, prev: (currentEntry[aim] || ["-","-","-"]).slice(), prevPos: (currentPos[aim] || [null, null, null]).slice(), prevThrown: currentThrown[aim], prevLast: lastTap });
+        currentThrown[aim] = 3;
+        persistDraft(); updateUIFromEntry(currentEntry); scheduleDraftWrite(); drawBoard();
+        setCamNote(`Darts out with ${3 - n} not seen at ${aim === "BULL" ? "the bull" : aim}: counted as ${3 - n === 1 ? "a miss" : "misses"}. Undo if that's wrong.`);
+      } else setCamNote("Camera on: watching the board.");
+    }
     else if (e.type === "unreadable") setCamNote("The cameras saw something but couldn't read it. Tap the board for that dart.", true);
     else if (e.type === "dart") {
       const x = Math.round(e.app.x * 10000) / 10000, y = Math.round(e.app.y * 10000) / 10000;
       const hit = BoardVision.classify(x, y, BoardVision.APP);
-      if (!hit.target) { tapFeedback("MISS"); setCamNote("Camera: missed the board."); return; }
-      applyBoardHit({ target: hit.target, ring: hit.ring, x, y });
-      setCamNote("Camera: " + hit.label + (e.uncertain ? ". It wasn't sure: if it's wrong, Undo and tap where it landed." : "."), e.uncertain);
+      const done = applyBoardHit(hit.target ? { target: hit.target, ring: hit.ring, x, y } : null);
+      if (!done) return;
+      const aimName = done.aim === "BULL" ? "the bull" : done.aim;
+      const said = !hit.target ? "off the board" : hit.label;
+      setCamNote(`Camera: ${said}${done.counts ? "" : ` (a miss for ${aimName})`}` + (e.uncertain ? ". It wasn't sure: if it's wrong, Undo and tap where it landed." : "."), e.uncertain);
     }
   }
   (function bindCameraToggle(){
@@ -1525,8 +1583,7 @@ function applyEntryModeUI(){
         const y = (ev.clientY - rect.top) * (c.height / rect.height);
 
         const hit = scoreFromPoint(c, x, y);
-        if (hit) applyBoardHit(hit);
-        else tapFeedback("MISS");
+        applyBoardHit(hit || null); // outside the board: a miss for the number being thrown at
       };
 
       c.addEventListener("pointerdown", handlePoint);
@@ -1540,6 +1597,8 @@ function applyEntryModeUI(){
           if (!last) return;
           currentEntry[last.target] = last.prev.slice();
           currentPos[last.target] = last.prevPos.slice();
+          if (last.prevThrown === undefined) delete currentThrown[last.target];
+          else currentThrown[last.target] = last.prevThrown;
           practiceActivity();
           persistDraft();
           updateUIFromEntry(currentEntry);
@@ -1762,38 +1821,51 @@ function scoreFromPoint(canvas, x, y){
   }
 
 
+// A dart entered on the board ({target, ring, x, y}, or null for off the board), for the number
+// being thrown at (see aimTarget): a hit in that number fills its next slot; anything else is a
+// miss that uses up one of its three darts. Returns { aim, counts }, or null when all are done.
 function applyBoardHit(hit){
-    const target = hit.target;
-    const ring = hit.ring;
+    const aim = aimTarget();
+    if (!aim) {
+      tapFeedback("FULL");
+      setBoardNote("All 21 numbers have their three darts. Save the session, or Undo.");
+      return null;
+    }
+    if (!currentEntry[aim]) currentEntry[aim] = ["-","-","-"];
+    const prev = currentEntry[aim].slice();
+    const prevPos = (currentPos[aim] || [null, null, null]).slice();
+    const prevThrown = currentThrown[aim];
+    const thrownBefore = dartsThrownAt(aim);
+    const counts = !!(hit && hit.target === aim);
 
-    if (!currentEntry[target]) currentEntry[target] = ["-","-","-"];
-    const prev = currentEntry[target].slice();
+    if (counts) {
+      // Fewer than three darts thrown at it, so it has an empty slot.
+      const arr = prev.slice();
+      const ix = arr.indexOf("-");
+      arr[ix] = hit.ring; // the ring letter (S/D/T)
+      currentEntry[aim] = arr;
+      // ...and where it landed, in the same slot
+      const slots = prevPos.slice();
+      slots[ix] = { x: hit.x, y: hit.y };
+      currentPos[aim] = slots;
+    }
+    currentThrown[aim] = thrownBefore + 1;
 
-    // find next empty slot
-    const arr = currentEntry[target].slice();
-    const ix = arr.indexOf("-");
-    if (ix === -1) { tapFeedback("FULL", target); return; } // already 3 darts logged
+    const aimName = aim === "BULL" ? "the bull" : aim;
+    if (counts) setBoardNote("");
+    else if (hit) setBoardNote(`That landed in ${hit.target === "BULL" ? "the bull" : hit.target}, not ${aimName}: a miss.`);
+    else setBoardNote(`Off the board: a miss for ${aimName}.`);
+    tapFeedback(counts ? hit.ring : "MISS", aim);
 
-    arr[ix] = ring; // store the ring letter (S/D/T)
-    currentEntry[target] = arr;
-
-    // ...and where it landed, in the same slot
-    const prevPos = (currentPos[target] || [null, null, null]).slice();
-    const slots = prevPos.slice();
-    slots[ix] = { x: hit.x, y: hit.y };
-    currentPos[target] = slots;
-    setBoardNote("");
-
-    tapFeedback(ring, target);
-
-    tapStack.push({ target, prev, prevPos, prevLast: lastTap });
-    lastTap = { target, ring, x: hit.x, y: hit.y };
+    tapStack.push({ target: aim, prev, prevPos, prevThrown, prevLast: lastTap });
+    if (hit) lastTap = { target: hit.target, ring: hit.ring, x: hit.x, y: hit.y }; // the dot shows where it landed
     practiceActivity();
 
     persistDraft();
     updateUIFromEntry(currentEntry);
     scheduleDraftWrite();
     drawBoard();
+    return { aim, counts };
   }
 
   auth.onAuthStateChanged(user => {
@@ -1876,6 +1948,9 @@ function applyBoardHit(hit){
 
       currentEntry = JSON.parse(JSON.stringify(s.entry || {}));
       currentPos = cleanPositions(s.positions, currentEntry);
+      // A saved session was played in full: board darts don't add to it (type into a row to change one).
+      currentThrown = {};
+      TARGETS.forEach(t => { currentThrown[t] = 3; });
       tapStack = [];
       lastTap = null;
       initTable();
@@ -1986,7 +2061,7 @@ document.getElementById("signInBtn").onclick = () => auth.signInWithPopup(new fi
   };
 
   // The practice timer next to the session total, shown once a session has its first dart.
-  timerView = T.mount(document.getElementById("practiceTimer"), { get: () => sessionTimer, onChange: () => saveSessionTimer() });
+  timerView = T.mount(document.getElementById("practiceTimer"), { get: () => sessionTimer, onChange: () => saveSessionTimer(), keepSpace: true });
 
 })();
 </script>

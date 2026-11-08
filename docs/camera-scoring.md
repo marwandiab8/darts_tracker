@@ -51,7 +51,7 @@ All the maths is in `public/board-vision.js` (no DOM, so Node tests run it). `pu
 ## What the pages do with it
 
 - **Bot games:** a dart the cameras see is entered when it is your turn and you have darts left; otherwise the page says it saw it and ignores it. A take-out during your visit ends it: darts the cameras did not see (a bounce-out, a miss) are entered as misses, and with Press Enter on it counts as pressing Enter. A take-out during the bot's turn is ignored. A reading the cameras weren't sure of says so under the board: Undo and tap if it is wrong. Camera darts count as activity for the practice timer.
-- **The tracker:** each dart fills the next slot for its number with its dot, with the usual sound and voice. A dart off the board is a miss (not recorded, as with a tap).
+- **The tracker:** a session is three darts at each number from 20 down to the bull, and the big "Throwing at" line shows which number and which dart. A camera dart counts as a tap does: a hit in that number fills its next slot with its dot; a dart in any other number, or off the board, is a miss that still uses up one of its three darts (misses are counted alongside the entry, in the draft and its live sync, as `thrown`). Darts pulled out before the third one at a number mean the cameras missed some: those count as misses, so the next darts go to the next number (Undo puts them back).
 
 ## How good is it
 

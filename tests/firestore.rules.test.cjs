@@ -417,3 +417,9 @@ test("camera station documents with the wrong shape are refused", async () => {
   await assertFails(setDoc(doc(db, "cameraStations", me, "events", "other"), { seq: 1, events: [], updated: 1 }));
   await assertFails(setDoc(doc(db, "cameraStations", me, "events", "latest"), { seq: 1, events: Array(21).fill({ type: "dart" }), updated: 1 }));
 });
+
+test("the live draft can carry the darts thrown at each number (misses included)", async () => {
+  const db = asUser(me);
+  await assertSucceeds(setDoc(doc(db, "liveDrafts", me), { uid: me, deviceId: "d", mode: "standard", entry: entry(), positions: {}, thrown: { "20": 3, "19": 1 }, total: 6, sessionDate: "2026-11-07", sessionTime: "21:00" }));
+  await assertFails(setDoc(doc(asUser(other), "liveDrafts", me), { uid: other, entry: entry(), thrown: { "20": 3 } }));
+});

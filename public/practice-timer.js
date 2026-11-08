@@ -116,9 +116,14 @@
 .ptimer.paused .pt-state { color: var(--muted, #94a3b8); }
 .ptimer .pt-btn { margin-left: auto; padding: 6px 14px; border-radius: 10px; font-weight: 800; cursor: pointer; }
 .ptimer .pt-note { flex-basis: 100%; font-size: 12px; color: var(--muted, #94a3b8); }
-.ptimer .pt-note:empty { display: none; }`;
+.ptimer .pt-note:empty { display: none; }
+.ptimer.keep-space .pt-note { display: block; height: 1.3em; line-height: 1.3em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ptimer.idle .pt-state, .ptimer.idle .pt-clock { color: var(--muted, #94a3b8); }
+.ptimer.idle .pt-btn { visibility: hidden; }`;
 
-  function mount(container, { get, onChange } = {}) {
+  // With `keepSpace`, it takes the same room whatever it shows, even before a session starts (so a
+  // board below it never moves when the first dart starts the clock, or when it pauses itself).
+  function mount(container, { get, onChange, keepSpace = false } = {}) {
     if (!container || typeof document === "undefined") return { refresh() {} };
     if (!document.getElementById("practice-timer-style")) {
       const style = document.createElement("style");
@@ -129,8 +134,18 @@
     container.innerHTML = '<div class="ptimer" role="timer" aria-live="off"><span class="pt-state"></span><span class="pt-clock"></span><button type="button" class="pt-btn secondary"></button><div class="pt-note"></div></div>';
     const box = container.firstElementChild;
     const [state, clock, button, note] = ["pt-state", "pt-clock", "pt-btn", "pt-note"].map((c) => box.querySelector("." + c));
+    box.classList.toggle("keep-space", !!keepSpace);
     function refresh() {
       const t = get && get();
+      box.classList.toggle("idle", !t);
+      if (!t && keepSpace) {
+        container.hidden = false;
+        state.textContent = "Timer";
+        clock.textContent = format(0);
+        button.textContent = "Pause";
+        note.textContent = "Starts with your first dart.";
+        return;
+      }
       container.hidden = !t;
       if (!t) return;
       const now = Date.now();
