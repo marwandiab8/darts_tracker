@@ -423,3 +423,55 @@ test("the live draft can carry the darts thrown at each number (misses included)
   await assertSucceeds(setDoc(doc(db, "liveDrafts", me), { uid: me, deviceId: "d", mode: "standard", entry: entry(), positions: {}, thrown: { "20": 3, "19": 1 }, total: 6, sessionDate: "2026-11-07", sessionTime: "21:00" }));
   await assertFails(setDoc(doc(asUser(other), "liveDrafts", me), { uid: other, entry: entry(), thrown: { "20": 3 } }));
 });
+
+// --- the live game, shared by the owner's devices (practice.html, public/live-sync.js) ---------------
+
+const liveVersion = (overrides = {}) => ({
+  uid: me, vid: "vid0000001", parent: "", by: "page000001", at: 1762560000000, phase: "play", rev: 1,
+  state: JSON.stringify({ v: 1, gameId: "g1", game: { kind: "x01" }, camSeq: 0 }), ...overrides,
+});
+
+test("the live game: its owner starts one, and each change is made from the latest version", async () => {
+  const db = asUser(me), ref = doc(db, "liveGames", me);
+  await assertSucceeds(setDoc(ref, liveVersion()));
+  await assertSucceeds(getDoc(ref));
+  // From the latest version: in. From an older one (another device changed it first): refused.
+  await assertSucceeds(setDoc(ref, liveVersion({ vid: "vid0000002", parent: "vid0000001", rev: 2 })));
+  await assertFails(setDoc(ref, liveVersion({ vid: "vid0000003", parent: "vid0000001", rev: 2 })));
+  await assertSucceeds(setDoc(ref, liveVersion({ vid: "vid0000004", parent: "vid0000002", rev: 3, phase: "over" })));
+  // A new game replaces whatever is there; leaving one is a version too.
+  await assertSucceeds(setDoc(ref, liveVersion({ vid: "vid0000005", parent: "", rev: 1 })));
+  await assertSucceeds(setDoc(ref, liveVersion({ vid: "vid0000006", parent: "vid0000005", rev: 2, phase: "none" })));
+  await assertSucceeds(deleteDoc(ref));
+});
+
+test("nobody else can read or change someone's live game", async () => {
+  await assertSucceeds(setDoc(doc(asUser(me), "liveGames", me), liveVersion()));
+  const theirs = asUser(other);
+  await assertFails(getDoc(doc(theirs, "liveGames", me)));
+  await assertFails(setDoc(doc(theirs, "liveGames", me), liveVersion({ uid: other, parent: "" })));
+  await assertFails(setDoc(doc(theirs, "liveGames", other), liveVersion()));
+  await assertFails(deleteDoc(doc(theirs, "liveGames", me)));
+});
+
+test("live game versions with the wrong shape are refused", async () => {
+  const ref = doc(asUser(me), "liveGames", me);
+  await assertFails(setDoc(ref, liveVersion({ phase: "paused" })));
+  await assertFails(setDoc(ref, liveVersion({ state: { game: 1 } })));
+  await assertFails(setDoc(ref, liveVersion({ state: "x".repeat(900001) })));
+  await assertFails(setDoc(ref, liveVersion({ rev: 0 })));
+  await assertFails(setDoc(ref, liveVersion({ rev: 1.5 })));
+  await assertFails(setDoc(ref, liveVersion({ vid: "short" })));
+  await assertFails(setDoc(ref, liveVersion({ at: "now" })));
+  await assertFails(setDoc(ref, liveVersion({ extra: true })));
+  const { by, ...noBy } = liveVersion();
+  await assertFails(setDoc(ref, noBy));
+  await assertSucceeds(setDoc(ref, liveVersion({ state: "x".repeat(899000) })));
+});
+
+test("a saved bot game can be saved under the live game's id, once", async () => {
+  const db = asUser(me), ref = doc(db, "botGames", "game-id-1");
+  await assertSucceeds(setDoc(ref, botGame()));
+  await assertSucceeds(getDoc(ref));
+  await assertFails(setDoc(ref, botGame({ result: "lost" })));
+});

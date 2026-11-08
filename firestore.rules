@@ -47,6 +47,20 @@ service cloud.firestore {
         && validPositions(data);
     }
 
+    // A version of a live game or session (see match /liveGames below): the game itself is JSON text.
+    function validLiveGame(data) {
+      return data.keys().hasOnly(['uid', 'vid', 'parent', 'by', 'at', 'phase', 'rev', 'state'])
+        && data.keys().hasAll(['uid', 'vid', 'parent', 'by', 'at', 'phase', 'rev', 'state'])
+        && data.uid == request.auth.uid
+        && data.vid is string && data.vid.size() >= 8 && data.vid.size() <= 40
+        && data.parent is string && data.parent.size() <= 40
+        && data.by is string && data.by.size() >= 1 && data.by.size() <= 40
+        && data.at is number
+        && data.phase in ['play', 'over', 'none']
+        && data.rev is int && data.rev >= 1
+        && data.state is string && data.state.size() <= 900000;
+    }
+
     function optionalNumber(data, key, low, high) {
       return !data.keys().hasAny([key]) || (data[key] is number && data[key] >= low && data[key] <= high);
     }
@@ -179,6 +193,27 @@ service cloud.firestore {
       allow read, delete: if signedIn() && request.auth.uid == uid;
       allow create, update: if signedIn() && request.auth.uid == uid
         && validDraft(request.resource.data);
+    }
+
+    // The game being played against the bot or a friend (practice.html, public/live-sync.js), the
+    // same on all the owner's devices: one document, a new version of it with each change. A
+    // version must be made from the latest one (its parent), so when two devices change the game
+    // at the same moment only the first gets in, and the other takes that one; a new game
+    // (parent '') replaces whatever is there.
+    match /liveGames/{uid} {
+      allow read, delete: if signedIn() && request.auth.uid == uid;
+      allow create: if signedIn() && request.auth.uid == uid && validLiveGame(request.resource.data);
+      allow update: if signedIn() && request.auth.uid == uid && validLiveGame(request.resource.data)
+        && (request.resource.data.parent == resource.data.vid || request.resource.data.parent == '');
+    }
+
+    // The tracker's session being entered (index.html), shared the same way: it replaces the
+    // older liveDrafts document, which a page opened before this change still writes.
+    match /liveSessions/{uid} {
+      allow read, delete: if signedIn() && request.auth.uid == uid;
+      allow create: if signedIn() && request.auth.uid == uid && validLiveGame(request.resource.data);
+      allow update: if signedIn() && request.auth.uid == uid && validLiveGame(request.resource.data)
+        && (request.resource.data.parent == resource.data.vid || request.resource.data.parent == '');
     }
 
     // Saved sessions history.

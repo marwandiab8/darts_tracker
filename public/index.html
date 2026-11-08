@@ -536,6 +536,7 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="practice-timer.js?v=2"></script>
+<script src="live-sync.js?v=1"></script>
 <script src="board-vision.js?v=7"></script>
 <script src="board-camera.js?v=7"></script>
 
@@ -705,17 +706,23 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
     if (el) el.textContent = text || "";
   }
 
-  // ---- Live draft sync (instant cross-device updates) ----
+  // ---- The session being entered, the same on every device (live-sync.js) ----
+  // liveSessions/{uid} holds it: what is entered, where the darts landed, the darts thrown at each
+  // number, Undo, the last dart's dot, the practice timer, the date and time. Every device signed in
+  // follows each change, and any of them can make one; a change made at the same moment as another
+  // device's doesn't get in, and that device takes the other's. A camera dart carries the station's
+  // count (seq), so it goes in once however many devices saw it (trackerCamSeq), and a camera dart put
+  // in here whose version didn't get in goes in again on top of the one that did.
+  // (It used to be liveDrafts/{uid}, written over by whichever device wrote last.)
   const deviceId = (localStorage.getItem("dt_deviceId") || (crypto.randomUUID ? crypto.randomUUID() : ("dev_" + Math.random().toString(16).slice(2))));
   localStorage.setItem("dt_deviceId", deviceId);
+  const LS = window.LiveSync;
 
-  let liveDraftUnsub = null;
+  let liveSession = null;
   let draftWriteTimer = null;
-  let suppressLocalEchoUntil = 0;
-
-  function liveDraftRef(uid) {
-    return db.collection("liveDrafts").doc(uid);
-  }
+  let trackerCamSeq = Number(localStorage.getItem("dt_draftCamSeq")) || 0;
+  let trackerCamPending = [];
+  function saveCamSeq() { try { localStorage.setItem("dt_draftCamSeq", String(trackerCamSeq)); } catch (_) { /* private mode */ } }
 
   function deepClone(obj) { return JSON.parse(JSON.stringify(obj || {})); }
 
@@ -748,78 +755,104 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
     applyEntryModeUI();
   }
 
+  function setSyncText(text, connected) {
+    document.getElementById("syncText").textContent = text;
+    if (connected !== undefined) document.getElementById("syncPill").classList.toggle("status-connected", !!connected);
+  }
 
+  function draftState() {
+    return {
+      v: 1, mode: scoreMode, entry: currentEntry, positions: cleanPositions(currentPos, currentEntry), thrown: cleanThrown(currentThrown),
+      undo: JSON.parse(JSON.stringify(tapStack.slice(-30))), last: lastTap || null, timer: sessionTimer || null, camSeq: trackerCamSeq,
+      total: parseInt(document.getElementById("sessionTotal").textContent || "0", 10),
+      sessionDate: document.getElementById("sessionDate").value || "",
+      sessionTime: document.getElementById("sessionTime").value || ""
+    };
+  }
 
   function scheduleDraftWrite() {
-    const user = auth.currentUser;
-    if (!user) return;
-    if (Date.now() < suppressLocalEchoUntil) return; // avoid immediate ping-pong after applying remote changes
-
+    if (!auth.currentUser || !liveSession) return;
     if (draftWriteTimer) clearTimeout(draftWriteTimer);
-    draftWriteTimer = setTimeout(async () => {
-      try {
-        document.getElementById("syncText").textContent = "Syncing...";
-        await liveDraftRef(user.uid).set({
-          uid: user.uid,
-          deviceId,
-          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-          mode: scoreMode,
-          entry: currentEntry,
-          positions: cleanPositions(currentPos, currentEntry),
-          thrown: cleanThrown(currentThrown),
-          total: parseInt(document.getElementById("sessionTotal").textContent || "0", 10),
-          sessionDate: document.getElementById("sessionDate").value || "",
-          sessionTime: document.getElementById("sessionTime").value || ""
-        }, { merge: true });
-        document.getElementById("syncText").textContent = "Connected";
-      } catch (err) {
-        console.error("Live draft write failed", err);
-        document.getElementById("syncText").textContent = "Offline";
-      }
+    draftWriteTimer = setTimeout(() => {
+      draftWriteTimer = null;
+      if (!liveSession) return;
+      setSyncText("Syncing...");
+      liveSession.write("play", draftState());
     }, 80);
   }
 
+  // A camera dart put in here: kept until its version is in, in case it has to go in again.
+  function noteTrackerCamera(e) {
+    if (!e.seq) return;
+    trackerCamSeq = e.seq; saveCamSeq();
+    if (!e.seenAt) e.seenAt = Date.now();
+    trackerCamPending = trackerCamPending.concat([e]).slice(-20);
+  }
+
+  // The session as another device left it (or the latest version, when this device's change didn't get in).
+  function adoptDraft(v) {
+    const data = v && v.state;
+    if (!data) return; // nothing there yet: this device's own entry stays
+    if (draftWriteTimer) { clearTimeout(draftWriteTimer); draftWriteTimer = null; }
+    if (data.mode && normMode(data.mode) !== scoreMode) applyScoreModeUI(data.mode);
+    currentEntry = deepClone(data.entry || {});
+    currentPos = cleanPositions(data.positions, currentEntry);
+    currentThrown = cleanThrown(data.thrown);
+    if (data.undo !== undefined) tapStack = Array.isArray(data.undo) ? data.undo.slice(-30) : [];
+    if (data.last !== undefined) lastTap = data.last || null;
+    if (data.timer !== undefined) { sessionTimer = data.timer || null; saveSessionTimer(); }
+    if (data.camSeq !== undefined) { trackerCamSeq = Number(data.camSeq) || 0; saveCamSeq(); }
+    persistDraft();
+    updateUIFromEntry(currentEntry, { skipFocused: true });
+    drawBoard();
+    // Keep date/time in sync (also skip if user is actively editing those fields)
+    const dEl = document.getElementById("sessionDate");
+    const tEl = document.getElementById("sessionTime");
+    if (document.activeElement !== dEl && data.sessionDate && dEl.value !== data.sessionDate) dEl.value = data.sessionDate;
+    if (document.activeElement !== tEl && data.sessionTime && tEl.value !== data.sessionTime) tEl.value = data.sessionTime;
+    setSyncText("Connected", true);
+    // Camera darts put in here that the version that got in doesn't have go in again, on top of it.
+    const redo = trackerCamPending.filter(e => e.seq > trackerCamSeq && Date.now() - e.seenAt < 15000 && (e.tries = (e.tries || 0) + 1) <= 2);
+    trackerCamPending = [];
+    redo.forEach(e => onTrackerCamera(e));
+  }
+
   function startLiveDraft(uid) {
-    if (liveDraftUnsub) liveDraftUnsub();
-    liveDraftUnsub = liveDraftRef(uid).onSnapshot(doc => {
-      if (!doc.exists) return;
-      const data = doc.data() || {};
-      if (data.deviceId && data.deviceId === deviceId) return; // ignore our own writes
-
-      const incomingMode = data.mode || "";
-      const incomingEntry = data.entry || {};
-      const incomingDate = data.sessionDate || "";
-      const incomingTime = data.sessionTime || "";
-
-      if (incomingMode && normMode(incomingMode) !== scoreMode) {
-        applyScoreModeUI(incomingMode);
-      }
-
-      // Apply incoming state
-      const incomingPos = cleanPositions(data.positions, incomingEntry);
-      const incomingThrown = data.thrown ? cleanThrown(data.thrown) : null;
-      if (!entryEquals(incomingEntry, currentEntry) || !entryEquals(incomingPos, cleanPositions(currentPos, currentEntry))
-          || (incomingThrown && !entryEquals(incomingThrown, cleanThrown(currentThrown)))) {
-        currentEntry = deepClone(incomingEntry);
-        currentPos = incomingPos;
-        if (incomingThrown) currentThrown = incomingThrown;
-        persistDraft();
-        suppressLocalEchoUntil = Date.now() + 250; // prevent ping-pong
-        updateUIFromEntry(currentEntry, { skipFocused: true });
-        drawBoard();
-      }
-      // Keep date/time in sync (also skip if user is actively editing those fields)
-      const dEl = document.getElementById("sessionDate");
-      const tEl = document.getElementById("sessionTime");
-      if (document.activeElement !== dEl && incomingDate && dEl.value !== incomingDate) dEl.value = incomingDate;
-      if (document.activeElement !== tEl && incomingTime && tEl.value !== incomingTime) tEl.value = incomingTime;
-
-      document.getElementById("syncPill").classList.add("status-connected");
-      document.getElementById("syncText").textContent = "Connected";
-    }, err => {
-      console.error("Live draft listener error", err);
-      document.getElementById("syncText").textContent = "Offline";
+    stopLiveDraft();
+    if (!LS) return;
+    let first = true;
+    liveSession = LS.createLiveDoc({
+      ref: db.collection("liveSessions").doc(uid), uid,
+      onRemote: (v) => {
+        if (first) { first = false; if (!v) { migrateDraft(uid); return; } }
+        adoptDraft(v);
+      },
+      onSaved: (v) => { trackerCamPending = trackerCamPending.filter(e => e.seq > v.cam); setSyncText("Connected", true); },
+      onRefused: (v, error) => {
+        if (error && error.code === "permission-denied") return; // another device's change got in first: its version follows
+        console.error("Live session write failed", error);
+        setSyncText("Offline", false);
+      },
+      onError: (error) => { console.error("Live session listener error", error); setSyncText("Offline", false); }
     });
+    liveSession.start();
+  }
+
+  function stopLiveDraft() {
+    if (draftWriteTimer) { clearTimeout(draftWriteTimer); draftWriteTimer = null; }
+    if (liveSession) liveSession.stop();
+    liveSession = null;
+  }
+
+  // The first time after the move to liveSessions: the session as the older shared draft has it, if
+  // another device wrote it there (as the old listener would have taken it).
+  async function migrateDraft(uid) {
+    try {
+      const snap = await db.collection("liveDrafts").doc(uid).get();
+      const data = snap.exists ? snap.data() : null;
+      if (!data || !data.entry || data.deviceId === deviceId || !liveSession || liveSession.latest) return;
+      adoptDraft({ state: { mode: data.mode, entry: data.entry, positions: data.positions, thrown: data.thrown, sessionDate: data.sessionDate, sessionTime: data.sessionTime } });
+    } catch (_) { /* nothing to bring over */ }
   }
 
 
@@ -960,8 +993,7 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
   function stopListeners() {
     if (sessionsUnsub) sessionsUnsub();
     sessionsUnsub = null;
-    if (liveDraftUnsub) liveDraftUnsub();
-    liveDraftUnsub = null;
+    stopLiveDraft();
     sessionsAll = [];
     sessions = [];
   }
@@ -1459,10 +1491,12 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
     else if (e.type === "ready" && camCheckWarning) setCamNote("Camera on. " + camCheckWarning, true);
     else if (e.type === "ready") setCamNote("Camera on: watching the board.");
     else if (e.type === "takeout") {
+      if (e.seq && e.seq <= trackerCamSeq) return; // already in: another device watching the cameras put it in
       // Darts pulled out part way through a number: the cameras missed some (a bounce-out, a dart they
       // couldn't see), and those count as misses, so the next darts go to the next number.
       const aim = aimTarget(), n = aim ? dartsThrownAt(aim) : 0;
       if (aim && n > 0 && n < 3) {
+        noteTrackerCamera(e);
         tapStack.push({ target: aim, prev: (currentEntry[aim] || ["-","-","-"]).slice(), prevPos: (currentPos[aim] || [null, null, null]).slice(), prevThrown: currentThrown[aim], prevLast: lastTap });
         currentThrown[aim] = 3;
         persistDraft(); updateUIFromEntry(currentEntry); scheduleDraftWrite(); drawBoard();
@@ -1471,6 +1505,8 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
     }
     else if (e.type === "unreadable") setCamNote("The cameras saw something but couldn't read it. Tap the board for that dart.", true);
     else if (e.type === "dart") {
+      if (e.seq && e.seq <= trackerCamSeq) return; // already in: another device watching the cameras put it in
+      noteTrackerCamera(e);
       const x = Math.round(e.app.x * 10000) / 10000, y = Math.round(e.app.y * 10000) / 10000;
       const hit = BoardVision.classify(x, y, BoardVision.APP);
       const done = applyBoardHit(hit.target ? { target: hit.target, ring: hit.ring, x, y } : null);

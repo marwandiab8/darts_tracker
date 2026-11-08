@@ -401,6 +401,7 @@
      one, which throws inside announce()'s catch-all and looks like "no sound at all". -->
 <script src="practice-engine.js?v=6"></script>
 <script src="practice-timer.js?v=2"></script>
+<script src="live-sync.js?v=1"></script>
 <script src="board-vision.js?v=7"></script>
 <script src="board-camera.js?v=7"></script>
 <script>
@@ -471,6 +472,22 @@
   // above, which just holds the two sides' names - this tracks the running score across games.
   let series = null;
   let lastMessage = "", reviewing = false, pendingRecord = null, savedGames = [];
+
+  // --- the same game on every device --------------------------------------------------------------------
+  // The game on the screen is the account's live game (live-sync.js): liveGames/{uid} holds it, every
+  // device signed in shows it, and any of them can play it - a dart tapped on the iPad, a dart the
+  // cameras saw, the bot's darts. A device opening this page joins a game in play. The bot's darts, a
+  // finished visit passing over, and a match's next game are done by the device that made the latest
+  // change; the others watch, and take over if it goes quiet (see watch). Each camera dart carries the
+  // station's count (seq), and goes in once however many devices saw it (camSeq).
+  const L = window.LiveSync;
+  // The settings that are the game's (the same on every device); entry, camera and mute stay each device's own.
+  const GAME_SETTINGS = ["kind", "startScore", "doubleOut", "rank", "first", "opponent", "oppName", "oppEmail", "seriesTarget", "confirm"];
+  const pickSettings = (s) => Object.fromEntries(GAME_SETTINGS.filter((k) => s && s[k] !== undefined).map((k) => [k, s[k]]));
+  const LIVE_JOIN_MS = 30 * 60 * 1000; // a game changed this recently is joined; an older one is offered to resume
+  const TAKE_OVER_MS = 3000;           // how long a device stays quiet before another one does its job
+  let live = null, gameId = "", over = null, camSeq = 0, camPending = [], watchTimer = null, botLoop = false;
+  const newGameId = () => (L ? L.newId() : Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
 
   function el(tag, className, text) {
     const node = document.createElement(tag);
@@ -899,8 +916,159 @@
 
   // A game in play is kept on this device, and so is one waiting on the bot's checkout (botWonWaiting),
   // so a reload comes back to it rather than to the bot's last dart.
+  function saveLocal() {
+    if (game && !reviewing && (!game.winner || (game.winner === "bot" && !versus())) && !editing) {
+      store.set(GAME_KEY, { game, startedAt, settings, match, series, timer, gameId, rev: live && live.latest ? live.latest.rev : 0, at: Date.now() });
+    }
+  }
+
+  // Every change to the game: kept on this device, and passed to the others.
   function persistGame() {
-    if (game && (!game.winner || (game.winner === "bot" && !versus())) && !editing) store.set(GAME_KEY, { game, startedAt, settings, match, series, timer });
+    pushLive();
+    saveLocal();
+  }
+
+  const livePhase = () => (!game ? "none" : reviewing ? "over" : "play");
+  function liveState() {
+    return { v: 1, gameId, game, editing, startedAt, settings: pickSettings(settings), match, series, timer, camSeq, msg: lastMessage, over };
+  }
+  // This change goes to the other devices, and this device does what comes next by itself (drive).
+  function pushLive(options) {
+    if (!live || !game) return;
+    clearWatch();
+    live.write(livePhase(), liveState(), options);
+    setTimeout(drive, 0);
+  }
+
+  // Whether the bot is to throw now (against the bot, its visit not over, nobody correcting a visit).
+  const botTurnNow = () => !!game && !versus() && !reviewing && !editing && game.turn === "bot" && !game.winner;
+  // The bot's next dart lands in the same place whichever device works it out: from the game and how
+  // far into it the bot is (see watch, for another device taking over its turn).
+  function botSeed() {
+    const key = gameId + "|" + game.visits.length + "|" + game.visitDarts.length + "|" + game.darts.bot.length;
+    let h = 2166136261;
+    for (let i = 0; i < key.length; i++) { h ^= key.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  }
+
+  // The device that made the latest change does the next step that happens by itself: the bot's
+  // darts, passing a finished visit over. (A match's next game is started where the game was finished.)
+  function drive() {
+    if (!game || reviewing || (live && live.latest && live.latest.by !== live.by)) return;
+    if (botTurnNow() && !botLoop) runBot();
+    else if (game.visitDone && !game.winner && humanTurn() && !settings.confirm && !keypadActive() && !passTimer) scheduleAutoPass();
+  }
+
+  // The other devices wait for it, and do the step themselves if no change comes for a while - its
+  // page was closed, or the iPad went to sleep - so a game never hangs on a device nobody is using.
+  function watch() {
+    clearWatch();
+    if (!game) return;
+    let wait = 0, act = null;
+    if (reviewing) {
+      if (series && !E.seriesDecided(series) && over && over.result !== "abandoned") { wait = NEXT_GAME_DELAY; act = startNextSeriesGame; }
+    } else if (botTurnNow()) { wait = BOT_DELAY + BOT_PAUSE; act = runBot; }
+    else if (game.visitDone && !game.winner && humanTurn() && !settings.confirm && !keypadActive()) { wait = PASS_DELAY_BUST; act = passTurn; }
+    if (!act) return;
+    const fire = () => {
+      watchTimer = null;
+      if (document.visibilityState === "hidden") { watchTimer = setTimeout(fire, TAKE_OVER_MS); return; }
+      act();
+    };
+    watchTimer = setTimeout(fire, wait + TAKE_OVER_MS);
+  }
+  function clearWatch() { if (watchTimer) { clearTimeout(watchTimer); watchTimer = null; } }
+
+  // This device stops doing the game's next steps (another one made the latest change).
+  function stopDriving() {
+    cancelAutoPass(); cancelNextGameTimer(); clearWatch();
+    botToken++; botLoop = false; botBusy = false;
+  }
+
+  // The account's live game, kept up to date while signed in.
+  function startLive(uid) {
+    stopLive();
+    if (!L) return;
+    live = L.createLiveDoc({
+      ref: db.collection("liveGames").doc(uid), uid,
+      onRemote: onLive,
+      onSaved: (v) => { camPending = camPending.filter((e) => e.seq > v.cam); },
+      onRefused: (v, error) => { if (!error || error.code !== "permission-denied") console.warn("The game could not be passed to your other devices:", error && error.message); },
+      onError: (error) => console.warn("Your other devices' game can't be followed:", error && error.message),
+    });
+    live.start();
+  }
+  function stopLive() {
+    if (live) live.stop();
+    live = null;
+  }
+
+  // A version of the game from another device (or the latest one, when this device's change didn't get in).
+  function onLive(v) {
+    if (!game) {
+      // The setup screen: join a game being played, or offer an older one.
+      if (v && v.phase === "play" && v.state && looksLikeGame(v.state.game, true) && Date.now() - v.at < LIVE_JOIN_MS) adoptLive(v);
+      else checkResume();
+      return;
+    }
+    adoptLive(v);
+  }
+
+  function adoptLive(v) {
+    const s = v && v.state;
+    if (!v || v.phase === "none" || !s || !looksLikeGame(s.game, true)) {
+      // Left on another device before anything was thrown (or discarded there).
+      if (v && v.phase === "none" && game && !reviewing) { showSetup(); $("status").textContent = ""; }
+      else if (!game) checkResume();
+      return;
+    }
+    const same = !!game && String(s.gameId) === gameId;
+    const before = same ? { visits: game.visits.length, turn: game.turn, phase: reviewing ? "over" : "play" } : null;
+    stopDriving();
+    game = s.game; gameId = String(s.gameId || ""); editing = s.editing || null; over = s.over || null;
+    startedAt = Number(s.startedAt) || Date.now();
+    if (s.match && s.match.names && typeof s.match.human === "boolean") match = s.match;
+    series = s.series || null;
+    timer = s.timer || null;
+    camSeq = Number(s.camSeq) || 0;
+    lastMessage = typeof s.msg === "string" ? s.msg : "";
+    Object.assign(settings, pickSettings(s.settings));
+    store.set(SETTINGS_KEY, settings);
+    applySettingsToForm();
+    if (!before || before.turn !== game.turn) { kpText = ""; kpAsking = false; }
+    if (v.phase === "over" && over) {
+      reviewing = true;
+      store.remove(GAME_KEY); persistSeries();
+      showOver(false);
+      // Its record, saved by the device it was finished on, goes into the list here too.
+      if (!before || before.phase !== "over") setTimeout(() => { if (user) loadGames(); }, 2500);
+    } else {
+      reviewing = false;
+      if ($("gameCard").classList.contains("hidden") || !$("overCard").hidden) showGame();
+      botBusy = botTurnNow();
+      saveLocal();
+      render();
+    }
+    // A visit finished on the other device is called out here too.
+    if (before && game.visits.length > before.visits) announce(game.visits[game.visits.length - 1]);
+    watch();
+    redoCamera();
+  }
+
+  // A camera dart put in here: kept until its version is in, in case it has to go in again.
+  function noteCamera(e) {
+    if (!e.seq) return;
+    camSeq = e.seq;
+    e.gameId = gameId;
+    if (!e.seenAt) e.seenAt = Date.now();
+    camPending = camPending.concat([e]).slice(-20);
+  }
+  // This device's version didn't get in (another device changed the game at the same moment): the
+  // camera darts it had put in, that the version that did get in doesn't have, go in again on top.
+  function redoCamera() {
+    const redo = camPending.filter((e) => e.seq > camSeq && e.gameId === gameId && Date.now() - e.seenAt < 15000 && (e.tries = (e.tries || 0) + 1) <= 2);
+    camPending = [];
+    redo.forEach((e) => onCameraEvent(e));
   }
 
   // Seconds played, by the timer.
@@ -914,8 +1082,10 @@
   function noteActivity(event) {
     if (!timer || !game || game.winner || reviewing) return;
     if (event && event.target && event.target.closest && event.target.closest(".ptimer")) return;
+    const wasPaused = T.isPaused(timer, Date.now());
     T.activity(timer, Date.now());
-    persistGame();
+    // The other devices only need to hear of it when it starts the timer again: the next dart carries the rest.
+    if (wasPaused) persistGame(); else saveLocal();
     timerView.refresh();
   }
 
@@ -946,10 +1116,12 @@
     const target = Number(settings.seriesTarget);
     series = SERIES_TARGETS.includes(target) ? E.createSeries({ target, first: settings.first }) : null;
     game = E.createGame({ kind: settings.kind, startScore: settings.startScore, doubleOut: settings.doubleOut, first: series ? series.nextFirst : settings.first });
+    gameId = newGameId(); over = null;
     startedAt = Date.now(); reviewing = false; lastMessage = ""; pendingRecord = null;
     timer = T.start(startedAt);
-    store.set(GAME_KEY, { game, startedAt, settings, match, series, timer });
     showGame();
+    pushLive({ fresh: true }); // a new game, in place of whatever the other devices had
+    saveLocal();
     render();
     if (game.turn === "bot" && !versus()) runBot();
   }
@@ -958,13 +1130,15 @@
   // running score. Who throws first alternates from whoever was first in the game just finished.
   function startNextSeriesGame() {
     if (!series || E.seriesDecided(series)) return;
-    cancelAutoPass(); cancelNextGameTimer(); editing = null;
+    stopDriving(); editing = null;
     game = E.createGame({ kind: settings.kind, startScore: settings.startScore, doubleOut: settings.doubleOut, first: series.nextFirst });
+    gameId = newGameId(); over = null;
     startedAt = Date.now(); reviewing = false; lastMessage = ""; pendingRecord = null;
     timer = T.start(startedAt);
-    store.set(GAME_KEY, { game, startedAt, settings, match, series, timer });
     store.remove(SERIES_KEY);
     showGame();
+    pushLive();
+    saveLocal();
     render();
     if (game.turn === "bot" && !versus()) runBot();
   }
@@ -985,9 +1159,8 @@
 
   function showSetup() {
     releaseGameHeight();
-    cancelAutoPass(); cancelNextGameTimer(); editing = null;
-    botToken++; botBusy = false;
-    game = null; reviewing = false;
+    stopDriving(); editing = null;
+    game = null; reviewing = false; over = null;
     stopCamera();
     $("gameCard").classList.add("hidden");
     $("setupCard").classList.remove("hidden");
@@ -996,9 +1169,10 @@
     drawGameBoard();
   }
 
-  function looksLikeGame(g) {
+  // anyWinner: a game from another device can also be won already (waiting for Finish game, or over).
+  function looksLikeGame(g, anyWinner) {
     return g && typeof g === "object" && (g.kind === "x01" || g.kind === "cricket") && g.darts && Array.isArray(g.darts.player) && Array.isArray(g.darts.bot)
-      && Array.isArray(g.visits) && Array.isArray(g.visitDarts) && (g.turn === "player" || g.turn === "bot") && (!g.winner || g.winner === "bot")
+      && Array.isArray(g.visits) && Array.isArray(g.visitDarts) && (g.turn === "player" || g.turn === "bot") && (anyWinner || !g.winner || g.winner === "bot")
       && (g.kind === "cricket" ? g.marks && g.points && g.marksThrown : g.remaining && Number.isFinite(g.remaining.player) && Number.isFinite(g.remaining.bot));
   }
 
@@ -1012,25 +1186,50 @@
   // note too), or a between-games one where only the series score survives (SERIES_KEY).
   let resumeKind = null;
 
+  const gameWords = (g) => (g.kind === "cricket" ? "Cricket" : String(g.startScore));
+  const againstWords = (m) => (m && m.human && m.names ? " against " + m.names.bot : "");
+  function showResume(button, text) {
+    $("resumeBox").classList.remove("hidden");
+    $("resumeBtn").textContent = button;
+    $("resumeText").textContent = text;
+  }
+
+  // A game kept on this device that the account's live game doesn't have: from before games were
+  // shared between devices, or played without a connection since.
+  function localAhead(saved) {
+    if (!saved.gameId || !live || !live.loaded) return true;
+    const v = live.latest, s = v && v.state;
+    if (!s || !s.gameId) return true;
+    if (String(s.gameId) === String(saved.gameId)) return v.phase === "play" && Number(saved.rev) > v.rev;
+    return Number(saved.at) > v.at;
+  }
+
   function checkResume() {
+    // The account's live game, from another device or from this one earlier.
+    const v = live && live.loaded ? live.latest : null, s = v && v.state;
+    if (v && v.phase === "play" && s && looksLikeGame(s.game, true)) {
+      resumeKind = "live";
+      const seriesNote = s.series && looksLikeSeries(s.series) ? " " + seriesScoreLine(s.series, s.match) + "." : "";
+      showResume("Resume game", "You have an unfinished " + gameWords(s.game) + " game" + againstWords(s.match) + " from " + new Date(Number(s.startedAt) || v.at).toLocaleString() + "." + seriesNote);
+      return;
+    }
+    if (v && v.phase === "over" && s && s.series && looksLikeSeries(s.series)) {
+      resumeKind = "liveSeries";
+      showResume("Continue match", "You have a match in progress" + againstWords(s.match) + ": " + seriesScoreLine(s.series, s.match) + ".");
+      return;
+    }
     const savedGame = store.get(GAME_KEY);
-    if (savedGame && looksLikeGame(savedGame.game)) {
+    if (savedGame && looksLikeGame(savedGame.game) && localAhead(savedGame)) {
       resumeKind = "game";
-      $("resumeBox").classList.remove("hidden");
-      $("resumeBtn").textContent = "Resume game";
       const g = savedGame.game, when = new Date(Number(savedGame.startedAt) || Date.now());
-      const against = savedGame.match && savedGame.match.human ? " against " + savedGame.match.names.bot : "";
       const seriesNote = savedGame.series && looksLikeSeries(savedGame.series) ? " " + seriesScoreLine(savedGame.series, savedGame.match) + "." : "";
-      $("resumeText").textContent = "You have an unfinished " + (g.kind === "cricket" ? "Cricket" : g.startScore) + " game" + against + " from " + when.toLocaleString() + "." + seriesNote;
+      showResume("Resume game", "You have an unfinished " + gameWords(g) + " game" + againstWords(savedGame.match) + " from " + when.toLocaleString() + "." + seriesNote);
       return;
     }
     const savedSeries = store.get(SERIES_KEY);
-    if (savedSeries && looksLikeSeries(savedSeries.series)) {
+    if (savedSeries && looksLikeSeries(savedSeries.series) && !(live && live.loaded && live.latest)) {
       resumeKind = "series";
-      $("resumeBox").classList.remove("hidden");
-      $("resumeBtn").textContent = "Continue match";
-      const against = savedSeries.match && savedSeries.match.human ? " against " + savedSeries.match.names.bot : "";
-      $("resumeText").textContent = "You have a match in progress" + against + ": " + seriesScoreLine(savedSeries.series, savedSeries.match) + ".";
+      showResume("Continue match", "You have a match in progress" + againstWords(savedSeries.match) + ": " + seriesScoreLine(savedSeries.series, savedSeries.match) + ".");
       return;
     }
     resumeKind = null;
@@ -1039,9 +1238,25 @@
 
   function resumeGame() {
     if (resumeKind === "series") { resumeSeriesBetweenGames(); return; }
-    const saved = store.get(GAME_KEY);
-    if (!saved || !looksLikeGame(saved.game)) { checkResume(); return; }
-    game = saved.game; startedAt = Number(saved.startedAt) || Date.now();
+    if (resumeKind === "liveSeries") { resumeLiveSeries(); return; }
+    let saved, fresh = true;
+    if (resumeKind === "live") {
+      const v = live && live.latest, s = v && v.state;
+      if (!s || !looksLikeGame(s.game, true)) { checkResume(); return; }
+      // A correction left half done is dropped: the game as it was before it.
+      saved = Object.assign({}, s, { game: s.editing && s.editing.backup ? JSON.parse(s.editing.backup) : s.game });
+      camSeq = Number(s.camSeq) || 0;
+      fresh = false;
+    } else {
+      saved = store.get(GAME_KEY);
+      if (!saved || !looksLikeGame(saved.game)) { checkResume(); return; }
+      // The live game's own copy goes on from its latest version; anything else is a new game for the other devices.
+      const s = live && live.latest && live.latest.state;
+      fresh = !(saved.gameId && s && String(s.gameId) === String(saved.gameId));
+    }
+    stopDriving();
+    game = saved.game; gameId = String(saved.gameId || "") || newGameId(); editing = null; over = null;
+    startedAt = Number(saved.startedAt) || Date.now();
     // The time away counts like any break: at most the 3 minutes before the timer paused itself.
     timer = T.restore(saved.timer, Date.now())
       || Object.assign(T.start(Date.now()), { activeMs: Math.max(0, Number(saved.playClock && saved.playClock.activeMs) || 0) });
@@ -1050,12 +1265,15 @@
     E.upgradeGame(game);
     if (saved.settings && RANK_IDS.includes(saved.settings.rank)) settings = Object.assign(settings, saved.settings);
     reviewing = false; lastMessage = "Game resumed."; pendingRecord = null;
-    showGame(); render();
-    if (game.turn === "bot" && !versus() && !game.winner) { // (a checkout waiting to be finished stays as it is)
-      // A bot turn was interrupted: start it over from the beginning of the visit.
-      while (game.visitDarts.length && E.undoDart(game)) { /* take back its unfinished darts */ }
-      runBot();
-    }
+    // A bot turn was interrupted: start it over from the beginning of the visit. (A checkout waiting
+    // to be finished stays as it is.)
+    const botsTurn = game.turn === "bot" && !versus() && !game.winner;
+    if (botsTurn) while (game.visitDarts.length && E.undoDart(game)) { /* take back its unfinished darts */ }
+    showGame();
+    pushLive({ fresh });
+    saveLocal();
+    render();
+    if (botsTurn) runBot();
   }
 
   // Between games in a series (the last game finished cleanly, nothing left to resume there) -
@@ -1067,6 +1285,17 @@
     match = saved.match && saved.match.names && typeof saved.match.human === "boolean" ? saved.match : { human: false, names: { player: "You", bot: rankName(settings.rank) + " bot" }, opponentEmail: "" };
     if (saved.settings && RANK_IDS.includes(saved.settings.rank)) settings = Object.assign(settings, saved.settings);
     startNextSeriesGame();
+  }
+
+  // The same, for a match whose last game was finished on another device.
+  function resumeLiveSeries() {
+    const s = live && live.latest && live.latest.state;
+    if (!s || !looksLikeSeries(s.series)) { checkResume(); return; }
+    series = s.series;
+    if (s.match && s.match.names && typeof s.match.human === "boolean") match = s.match;
+    Object.assign(settings, pickSettings(s.settings));
+    camSeq = Number(s.camSeq) || 0;
+    startNextSeriesGame(); // made from the live game's latest version, the last game's end
   }
 
   function scoreBlock(who) {
@@ -1425,6 +1654,7 @@
     if (game) {
       if (on) cancelAutoPass();
       else if (game.visitDone && !game.winner && humanTurn() && !keypadActive()) scheduleAutoPass();
+      if (!reviewing) persistGame();
       render();
     }
   }
@@ -1571,16 +1801,20 @@
     if (e.type === "blocked") return cameraSays("Camera: something is in front of the board.");
     if (e.type === "unreadable") return cameraSays("The cameras saw something but couldn't read it. Tap the board for that dart.", true);
     if (editing && (e.type === "dart" || e.type === "takeout")) return cameraSays("Camera paused while you correct a visit: tap where those darts landed.");
+    // Already in the game: another device watching the cameras put it in.
+    if ((e.type === "dart" || e.type === "takeout") && e.seq && e.seq <= camSeq) return;
     const myThrow = humanTurn() && !reviewing && !botBusy && !game.winner && !keypadActive();
     if (e.type === "dart") {
       if (!myThrow) return cameraSays("Camera saw " + describe(e.label) + ", but it isn't your turn to throw.", true);
       if (game.visitDone) return cameraSays("Camera saw " + describe(e.label) + ", but this visit's darts are all in. Undo one first if one was wrong.", true);
+      noteCamera(e);
       noteActivity();
       playerThrow({ x: Math.round(e.app.x * 10000) / 10000, y: Math.round(e.app.y * 10000) / 10000 });
       return cameraSays(e.uncertain ? "Camera: " + describe(e.label) + "? It wasn't sure. If it's wrong, Undo and tap where it landed." : "Camera: " + describe(e.label) + ".", e.uncertain);
     }
     if (e.type === "takeout") {
       if (!myThrow || !game.visitDarts.length) return cameraSays("Camera on: watching the board.");
+      noteCamera(e);
       noteActivity();
       let missed = 0;
       while (!game.visitDone && game.visitDarts.length < 3) { missDart(); missed += 1; }
@@ -1612,6 +1846,7 @@
     cancelAutoPass();
     game = base.game;
     kpText = ""; kpAsking = false; lastMessage = "";
+    persistGame();
     render();
   }
 
@@ -1621,6 +1856,7 @@
     game = JSON.parse(editing.backup);
     editing = null; kpText = ""; kpAsking = false;
     lastMessage = "Edit cancelled. The visit is as it was.";
+    persistGame();
     render();
   }
 
@@ -1658,22 +1894,22 @@
   // The bot throws one dart at a time so the darts can be watched landing.
   function runBot() {
     const token = ++botToken;
-    botBusy = true;
+    botBusy = true; botLoop = true;
     render();
-    const rng = E.mulberry32((Date.now() ^ Math.floor(Math.random() * 4294967296)) >>> 0);
     const step = () => {
       if (token !== botToken || !game) return;
+      if (!botTurnNow()) { botBusy = false; botLoop = false; render(); return; }
       if (game.visitDone) {
         setTimeout(() => {
-          if (token !== botToken || !game) return;
+          if (token !== botToken || !game || !botTurnNow()) return;
           announce(E.endVisit(game));
-          botBusy = false;
+          botBusy = false; botLoop = false;
           lastMessage = "";
           persistGame(); render(); // a checkout waits (see botWonWaiting)
         }, BOT_PAUSE);
         return;
       }
-      const result = E.throwDart(game, E.botThrow(E.botAim(game), settings.rank, rng));
+      const result = E.throwDart(game, E.botThrow(E.botAim(game), settings.rank, E.mulberry32(botSeed())));
       lastMessage = "Bot: " + visitText(result);
       persistGame(); render();
       setTimeout(step, BOT_DELAY);
@@ -1748,24 +1984,38 @@
     setTimeout(() => { if (!settled) { settled = true; stop(); note.className = "saved"; note.textContent = "Saved. The email has not been confirmed yet; it may still arrive."; } }, 45000);
   }
 
-  async function saveRecord(record, collectionName) {
+  // A game is saved under its own id (the live game's), so saving it twice - from two devices, or
+  // again after a reload - leaves one record.
+  async function putRecord(collectionName, record, id) {
+    const coll = db.collection(collectionName), ref = id ? coll.doc(id) : coll.doc();
+    try {
+      await ref.set(record);
+    } catch (error) {
+      // Already there (a saved game can't be changed, so the second save is refused): that's fine.
+      const there = id ? await ref.get().catch(() => null) : null;
+      if (!(there && there.exists)) throw error;
+    }
+    return ref;
+  }
+
+  async function saveRecord(record, collectionName, id) {
     collectionName = collectionName || "botGames";
     const note = $("saveNote");
     note.className = "saved"; note.textContent = "Saving…";
     $("retryBtn").classList.add("hidden");
-    store.set(UNSAVED_KEY, { coll: collectionName, record });
+    store.set(UNSAVED_KEY, { coll: collectionName, record, id: id || "" });
     try {
-      const ref = await db.collection(collectionName).add(record);
+      const ref = await putRecord(collectionName, record, id);
       store.remove(UNSAVED_KEY);
       pendingRecord = null;
-      savedGames.push({ id: ref.id, coll: collectionName, data: record });
+      if (!savedGames.some((g) => g.id === ref.id)) savedGames.push({ id: ref.id, coll: collectionName, data: record });
       note.className = "saved ok";
       note.textContent = collectionName === "versusGames" ? "Saved to your record." : "Saved to your practice record. It will show up in Time Left.";
       if (collectionName === "versusGames") watchEmail(ref, record);
       renderHistory(); renderHeat();
       return true;
     } catch (error) {
-      pendingRecord = { coll: collectionName, record };
+      pendingRecord = { coll: collectionName, record, id };
       note.className = "saved bad";
       note.textContent = "Could not save this game: " + (error && error.message ? error.message : error) + ". It is kept on this device.";
       $("retryBtn").classList.remove("hidden");
@@ -1782,26 +2032,41 @@
   }
 
   function finishGame(result) {
-    cancelAutoPass(); cancelNextGameTimer(); editing = null;
-    botToken++; botBusy = false;
+    stopDriving(); editing = null;
     store.remove(GAME_KEY);
     reviewing = true;
-    const s = E.summarize(game), won = result === "won", abandoned = result === "abandoned";
-    const gameLabel = gameName({ kind: game.kind, startScore: game.startScore, doubleOut: game.doubleOut });
-
     // Series bookkeeping: quitting mid-game ends the whole series, not just the one game - there
     // is no sensible score to carry forward from a game nobody finished.
-    let decided = false;
-    if (series && abandoned) {
+    if (series && result === "abandoned") {
       series = null; store.remove(SERIES_KEY);
     } else if (series) {
-      decided = E.recordSeriesGame(series, game.winner).decided;
+      E.recordSeriesGame(series, game.winner);
       persistSeries();
     }
+    over = { result };
+    lastMessage = "";
+    pushLive(); // the game-over screen on the other devices too (they don't save it again)
+    $("emailNote").textContent = ""; $("emailNote").className = "saved";
+    showOver(true);
+    if (versus()) saveRecord(buildVersusRecord(result), "versusGames", gameId);
+    else saveRecord(buildRecord(result), "botGames", gameId);
+  }
+
+  // The game-over screen. drive: this device finished the game, so it starts a match's next game.
+  function showOver(drive) {
+    const result = over ? over.result : "abandoned";
+    const s = E.summarize(game), won = result === "won", abandoned = result === "abandoned";
+    const gameLabel = gameName({ kind: game.kind, startScore: game.startScore, doubleOut: game.doubleOut });
+    const decided = !!series && E.seriesDecided(series);
 
     $("overCard").hidden = false;
     showRecord(true);
-    $("emailNote").textContent = ""; $("emailNote").className = "saved";
+    if (!drive) {
+      // Finished on another device, which saves it.
+      $("saveNote").textContent = ""; $("saveNote").className = "saved";
+      $("retryBtn").classList.add("hidden");
+      $("emailNote").textContent = ""; $("emailNote").className = "saved";
+    }
     if (versus()) {
       $("overTitle").textContent = abandoned ? "Game ended" : nameOf(won ? "player" : "bot") + " won!";
       $("overSub").textContent = gameLabel + ": " + nameOf("player") + " against " + nameOf("bot");
@@ -1820,7 +2085,8 @@
     $("nextGameBtn").classList.toggle("hidden", !midSeries);
     $("nextGameBtn").textContent = "Next game (starting automatically…)";
     $("againBtn").classList.toggle("hidden", midSeries);
-    if (midSeries) nextGameTimer = setTimeout(() => { nextGameTimer = null; startNextSeriesGame(); }, NEXT_GAME_DELAY);
+    cancelNextGameTimer();
+    if (midSeries && drive) nextGameTimer = setTimeout(() => { nextGameTimer = null; startNextSeriesGame(); }, NEXT_GAME_DELAY);
     const stats = $("overStats"); stats.textContent = "";
     const add = (value, label) => { const c = el("div", "stat"); c.append(el("b", "", String(value)), el("span", "", label)); stats.append(c); };
     const unit = game.kind === "x01" ? "3-dart avg" : "marks/round";
@@ -1835,13 +2101,10 @@
     }
     add(Math.max(1, Math.round(playedSeconds() / 60)) + " min", "time");
     add(game.round, "rounds");
-    lastMessage = "";
     const typed = game.darts.player.filter((d) => !hasPosition(d)).length + (versus() ? game.darts.bot.filter((d) => !hasPosition(d)).length : 0);
     $("overNote").textContent = typed ? typed + " of the darts were entered as scores, so they are not on the board or the heat map." : "";
     render();
     $("status").textContent = "Game over. Every dart is shown on the board.";
-    if (versus()) saveRecord(buildVersusRecord(result), "versusGames");
-    else saveRecord(buildRecord(result));
   }
 
   function quitGame() {
@@ -1851,9 +2114,14 @@
     const seriesNote = series ? " This also ends the match (" + seriesScoreLine(series) + ")." : "";
     const message = (thrown ? "End this game? It is saved as unfinished, with the darts you have thrown." : "Leave this game? Nothing has been thrown, so nothing is saved.") + seriesNote;
     if (!window.confirm(message)) return;
-    if (!thrown) { store.remove(GAME_KEY); store.remove(SERIES_KEY); series = null; showSetup(); return; }
+    if (!thrown) {
+      store.remove(GAME_KEY); store.remove(SERIES_KEY); series = null;
+      if (live) live.write("none", { v: 1, gameId, game: null, camSeq });
+      showSetup();
+      return;
+    }
     // Bring the visit that is in progress to a clean stop so the record is consistent.
-    botToken++; botBusy = false;
+    stopDriving();
     finishGame("abandoned");
   }
 
@@ -1864,9 +2132,9 @@
     const record = saved.record || saved, collectionName = saved.record ? saved.coll : "botGames";
     if (!record || record.uid !== user.uid || !["botGames", "versusGames"].includes(collectionName)) return;
     try {
-      const ref = await db.collection(collectionName).add(record);
+      const ref = await putRecord(collectionName, record, saved.id);
       store.remove(UNSAVED_KEY);
-      savedGames.push({ id: ref.id, coll: collectionName, data: record });
+      if (!savedGames.some((g) => g.id === ref.id)) savedGames.push({ id: ref.id, coll: collectionName, data: record });
       renderHistory(); renderHeat();
     } catch (_) { /* still offline or refused: it stays on the device for the next visit */ }
   }
@@ -1915,6 +2183,13 @@
   document.addEventListener("keydown", (event) => { if (!$("gameCard").classList.contains("hidden")) noteActivity(event); }, true);
   $("resumeBtn").addEventListener("click", resumeGame);
   $("discardBtn").addEventListener("click", () => {
+    if ((resumeKind === "live" || resumeKind === "liveSeries") && live && live.latest) {
+      const s = live.latest.state || {};
+      live.write("none", { v: 1, gameId: String(s.gameId || ""), game: null, camSeq: Number(s.camSeq) || camSeq });
+      store.remove(GAME_KEY); store.remove(SERIES_KEY);
+      checkResume();
+      return;
+    }
     store.remove(resumeKind === "series" ? SERIES_KEY : GAME_KEY);
     if (resumeKind === "game") store.remove(SERIES_KEY); // a mid-game resume's series note is the same series
     checkResume();
@@ -1930,7 +2205,7 @@
   $("againBtn").addEventListener("click", startGame);
   $("nextGameBtn").addEventListener("click", startNextSeriesGame);
   $("changeBtn").addEventListener("click", showSetup);
-  $("retryBtn").addEventListener("click", () => { if (pendingRecord) saveRecord(pendingRecord.record, pendingRecord.coll); });
+  $("retryBtn").addEventListener("click", () => { if (pendingRecord) saveRecord(pendingRecord.record, pendingRecord.coll, pendingRecord.id); });
   $("heatKind").addEventListener("change", renderHeat);
   $("heatWho").addEventListener("change", renderHeat);
   $("signInBtn").addEventListener("click", () => auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()));
@@ -1941,11 +2216,12 @@
     $("app").classList.toggle("hidden", !u);
     $("userPill").classList.toggle("hidden", !u);
     renderSound(); syncSetupVisibility();
-    if (!u) { botToken++; return; }
+    if (!u) { botToken++; stopLive(); return; }
     // Looked for the cameras before sign-in finished: look again, for the account's camera station.
     if (camFailed && camText === "setup") { camFailed = false; if (game) render(); }
     const name = u.displayName || u.email || "Signed in";
     $("userName").textContent = name; $("userName").title = name;
+    startLive(u.uid);
     checkResume();
     drawGameBoard(); drawHeat([]);
     loadGames().then(retryUnsavedFromEarlier);

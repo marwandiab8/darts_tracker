@@ -17,7 +17,7 @@ positions: { "20": [ {x: 0, y: -0.58}, {x: 0.02, y: -0.95}, null ], "BULL": [ {x
 - Retyping a slot in the table drops that slot's position, because the dart it described has changed. Slots that keep the same value keep their position. Undo restores both.
 - Taps that land off the board count as a miss, as before, and are not recorded.
 - Darts entered by the cameras ([camera-scoring.md](camera-scoring.md)) are stored the same way. The cameras measure on a real board, whose rings are narrower than the drawn one, so the position is stretched ring by ring to the spot on the drawn board that scores the same.
-- Positions also travel with the live draft, so a second device shows the same dots.
+- Positions also travel with the live session (`liveSessions/{uid}`, shared with the same versions as the bot game: see "On more than one device" in [bot-practice.md](bot-practice.md)), so a second device shows the same dots. Undo, the darts thrown at each number, the practice timer and the last dart's dot go with it, so Undo on the iPad takes back a dart the computer put in. It used to be `liveDrafts/{uid}`, which a page opened before the change still writes, and which a device takes once the first time it opens the new page.
 - Positions stay in the app. They are not sent to Time Left.
 
 ## Rules and deploying

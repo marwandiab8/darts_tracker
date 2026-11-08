@@ -15,7 +15,17 @@
 - **The bot** throws one dart at a time, drawn in blue. It aims for a checkout when it has one and treble 20 otherwise (Cricket: the highest number it has not closed, then points on numbers you have open).
 - **Levels:** Beginner, Casual, Club, League and Pro. A level is the spread of the bot's throws around its aim, as a fraction of the board radius: 0.30, 0.18, 0.12, 0.085 and 0.062. In a 501 game they average roughly 30, 42, 55, 72 and 95 per three darts, and `tests/practice-engine.test.cjs` checks the order and a sane range. Change `RANKS` in `public/practice-engine.js` to adjust them. There is no language model involved; it is all local and free.
 - **A match (more than one game):** "Play", when you set up a game, offers a single game or first-to-N (2, 3, 4, 5, 7, 9 or 11 wins) - the same choice works against the bot or another player. Who throws first alternates each game after the first, regardless of who won the last one. When a game inside a match ends, the score so far ("Match: You 2 - 1 Bot") is shown and "Next game" starts the next one with the running score kept; "Play again" and "Change setup" do not appear until the match itself is decided (or you quit, which ends the whole match, not just the game). Every game in a match is still saved individually, exactly as a single game would be - there is no separate "match" record. A match in progress is kept in the browser like an unfinished game is, and offered back ("Continue match") even between games, not only mid-game.
-- An unfinished game is kept in the browser, and the setup card offers to resume it. "Quit game" saves it as unfinished if you have thrown a dart.
+- An unfinished game is kept for your account (see below) and in the browser, and the setup card offers to resume it. "Quit game" saves it as unfinished if you have thrown a dart.
+
+## On more than one device
+
+The game is the same on every device signed in to your account: start it on the computer and the iPad joins it, and a dart, an Undo, a correction or the bot's darts on either one show on both. Any of them can be used to play. A device opening the page while a game is on (changed in the last half hour) goes straight into it; an older one is offered to resume.
+
+- The game is one document, `liveGames/{uid}`, rewritten with each change ([`public/live-sync.js`](../public/live-sync.js)). Each change is a new version made from the latest one, and the Firestore rules only take a version made from the latest: when two devices change the game at the same moment (both putting in the dart the cameras saw), only the first gets in, and the other takes that one.
+- **Cameras on both:** each camera dart carries the camera station's count (`seq`), and the game keeps the last one put in (`camSeq`), so a dart goes in once however many devices saw it. A camera dart a device put in whose version didn't get in (the other device changed something else at the same moment) goes in again on top of the version that did.
+- **The bot's darts, a finished visit passing over and a match's next game** are done by the device that made the latest change. The others wait, and do it themselves if nothing comes for a few seconds (that page was closed, or the iPad went to sleep). The bot's darts land in the same place wherever they are worked out (each is seeded from the game and how far into it the bot is), so a device taking over throws what the other would have.
+- **Finishing:** the device the game is finished on saves it, under the game's id, so it is saved once; the others show the same game-over screen. "Play again" or a match's next game on any device takes all of them along.
+- **Each device's own:** Board/Keypad, Camera on/off and Sound. "Press Enter" is the game's, the same on all of them. Every device calls the scores, so mute the one you don't want to hear.
 
 ## What is saved
 
@@ -59,6 +69,7 @@ Deploy the rules before hosting, or saving from the page is refused.
 
 - `public/practice-engine.js`: rules, scoring, checkouts, the bots and the heat map maths, with no page or Firebase code. The board geometry in it must match `drawBoard` and `scoreFromPoint` in `index.html`.
 - `public/practice.html`: the page.
+- `public/live-sync.js`: the game shared between devices (`tests/live-sync.test.cjs`).
 - `public/board-vision.js` and `public/board-camera.js`: reading darts from cameras (see `camera-scoring.md`).
 - `public/audio/calls/`: the pre-recorded voice clips for the 140+/Bust/No score/Game shot announcements, and where that voice came from (`README.md`).
 - `tests/practice-engine.test.cjs`, `tests/firestore.rules.test.cjs` and `functions/index.test.js`: the tests. `npm test` runs them all, and CI does too.
