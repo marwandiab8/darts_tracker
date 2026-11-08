@@ -160,17 +160,19 @@ test("matching the board copes with darts in it, and with a camera that moved", 
 });
 
 // Two cameras either side of the board and a little above the bull, like the NexiGo rig. Drawing
-// the board takes a moment, so one rig is shared; each test gets its own run of random darts.
+// the board takes a moment, so one rig is shared; each test gets its own run of random darts. The
+// light is soft, as on the real board (a dart's shadow is barely there); see the single-lamp test
+// for hard shadows.
 let shared = null;
 function rig(seed) {
   if (!shared) {
     const random = S.rng(11);
     const cams = [{ x: -170, y: -60, z: 420 }, { x: 170, y: -60, z: 420 }].map((pos) => S.camera({ pos, width: 1280, height: 720, hfov: 78 }));
     const views = cams.map((cam) => V.makeView(S.tapCalibration(cam, 1, random), 1280, 720));
-    const renders = cams.map((cam, i) => S.renderer(cam, views[i], { noise: 3, seed: 12 + i }));
-    shared = { views, renders };
+    const renders = cams.map((cam, i) => S.renderer(cam, views[i], { noise: 3, seed: 12 + i, shadow: 0.95 }));
+    shared = { views, renders, cams };
   }
-  return { random: S.rng(seed), views: shared.views, renders: shared.renders };
+  return { random: S.rng(seed), views: shared.views, renders: shared.renders, cams: shared.cams };
 }
 
 function randomDart(random) {
@@ -202,6 +204,27 @@ test("reads single darts from two cameras", () => {
   // that land right by a wire. These are floors to catch a regression, not a promise.
   assert.ok(errors[Math.floor(N / 2)] < 3, `median error ${errors[Math.floor(N / 2)].toFixed(1)} mm`);
   assert.ok(right / N >= 0.8, `${right} of ${N} right`);
+});
+
+test("under a single lamp (hard shadows beside every dart), the shadow option keeps darts readable", () => {
+  const { random, views, cams } = rig(13);
+  const renders = cams.map((cam, i) => S.renderer(cam, views[i], { noise: 3, seed: 22 + i, shadow: 0.72 }));
+  const empty = renders.map((r) => r([]));
+  const o = { shadow: true };
+  const errors = [];
+  let right = 0;
+  const N = 16;
+  for (let k = 0; k < N; k += 1) {
+    const dart = randomDart(random);
+    const after = renders.map((r) => r([dart]));
+    const f = V.fuse(views.map((view, i) => V.readView(view, V.diffMask(empty[i].data, after[i].data, view, o).mask, o)), o);
+    const truth = { x: dart.at.x / S.R, y: dart.at.y / S.R };
+    errors.push(f ? Math.hypot(f.real.x - truth.x, f.real.y - truth.y) * S.R : 99);
+    if (f && f.label === V.classify(truth.x, truth.y).label) right += 1;
+  }
+  errors.sort((a, b) => a - b);
+  assert.ok(errors[N >> 1] < 3, `median error ${errors[N >> 1].toFixed(1)} mm`);
+  assert.ok(right / N >= 0.75, `${right} of ${N} right`);
 });
 
 test("one camera on its own still reads a dart", () => {

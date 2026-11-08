@@ -649,7 +649,12 @@
   const DEFAULTS = {
     threshold: 30, // a pixel has changed when a colour channel moves by more than this (0-255)
     motionThreshold: 26, // the same, between one frame and the next, to tell when things hold still
-    shadow: true, // ignore pixels that only got darker, keeping their colour (a dart's shadow)
+    // Ignore pixels that only got darker, keeping their colour (a dart's shadow). Off by default:
+    // under soft or ring lighting darts cast no shadow worth the name, and the test also erases a
+    // grey or silver barrel over a white segment (darker, same colour). On the real board (Nov 7,
+    // 27 darts the player called) it read 22 right with it and 26 without. Turn it on for a board
+    // lit by a single lamp, where hard shadows land beside every dart.
+    shadow: false,
     shadowLo: 0.5,
     shadowHi: 0.92,
     shadowChroma: 0.07,

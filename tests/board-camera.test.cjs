@@ -128,3 +128,15 @@ test("starting the station again keeps the calibrations of the cameras it alread
   cams = db.docs.get("cameraStations/me").setup.cameras;
   assert.deepEqual(cams.map((c) => [c.deviceId, c.cal ? c.cal.H[0] : null]), [["a", 1], ["c", null]]);
 });
+
+test("the board's lighting setting is kept in the account alongside the cameras", async () => {
+  const db = fakeDb();
+  db.write("cameraStations/me", station());
+  await C.setStationOptions(db, "me", { shadow: true });
+  const st = C.createStation({ db, uid: "me", name: "Linux computer" });
+  await st.choose([{ deviceId: "dev", label: "OBS" }]);
+  await C.saveStationSetup(db, "me", db.docs.get("cameraStations/me").setup.cameras);
+  const setup = db.docs.get("cameraStations/me").setup;
+  assert.deepEqual(setup.options, { shadow: true }, "kept through choosing cameras and saving calibrations");
+  assert.ok(setup.cameras[0].cal, "and the calibration with it");
+});

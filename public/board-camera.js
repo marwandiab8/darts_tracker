@@ -147,7 +147,9 @@
   // With `recheck` (the default), a camera that has been knocked a little since it was calibrated
   // is followed for this session: its calibration is matched to the board again from a still.
   // With `background`, it keeps watching at full speed while the page is hidden (a camera station).
-  function createWatcher(setup, { onEvent = () => {}, onFrames = null, fps = 10, options = {}, recheck = true, background = false } = {}) {
+  function createWatcher(setup, { onEvent = () => {}, onFrames = null, fps = 10, options: callerOptions = {}, recheck = true, background = false } = {}) {
+    // How this board is lit (setup.options, e.g. { shadow: true } for hard shadows), then the caller's.
+    const options = Object.assign({}, (setup && setup.options) || {}, callerOptions);
     let cams = ready(setup);
     let streams = [], videos = [], views = [], canvases = [], stills = [], checks = [], detector = null, timer = null, running = false;
     const bgTimer = background ? workerTimer() : null;
@@ -427,12 +429,12 @@
 
     // Watch with the calibrated cameras; start again when the calibration changes.
     async function reconcile() {
-      const setup = { version: 1, cameras: chosen() };
+      const setup = { version: 1, cameras: chosen(), options: (doc && doc.setup && doc.setup.options) || {} };
       const calibrated = ready(setup);
       // What the watcher depends on, field by field (the account may return a map's fields in
       // another order, which must not count as a change).
       const lensKey = (l) => (l ? [l.cx, l.cy, l.s, l.k].join(",") : "");
-      const key = JSON.stringify(calibrated.map((c) => [c.deviceId, c.label, c.cal.H.join(","), lensKey(c.cal.lens)]));
+      const key = JSON.stringify(calibrated.map((c) => [c.deviceId, c.label, c.cal.H.join(","), lensKey(c.cal.lens)])) + "|shadow=" + !!setup.options.shadow;
       if (key === watchingKey && (watcher || !calibrated.length)) return;
       if (watcher) { watcher.stop(); watcher = null; }
       watchingKey = key;
@@ -656,6 +658,12 @@
     });
   }
 
+  // How the board is lit, for the station (kept in the account with the calibration):
+  // { shadow: true } when a single lamp casts hard shadows beside every dart.
+  function setStationOptions(db, uid, options) {
+    return stationRef(db, uid).set({ uid, setup: { options } }, { merge: true });
+  }
+
   // Saves calibrations made on another computer for the station's cameras.
   function saveStationSetup(db, uid, cameras) {
     return stationRef(db, uid).set({ uid, setup: { version: 1, cameras } }, { merge: true });
@@ -663,6 +671,6 @@
 
   root.DartCamera = {
     KEY, load, save, ready, listCameras, requestAccess, openStream, videoFor, still, pixelsOf, lensOptions, snap, explain, resolve, createWatcher,
-    isOnline, slimEvent, createStation, createRemoteWatcher, getStation, chooseWatcher, requestStills, saveStationSetup,
+    isOnline, slimEvent, createStation, createRemoteWatcher, getStation, chooseWatcher, requestStills, saveStationSetup, setStationOptions,
   };
 })(typeof self !== "undefined" ? self : this);

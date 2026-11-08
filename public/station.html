@@ -78,6 +78,7 @@
         <button type="button" class="secondary" id="stopBtn" disabled>Stop</button>
       </div>
       <label class="check"><input type="checkbox" id="auto"> Start by itself whenever this page opens</label>
+      <label class="check"><input type="checkbox" id="hardShadows"> Hard shadows beside the darts (the board is lit by a single lamp, not a ring light)</label>
     </div>
   </section>
 
@@ -92,8 +93,8 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
-<script src="board-vision.js?v=6"></script>
-<script src="board-camera.js?v=6"></script>
+<script src="board-vision.js?v=7"></script>
+<script src="board-camera.js?v=7"></script>
 <script>
 (function () {
   "use strict";
@@ -145,6 +146,7 @@
     // What the station used last (from the account), else what was picked here before.
     const saved = await C.getStation(db, user.uid);
     const savedCams = (saved && saved.setup && saved.setup.cameras) || [];
+    $("hardShadows").checked = !!(saved && saved.setup && saved.setup.options && saved.setup.options.shadow);
     [0, 1].forEach((i) => {
       const sel = $("sel" + i);
       sel.innerHTML = "";
@@ -165,6 +167,11 @@
   [0, 1].forEach((i) => $("sel" + i).addEventListener("change", () => { if (station) station.choose(choice()).catch((e) => setStatus(e.message, true)); }));
   $("name").addEventListener("change", () => { prefs.name = $("name").value.trim() || defaultName(); savePrefs(); });
   $("auto").addEventListener("change", () => { prefs.auto = $("auto").checked; savePrefs(); });
+  // Kept in the account with the calibration; a running station starts watching again with it.
+  $("hardShadows").addEventListener("change", () => {
+    if (!user) return;
+    C.setStationOptions(db, user.uid, { shadow: $("hardShadows").checked }).catch((e) => setStatus("Couldn't save that: " + e.message, true));
+  });
 
   // ---- running ------------------------------------------------------------------------------------------
   function setStatus(text, warn) {

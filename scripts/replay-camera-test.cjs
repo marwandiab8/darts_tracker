@@ -32,11 +32,12 @@ async function decode(dataUrl, width, height) {
 
   // The views exactly as the page made them.
   const cams = test.cameras;
+  const sameCamera = (a, b) => (a.deviceId && b.deviceId ? a.deviceId === b.deviceId : a.label === b.label);
   const views = cams.map((cam) => {
-    const shared = cams.filter((c) => c.label === cam.label).length > 1;
+    const shared = cams.filter((c) => sameCamera(c, cam)).length > 1;
     return V.makeView(cam.cal, cam.frame[0], cam.frame[1], shared ? { center: V.halfCenter(cam.cal) } : {});
   });
-  for (let i = 0; i < cams.length; i += 1) for (let j = i + 1; j < cams.length; j += 1) if (cams[i].label === cams[j].label) V.separateViews(views[i], views[j]);
+  for (let i = 0; i < cams.length; i += 1) for (let j = i + 1; j < cams.length; j += 1) if (sameCamera(cams[i], cams[j])) V.separateViews(views[i], views[j]);
   for (const [i, view] of views.entries()) {
     const cam = cams[i];
     const pose = view.pose ? `camera at ${(view.pose.x * 170).toFixed(0)}, ${(view.pose.y * 170).toFixed(0)} mm, ${(view.pose.height * 170).toFixed(0)} mm out` : "camera position unknown";
@@ -47,7 +48,7 @@ async function decode(dataUrl, width, height) {
     // calibration, to see how well calibration works on this board.
     if (cam.still && cam.frame) {
       const still = { data: await decode(cam.still, cam.frame[0], cam.frame[1]), width: cam.frame[0], height: cam.frame[1] };
-      const shared = cams.filter((c) => c.label === cam.label).length > 1;
+      const shared = cams.filter((c) => sameCamera(c, cam)).length > 1;
       const from = cam.saved || cam.cal;
       const lensOpts = shared && !(from.lens && from.lens.k) ? { center: V.halfCenter(from), size: Math.hypot(from.width / 2, from.height) / 2 } : {};
       const again = V.refineCalibration(from, still, Object.assign({ taps: false }, lensOpts));
@@ -72,13 +73,13 @@ async function decode(dataUrl, width, height) {
     if (truth) {
       withTruth += 1;
       if (f && f.label === truth.label) rightVsTruth += 1;
-      line += `, really ${truth.label}` + (f ? `, ${mm(f.real, truth)} mm off` : "");
+      line += `, really ${truth.label}` + (f && truth.x !== undefined ? `, ${mm(f.real, truth)} mm off` : "");
     }
     console.log(line);
     if (verbose || (truth && f && f.label !== truth.label)) {
       readings.forEach((r, i) => {
         if (!r.ok) { console.log(`    camera ${i + 1}: ${r.reason} (area ${r.area})`); return; }
-        const t = (p) => (truth ? `${mm(p, truth)} mm from the truth` : V.classify(p.x, p.y).label);
+        const t = (p) => (truth && truth.x !== undefined ? `${mm(p, truth)} mm from the truth` : V.classify(p.x, p.y).label);
         console.log(`    camera ${i + 1}: point ${t(r.tip)}, other end ${r.other ? t(r.other.tip) : "-"}, quality ${r.quality.toFixed(2)}, end sure ${r.endSure.toFixed(2)}, line ${r.lineOk ? "ok" : "weak"}, ${r.area} px in ${r.pieces} piece(s)`);
       });
       if (f) console.log(`    fused: cost ${f.cost !== undefined ? f.cost.toFixed(3) : "-"}, ${f.uncertain ? "unsure" : "sure"}${f.nearWire ? ", by a wire" : ""}`);
