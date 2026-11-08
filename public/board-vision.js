@@ -667,6 +667,7 @@
     // A share of everything watched: more change than this is a hand or a body, not a dart.
     bigShare: 0.09,
     emptyArea: 0.006, // the board counts as clear when it differs from the empty board by less
+    removedShare: 0.7, // a change that looks like the empty board again over this share of it is darts pulled out
   };
 
   // Brightness drift between two frames (the camera adjusting its exposure, a cloud): the middle
@@ -741,6 +742,22 @@
       }
     }
     return { mask, count, gain: g };
+  }
+
+  // Of the pixels in `mask`, the share where `cur` looks like the `empty` board again (within the
+  // change threshold, after the brightness drift between the two).
+  function backToEmpty(empty, cur, mask, view, options) {
+    const o = Object.assign({}, DEFAULTS, options);
+    if (!empty) return 0;
+    const g = gainOf(empty, cur, view);
+    let total = 0, same = 0;
+    for (let p = 0; p < mask.length; p += 1) {
+      if (!mask[p]) continue;
+      total += 1;
+      const i = p << 2;
+      if (Math.max(Math.abs(cur[i] - empty[i] * g), Math.abs(cur[i + 1] - empty[i + 1] * g), Math.abs(cur[i + 2] - empty[i + 2] * g)) <= o.threshold) same += 1;
+    }
+    return total ? same / total : 0;
   }
 
   // Connected pieces of a mask (8-connected), biggest first, each { pixels, area, x0, y0, x1, y1 }.
@@ -1233,6 +1250,7 @@
   //   { type: "dart", real, app, label, ... } a new dart, with what each camera read in `readings`
   //   { type: "unreadable", readings }        something dart-sized changed but no camera could read it
   //   { type: "takeout", darts }              the darts were pulled out: the board is clear again
+  //   { type: "removed" }                     a dart was pulled out, but others are still in
   //   { type: "blocked" }                     a big change (a hand, a person) that left no new dart
   //   { type: "quiet" }                       a change too small to be a dart (it may have bounced out)
   function createDetector(views, options) {
@@ -1261,6 +1279,24 @@
           darts = 0;
           events.push({ type: "takeout", darts: n });
         } else events.push({ type: "blocked" });
+        return events;
+      }
+      // Darts pulled out (one at a time, or with a hand too small to count as in the way) change
+      // the picture as much as darts going in, in the same places. But where it changed, it now
+      // looks like the empty board again: that is not a new dart.
+      const sized = cams.map((c, i) => masks[i].count >= o.dartArea * c.R2);
+      const back = cams.map((c, i) => (sized[i] ? backToEmpty(c.empty, cur[i], masks[i].mask, c.view, o) : 1));
+      if (sized.some(Boolean) && back.every((share) => share >= o.removedShare)) {
+        const clear = cams.every((c, i) => diffMask(c.empty, cur[i], c.view, o).count < o.emptyArea * c.R2);
+        cams.forEach((c, i) => { c.ref = cur[i]; if (clear) c.empty = cur[i]; });
+        if (clear) {
+          const n = darts;
+          darts = 0;
+          events.push({ type: "takeout", darts: n });
+        } else {
+          darts = Math.max(0, darts - 1);
+          events.push({ type: "removed" });
+        }
         return events;
       }
       const readings = cams.map((c, i) => readView(c.view, masks[i].mask, o));
@@ -1357,6 +1393,7 @@
     gainOf,
     countChanged,
     diffMask,
+    backToEmpty,
     components,
     fitStreak,
     cameraPose,

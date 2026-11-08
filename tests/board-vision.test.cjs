@@ -328,3 +328,30 @@ test("watching through a real camera's flicker: it still settles, reads the dart
   const after = feed(board([]), 8);
   assert.ok(after.includes("takeout"), after.join(","));
 });
+
+test("pulling darts out without a big hand in the picture is not read as a dart", () => {
+  const { views, renders } = rig(41);
+  const detector = V.createDetector(views);
+  let now = 0;
+  const feed = (darts, times) => {
+    const out = [];
+    for (let i = 0; i < times; i += 1) { now += 100; out.push(...detector.push(renders.map((r) => flicker(r(darts))), now)); }
+    return out;
+  };
+  const a = { at: { x: 4, y: -103 }, lean: { x: 0.05, y: -0.25 }, spin: 1.1 };
+  const b = { at: { x: -30, y: -120 }, lean: { x: -0.05, y: -0.3 }, spin: 2.0 };
+  feed([], 10);
+  const thrown = feed([a], 8).concat(feed([a, b], 8)).filter((e) => e.type === "dart");
+  assert.equal(thrown.length, 2, "two darts read");
+  // One pulled out, then the other: no dart for either; the second leaves the board clear.
+  const first = feed([a], 8);
+  assert.equal(first.filter((e) => e.type === "dart").length, 0, first.map((e) => e.type).join(","));
+  assert.ok(first.some((e) => e.type === "removed"), first.map((e) => e.type).join(","));
+  const second = feed([], 8);
+  assert.equal(second.filter((e) => e.type === "dart").length, 0, second.map((e) => e.type).join(","));
+  const out = second.find((e) => e.type === "takeout");
+  assert.ok(out, second.map((e) => e.type).join(","));
+  // And the next throw is read as usual.
+  const next = feed([b], 8).filter((e) => e.type === "dart");
+  assert.equal(next.length, 1);
+});
