@@ -148,8 +148,9 @@
   // is followed for this session: its calibration is matched to the board again from a still.
   // With `background`, it keeps watching at full speed while the page is hidden (a camera station).
   function createWatcher(setup, { onEvent = () => {}, onFrames = null, fps = 10, options: callerOptions = {}, recheck = true, background = false } = {}) {
-    // How this board is lit (setup.options, e.g. { shadow: true } for hard shadows), then the caller's.
-    const options = Object.assign({}, (setup && setup.options) || {}, callerOptions);
+    // What the station learned from your corrections (setup.learned, board-learn.js), how this board
+    // is lit (setup.options, e.g. { shadow: true } for hard shadows), then the caller's.
+    const options = Object.assign({}, learnedOptions(setup), (setup && setup.options) || {}, callerOptions);
     let cams = ready(setup);
     let streams = [], videos = [], views = [], canvases = [], stills = [], checks = [], detector = null, timer = null, running = false;
     const bgTimer = background ? workerTimer() : null;
@@ -312,6 +313,9 @@
   //                a rising `seq`, as the watcher gives them (darts, take-outs...), slimmed down.
 
   const STATIONS = "cameraStations";
+  // Settings the station learned from the darts you kept and corrected (board-learn.js, which only
+  // the station page loads; elsewhere nothing is learned).
+  const learnedOptions = (setup) => (root.BoardLearn && setup && setup.learned && setup.learned.options ? root.BoardLearn.cleanLearned(setup.learned.options) : {});
   const BEAT_MS = 20000, ONLINE_MS = 90000;
   const stationRef = (db, uid) => db.collection(STATIONS).doc(uid);
   const seenAt = (v) => (typeof v === "number" ? v : v && typeof v.toMillis === "function" ? v.toMillis() : 0);
@@ -351,11 +355,12 @@
   // computer for the others. onStatus(text, warn) says what it is doing; onEvent(event) passes on
   // the watcher's events (for showing them here too). Returns { start, stop, choose(cameras),
   // running, setup }: choose([{deviceId, label} | null, ...]) picks this computer's cameras.
-  function createStation({ db, uid, name, onStatus = () => {}, onEvent = () => {}, fps = 10 }) {
+  function createStation({ db, uid, name, onStatus = () => {}, onEvent = () => {}, onLearn = () => {}, fps = 10 }) {
     const ref = stationRef(db, uid), events = ref.collection("events").doc("latest");
     let unsub = null, doc = null, watcher = null, watchingKey = "", previews = [], recent = [], seq = 0;
     let beat = null, running = false, status = "", handled = { still: null, clear: null }, busy = Promise.resolve();
     const beatTimer = workerTimer();
+    const learning = createLearning();
 
     // What it is doing, here and (for the other computers) in the account.
     const say = (text, warn) => {
@@ -370,6 +375,7 @@
       const slim = slimEvent(e);
       if (!slim) return;
       seq = Math.max(seq + 1, Date.now());
+      if (e.type === "dart") learning.keep(seq, e);
       recent = recent.concat([Object.assign({ seq, at: Date.now() }, slim)]).slice(-20);
       events.set({ seq, events: recent, updated: Date.now() }).catch((error) => say("Couldn't pass a dart on: " + error.message, true));
     }
@@ -462,6 +468,7 @@
       const ask = (doc && doc.ask) || {};
       busy = busy.then(async () => {
         await reconcile();
+        learning.apply();
         if (ask.still && ask.still !== handled.still) {
           handled.still = ask.still;
           await sendStills(ask.still).catch((error) => say("Couldn't send pictures: " + error.message, true));
@@ -471,6 +478,138 @@
           if (watcher) watcher.markEmpty();
         }
       }).catch((error) => say(error.message, true)); // one failure mustn't stop the ones after it
+    }
+
+    // --- learning from the darts you keep and correct (board-learn.js) ----------------------------
+    // The pictures each of the last darts was read from are kept for a while. A game page writes a
+    // note on each dart the cameras put in, once its visit is over (cameraStations/{uid}/notes/{seq}:
+    // kept, or corrected to where it really landed); the note's dart is then kept with its pictures
+    // on this computer, and every few corrections the darts are read again with other settings, in a
+    // worker. Settings that read clearly more of them right are used from then on (setup.learned).
+    function createLearning() {
+      const BL = root.BoardLearn;
+      const KEEP_PICTURES = 12, WAIT_MS = 45000, RUN_KEY = "dt_learn_run";
+      const pictures = new Map();
+      let notesUnsub = null, queue = Promise.resolve(), timer = null, busyLearning = false, shown = "";
+      const notes = () => ref.collection("notes");
+      const lastRun = () => { try { return JSON.parse(localStorage.getItem(RUN_KEY) || "null") || { samples: 0, corrected: 0 }; } catch (_) { return { samples: 0, corrected: 0 }; } };
+      const saveRun = (c) => { try { localStorage.setItem(RUN_KEY, JSON.stringify({ samples: c.samples, corrected: c.corrected, at: Date.now() })); } catch (_) { /* private mode */ } };
+      const tell = (extra) => BL.counts().then((c) => onLearn(Object.assign({ learned: doc && doc.setup && doc.setup.learned, last: doc && doc.setup && doc.setup.learning }, c, extra))).catch(() => {});
+
+      // What a dart was read from: each camera's crop before and after it, and the views' calibrations.
+      function keep(dartSeq, e) {
+        if (!BL || !watcher || !watcher.detector || !watcher.detector.last) return;
+        const last = watcher.detector.last, views = watcher.views, cams = watcher.cameras;
+        if (!last.before || !last.after || views.length !== cams.length) return;
+        pictures.set(dartSeq, {
+          label: e.label, before: last.before.slice(), after: last.after.slice(),
+          cams: cams.map((c, i) => ({ deviceId: c.deviceId || "", label: c.label || "", cal: c.cal, frame: [views[i].frameW, views[i].frameH], shared: cams.filter((x) => x.deviceId === c.deviceId).length > 1, w: views[i].width, h: views[i].height })),
+        });
+        while (pictures.size > KEEP_PICTURES) pictures.delete(pictures.keys().next().value);
+      }
+
+      async function take(id, note) {
+        const dartSeq = Number(note.seq), truth = note.truth;
+        let stored = false;
+        if (truth && truth.label) {
+          const p = pictures.get(dartSeq);
+          if (p) {
+            const cams = [];
+            for (let i = 0; i < p.cams.length; i += 1) {
+              const c = p.cams[i];
+              cams.push(Object.assign({}, c, { before: await BL.toImage(p.before[i], c.w, c.h), after: await BL.toImage(p.after[i], c.w, c.h) }));
+            }
+            await BL.putSample({ seq: dartSeq, at: Number(note.at) || Date.now(), outcome: note.outcome, page: note.page || "", read: note.read || { label: p.label }, truth, cams });
+            stored = true;
+          } else {
+            // Kept earlier (a dart first left in, then corrected with "Edit my last visit").
+            const old = await BL.getSample(dartSeq).catch(() => null);
+            if (old) { old.outcome = note.outcome; old.truth = truth; await BL.putSample(old); stored = true; }
+          }
+        }
+        await notes().doc(id).set({ pictures: stored }, { merge: true });
+        if (stored) { await BL.trimSamples(); soon(); tell({ state: "noted", outcome: note.outcome }); }
+      }
+
+      function soon() {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => { timer = null; run().catch((error) => tell({ state: "error", text: error.message })); }, WAIT_MS);
+      }
+
+      // A worker reads the darts again, so the cameras aren't held up meanwhile.
+      function inWorker(current) {
+        return new Promise((resolve, reject) => {
+          let w;
+          try { w = new Worker("board-learn.js?v=1"); } catch (error) { reject(error); return; }
+          const end = (fn, value) => { w.terminate(); fn(value); };
+          w.onmessage = (event) => {
+            const m = event.data || {};
+            if (m.type === "progress") tell({ state: "learning", pass: m.pass, dart: m.dart, of: m.of });
+            else if (m.type === "done") end(resolve, m.result);
+            else if (m.type === "error") end(reject, new Error(m.text));
+          };
+          w.onerror = (event) => end(reject, new Error(event.message || "The learning worker stopped."));
+          w.postMessage({ type: "learn", current });
+        });
+      }
+
+      // Learns when there is something new to learn from: three more corrected darts, or thirty more darts.
+      async function run(force) {
+        if (busyLearning || !running) return;
+        const c = await BL.counts(), before = lastRun();
+        if (c.samples < BL.MIN_DARTS) return;
+        if (!force && c.corrected - before.corrected < 3 && c.samples - before.samples < 30) return;
+        busyLearning = true;
+        tell({ state: "learning", pass: 1, dart: 0, of: c.samples });
+        try {
+          const setup = (doc && doc.setup) || {};
+          const current = Object.assign({}, learnedOptions(setup), setup.options || {});
+          const result = await inWorker(current);
+          saveRun(c);
+          const use = BL.better(result);
+          const summary = { at: Date.now(), n: result.n, corrected: result.corrected, right: result.right, was: result.was, used: use, changed: use ? result.changed : [] };
+          const update = { setup: { learning: summary } };
+          if (use) update.setup.learned = { options: result.options, at: summary.at, n: result.n, right: result.right, was: result.was };
+          await ref.set(update, { merge: true });
+          tell({ state: "done", result: summary });
+        } finally {
+          busyLearning = false;
+        }
+      }
+
+      return {
+        keep,
+        start() {
+          if (!BL || notesUnsub) return;
+          notesUnsub = notes().where("at", ">", Date.now() - 6 * 3600 * 1000).onSnapshot((snap) => {
+            (typeof snap.docChanges === "function" ? snap.docChanges() : []).forEach((change) => {
+              if (change.type === "removed") return;
+              const note = change.doc.data();
+              if (note.pictures !== undefined) return; // already taken
+              queue = queue.then(() => take(change.doc.id, note)).catch((error) => tell({ state: "error", text: "Couldn't keep a dart to learn from: " + error.message }));
+            });
+          }, () => {});
+          tell({ state: "idle" });
+          soon();
+        },
+        stop() {
+          if (notesUnsub) notesUnsub();
+          notesUnsub = null;
+          if (timer) clearTimeout(timer);
+          timer = null;
+          pictures.clear();
+        },
+        // The watcher reads with what was learned (and forgets it when it is cleared), straight away.
+        apply() {
+          if (!BL) return;
+          const setup = (doc && doc.setup) || {};
+          const det = watcher && watcher.detector;
+          if (det) Object.assign(det.options, BL.defaults(), learnedOptions(setup), setup.options || {});
+          const key = JSON.stringify([setup.learned || null, setup.learning || null]);
+          if (key !== shown) { shown = key; tell({}); }
+        },
+        learnNow: () => run(true),
+      };
     }
 
     return {
@@ -485,6 +624,7 @@
         handled = { still: data && data.ask ? data.ask.still || null : null, clear: data && data.ask ? data.ask.clear || null : null };
         await heartbeat();
         unsub = ref.onSnapshot(onDoc, (error) => say("Lost touch with your account: " + error.message, true));
+        learning.start();
         // Fresh pictures for calibrating straight away.
         busy = busy.then(() => sendStills("start")).catch(() => {});
       },
@@ -497,6 +637,7 @@
         if (watcher) watcher.stop();
         watcher = null; watchingKey = "";
         closePreviews();
+        learning.stop();
         ref.set({ station: { name, seen: Date.now(), running: false, status: "Stopped." } }, { merge: true }).catch(() => {});
         say("Stopped.");
       },
@@ -521,6 +662,7 @@
       get running() { return running; },
       get watching() { return !!(watcher && watcher.running); },
       get setup() { return doc && doc.setup; },
+      learnNow: () => learning.learnNow(),
     };
   }
 
@@ -602,6 +744,21 @@
     };
   }
 
+  // A note on a dart the cameras put into a game, once its visit is over: "kept" (left in, so read
+  // right) or "corrected" (truth: where it really landed). The camera station keeps that dart's
+  // pictures with it and learns from them (board-learn.js). Points are app positions ({ label, x, y }).
+  function noteDart(db, uid, { seq, page, outcome, read, truth }) {
+    if (!db || !uid || !Number.isInteger(seq) || seq <= 0) return Promise.resolve();
+    const clean = (p) => (p ? { label: String(p.label || "").slice(0, 8), x: Number.isFinite(p.x) ? round(p.x, 4) : null, y: Number.isFinite(p.y) ? round(p.y, 4) : null } : null);
+    return stationRef(db, uid).collection("notes").doc(String(seq)).set({ seq, at: Date.now(), page, outcome, read: clean(read), truth: clean(truth) }).catch(() => {});
+  }
+
+  // Forgets what the station learned: it reads with the usual settings again (the darts it learned
+  // from stay on its computer, and it may learn again from them and new ones).
+  function forgetLearned(db, uid) {
+    return stationRef(db, uid).set({ uid, setup: { learned: null } }, { merge: true });
+  }
+
   // The owner's camera station document, or null.
   async function getStation(db, uid) {
     if (!db || !uid) return null;
@@ -672,5 +829,6 @@
   root.DartCamera = {
     KEY, load, save, ready, listCameras, requestAccess, openStream, videoFor, still, pixelsOf, lensOptions, snap, explain, resolve, createWatcher,
     isOnline, slimEvent, createStation, createRemoteWatcher, getStation, chooseWatcher, requestStills, saveStationSetup, setStationOptions,
+    noteDart, forgetLearned, learnedOptions,
   };
 })(typeof self !== "undefined" ? self : this);

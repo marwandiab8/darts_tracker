@@ -61,6 +61,22 @@ service cloud.firestore {
         && data.state is string && data.state.size() <= 900000;
     }
 
+    // A dart in a note on the cameras' reading (see match /notes): what it scored and where (app position).
+    function validNoteDart(p) {
+      return p == null || (p is map && p.keys().hasOnly(['label', 'x', 'y']) && p.label is string && p.label.size() <= 8
+        && (p.x == null || p.x is number) && (p.y == null || p.y is number));
+    }
+    function validNote(data, id) {
+      return data.keys().hasOnly(['seq', 'at', 'page', 'outcome', 'read', 'truth', 'pictures'])
+        && data.keys().hasAll(['seq', 'at', 'page', 'outcome'])
+        && data.seq is int && string(data.seq) == id
+        && data.at is int
+        && data.page in ['practice', 'tracker']
+        && data.outcome in ['kept', 'corrected']
+        && validNoteDart(data.get('read', null)) && validNoteDart(data.get('truth', null))
+        && (!data.keys().hasAny(['pictures']) || data.pictures is bool);
+    }
+
     function optionalNumber(data, key, low, high) {
       return !data.keys().hasAny([key]) || (data[key] is number && data[key] >= low && data[key] <= high);
     }
@@ -177,6 +193,14 @@ service cloud.firestore {
         allow create, update: if signedIn() && request.auth.uid == uid && camera in ['0', '1']
           && request.resource.data.keys().hasOnly(['jpeg', 'width', 'height', 'label', 'taken', 'for'])
           && request.resource.data.jpeg is string && request.resource.data.jpeg.size() <= 900000;
+      }
+
+      // What happened to each dart the cameras put into a game, once its visit was over: kept (read
+      // right) or corrected to where it really landed (public/board-learn.js). The station adds
+      // whether it kept that dart's pictures to learn from.
+      match /notes/{seq} {
+        allow read, delete: if signedIn() && request.auth.uid == uid;
+        allow create, update: if signedIn() && request.auth.uid == uid && validNote(request.resource.data, seq);
       }
 
       // The station's last 20 events (darts, take-outs...), each with a rising number.

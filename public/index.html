@@ -538,7 +538,7 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
 <script src="practice-timer.js?v=2"></script>
 <script src="live-sync.js?v=1"></script>
 <script src="board-vision.js?v=7"></script>
-<script src="board-camera.js?v=7"></script>
+<script src="board-camera.js?v=8"></script>
 
 <script>
 (function() {
@@ -764,6 +764,7 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
     return {
       v: 1, mode: scoreMode, entry: currentEntry, positions: cleanPositions(currentPos, currentEntry), thrown: cleanThrown(currentThrown),
       undo: JSON.parse(JSON.stringify(tapStack.slice(-30))), last: lastTap || null, timer: sessionTimer || null, camSeq: trackerCamSeq,
+      fixes: JSON.parse(JSON.stringify(camFixes)),
       total: parseInt(document.getElementById("sessionTotal").textContent || "0", 10),
       sessionDate: document.getElementById("sessionDate").value || "",
       sessionTime: document.getElementById("sessionTime").value || ""
@@ -802,6 +803,7 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
     if (data.last !== undefined) lastTap = data.last || null;
     if (data.timer !== undefined) { sessionTimer = data.timer || null; saveSessionTimer(); }
     if (data.camSeq !== undefined) { trackerCamSeq = Number(data.camSeq) || 0; saveCamSeq(); }
+    if (data.fixes !== undefined) camFixes = Array.isArray(data.fixes) ? data.fixes.slice(-6) : [];
     persistDraft();
     updateUIFromEntry(currentEntry, { skipFocused: true });
     drawBoard();
@@ -954,6 +956,7 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
     TARGETS.forEach(t => { currentEntry[t] = ["-","-","-"]; });
     currentPos = {};
     currentThrown = {};
+    camFixes = [];
     setBoardNote("");
     tapStack = [];
     lastTap = null;
@@ -1483,6 +1486,30 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
       setCamNote(error.message, true);
     }
   }
+  // ---- Teaching the cameras (board-learn.js, on the camera station) ----
+  // A camera dart taken back with Undo and then tapped is a correction: the tap is where it really
+  // landed. A camera dart that counted (a hit in the number thrown at) and still stands three darts
+  // later was read right. Each becomes a note the camera station learns from. Not in "hits" mode
+  // for the darts left in: there the ring doesn't count, so a wrong one wouldn't be corrected.
+  let camFixes = []; // camera darts taken back, waiting for the tap that corrects them (shared)
+  function learnFromTap(aim, hit) {
+    const fix = camFixes.pop();
+    if (!fix) return;
+    if (fix.aim !== aim) { camFixes = []; return; }
+    if (!auth.currentUser || !window.DartCamera) return;
+    const truth = hit ? { label: BoardVision.classify(hit.x, hit.y, BoardVision.APP).label, x: hit.x, y: hit.y } : { label: "MISS", x: null, y: null };
+    DartCamera.noteDart(db, auth.currentUser.uid, { seq: fix.seq, page: "tracker", outcome: truth.label === fix.label ? "kept" : "corrected", read: { label: fix.label, x: fix.x, y: fix.y }, truth });
+  }
+  function noteKeptCamDarts() {
+    if (scoreMode === "single" || !auth.currentUser || !window.DartCamera) return;
+    for (let k = 0; k < tapStack.length - 3; k += 1) {
+      const c = tapStack[k].cam;
+      if (!c || c.noted || !c.counted) continue;
+      c.noted = true;
+      DartCamera.noteDart(db, auth.currentUser.uid, { seq: c.seq, page: "tracker", outcome: "kept", read: { label: c.label, x: c.x, y: c.y }, truth: { label: c.label, x: c.x, y: c.y } });
+    }
+  }
+
   let camCheckWarning = "";
   function onTrackerCamera(e) {
     if (e.type === "check") camCheckWarning = e.warning || "";
@@ -1509,7 +1536,7 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
       noteTrackerCamera(e);
       const x = Math.round(e.app.x * 10000) / 10000, y = Math.round(e.app.y * 10000) / 10000;
       const hit = BoardVision.classify(x, y, BoardVision.APP);
-      const done = applyBoardHit(hit.target ? { target: hit.target, ring: hit.ring, x, y } : null);
+      const done = applyBoardHit(hit.target ? { target: hit.target, ring: hit.ring, x, y } : null, { cam: { seq: e.seq || 0, label: hit.label, x, y } });
       if (!done) return;
       const aimName = done.aim === "BULL" ? "the bull" : done.aim;
       const said = !hit.target ? "off the board" : hit.label;
@@ -1619,7 +1646,7 @@ function applyEntryModeUI(){
         const y = (ev.clientY - rect.top) * (c.height / rect.height);
 
         const hit = scoreFromPoint(c, x, y);
-        applyBoardHit(hit || null); // outside the board: a miss for the number being thrown at
+        applyBoardHit(hit || null, { tap: true }); // outside the board: a miss for the number being thrown at
       };
 
       c.addEventListener("pointerdown", handlePoint);
@@ -1631,6 +1658,7 @@ function applyEntryModeUI(){
         undoBtn.addEventListener("click", ()=>{
           const last = tapStack.pop();
           if (!last) return;
+          if (last.cam) camFixes = camFixes.concat([Object.assign({ aim: last.target }, last.cam)]).slice(-6);
           currentEntry[last.target] = last.prev.slice();
           currentPos[last.target] = last.prevPos.slice();
           if (last.prevThrown === undefined) delete currentThrown[last.target];
@@ -1860,7 +1888,7 @@ function scoreFromPoint(canvas, x, y){
 // A dart entered on the board ({target, ring, x, y}, or null for off the board), for the number
 // being thrown at (see aimTarget): a hit in that number fills its next slot; anything else is a
 // miss that uses up one of its three darts. Returns { aim, counts }, or null when all are done.
-function applyBoardHit(hit){
+function applyBoardHit(hit, from){
     const aim = aimTarget();
     if (!aim) {
       tapFeedback("FULL");
@@ -1893,7 +1921,12 @@ function applyBoardHit(hit){
     else setBoardNote(`Off the board: a miss for ${aimName}.`);
     tapFeedback(counts ? hit.ring : "MISS", aim);
 
-    tapStack.push({ target: aim, prev, prevPos, prevThrown, prevLast: lastTap });
+    const entry = { target: aim, prev, prevPos, prevThrown, prevLast: lastTap };
+    if (from && from.cam && from.cam.seq) entry.cam = Object.assign({ counted: counts }, from.cam);
+    tapStack.push(entry);
+    if (from && from.tap) learnFromTap(aim, hit);
+    else if (from && from.cam) camFixes = []; // throwing again: darts taken back earlier aren't being corrected
+    noteKeptCamDarts();
     if (hit) lastTap = { target: hit.target, ring: hit.ring, x: hit.x, y: hit.y }; // the dot shows where it landed
     practiceActivity();
 

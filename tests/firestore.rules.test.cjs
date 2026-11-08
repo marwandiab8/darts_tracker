@@ -475,3 +475,37 @@ test("a saved bot game can be saved under the live game's id, once", async () =>
   await assertSucceeds(getDoc(ref));
   await assertFails(setDoc(ref, botGame({ result: "lost" })));
 });
+
+// --- notes on the cameras' darts, to learn from (public/board-learn.js) ------------------------------
+
+const note = (overrides = {}) => ({ seq: 1762600000123, at: 1762600004000, page: "practice", outcome: "corrected", read: { label: "S12", x: -0.2, y: -0.7 }, truth: { label: "D20", x: 0.01, y: -0.95 }, ...overrides });
+
+test("the owner's games note what happened to each camera dart, and the station marks its pictures kept", async () => {
+  const db = asUser(me), ref = doc(db, "cameraStations", me, "notes", "1762600000123");
+  await assertSucceeds(setDoc(ref, note()));
+  await assertSucceeds(setDoc(ref, { pictures: true }, { merge: true }));
+  await assertSucceeds(getDoc(ref));
+  await assertSucceeds(setDoc(ref, note({ outcome: "kept", truth: { label: "S12", x: -0.2, y: -0.7 } })));
+  await assertSucceeds(setDoc(doc(db, "cameraStations", me, "notes", "1762600000124"), note({ seq: 1762600000124, page: "tracker", truth: { label: "MISS", x: null, y: null } })));
+  await assertSucceeds(deleteDoc(ref));
+  await assertFails(getDoc(doc(asUser(other), "cameraStations", me, "notes", "1762600000124")));
+  await assertFails(setDoc(doc(asUser(other), "cameraStations", me, "notes", "1762600000125"), note({ seq: 1762600000125 })));
+});
+
+test("notes with the wrong shape are refused", async () => {
+  const notes = (id) => doc(asUser(me), "cameraStations", me, "notes", id);
+  await assertFails(setDoc(notes("1762600000123"), note({ seq: 99 })));
+  await assertFails(setDoc(notes("1762600000123"), note({ outcome: "maybe" })));
+  await assertFails(setDoc(notes("1762600000123"), note({ page: "elsewhere" })));
+  await assertFails(setDoc(notes("1762600000123"), note({ truth: { label: "D20", x: 0, y: -0.95, z: 1 } })));
+  await assertFails(setDoc(notes("1762600000123"), note({ truth: { label: "a much too long label", x: 0, y: 0 } })));
+  await assertFails(setDoc(notes("1762600000123"), note({ pictures: "yes" })));
+  await assertFails(setDoc(notes("1762600000123"), note({ extra: 1 })));
+  await assertFails(setDoc(notes("x"), note()));
+});
+
+test("the station can keep what it learned with its setup", async () => {
+  const ref = doc(asUser(me), "cameraStations", me);
+  await assertSucceeds(setDoc(ref, { uid: me, setup: { learned: { options: { threshold: 26 }, at: 1, n: 40, right: 36, was: 33 }, learning: { at: 1, n: 40, right: 36, was: 33, used: true } } }, { merge: true }));
+  await assertSucceeds(setDoc(ref, { uid: me, setup: { learned: null } }, { merge: true }));
+});
