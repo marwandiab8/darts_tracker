@@ -292,3 +292,39 @@ test("watching: three darts in a visit are each read once", () => {
   });
   assert.deepEqual(labels, thrown.map((d) => V.classify(d.at.x / S.R, d.at.y / S.R).label));
 });
+
+// A real webcam's flicker: besides gentle noise, about 1 pixel in `rate` jumps by up to ±`amp` in
+// a colour each frame (measured on the NexiGo webcams: about 1 in 100 by more than the motion
+// threshold). A different scatter every frame.
+let flickerSeed = 1;
+function flicker(frame, rate = 60, amp = 45) {
+  const data = Uint8ClampedArray.from(frame.data), random = S.rng(flickerSeed++);
+  for (let i = 0; i < data.length; i += 4) {
+    if (random() * rate >= 1) continue;
+    const ch = (random() * 3) | 0;
+    data[i + ch] += (random() * 2 - 1) * amp;
+  }
+  return { data, width: frame.width, height: frame.height };
+}
+
+test("watching through a real camera's flicker: it still settles, reads the dart and sees the take-out", () => {
+  const { views, renders } = rig(31);
+  const detector = V.createDetector(views);
+  let now = 0;
+  const feed = (make, times) => {
+    const events = [];
+    for (let i = 0; i < times; i += 1) { now += 100; events.push(...detector.push(make(), now)); }
+    return events.map((e) => e.type);
+  };
+  const board = (darts) => () => renders.map((r) => flicker(r(darts)));
+  assert.deepEqual(feed(board([]), 1), ["ready"]);
+  assert.deepEqual(feed(board([]), 40), [], "flicker alone is nothing, and nothing is left 'moving'");
+  const dart = { at: { x: 4, y: -103 }, lean: { x: 0.05, y: -0.25 }, spin: 1.1 };
+  const events = feed(board([dart]), 8);
+  assert.equal(events.filter((t) => t === "dart").length, 1, events.join(","));
+  assert.equal(detector.state, "watching", "settled again after the dart");
+  const during = feed(() => renders.map((r) => withHand(flicker(r([dart])))), 5);
+  assert.ok(during.includes("blocked"), during.join(","));
+  const after = feed(board([]), 8);
+  assert.ok(after.includes("takeout"), after.join(","));
+});

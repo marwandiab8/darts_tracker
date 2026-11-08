@@ -692,14 +692,18 @@
     return 1;
   }
 
-  // How many pixels changed (a sample of every `step`th one, scaled back up).
+  // How many pixels changed (a sample of every `step`th one, scaled back up). A pixel counts only
+  // when the pixels to its right and below it changed too: a real camera's noise flickers single
+  // pixels (about 1 in 100 of them every frame with the NexiGo webcams), which counted one by one
+  // looks like something always moving; anything real, a dart or a hand, is a patch.
   function countChanged(a, b, view, threshold, step, gain) {
     let n = 0;
-    const idx = view.roiIdx, g = gain || 1;
+    const idx = view.roiIdx, g = gain || 1, row = view.width * 4, len = Math.min(a.length, b.length);
+    const changed = (i) => i + 2 < len
+      && Math.max(Math.abs(b[i] - a[i] * g), Math.abs(b[i + 1] - a[i + 1] * g), Math.abs(b[i + 2] - a[i + 2] * g)) > threshold;
     for (let k = 0; k < idx.length; k += step) {
       const i = idx[k] << 2;
-      const d = Math.max(Math.abs(b[i] - a[i] * g), Math.abs(b[i + 1] - a[i + 1] * g), Math.abs(b[i + 2] - a[i + 2] * g));
-      if (d > threshold) n += 1;
+      if (changed(i) && changed(i + 4) && changed(i + row)) n += 1;
     }
     return n * step;
   }
@@ -1233,7 +1237,10 @@
   //   { type: "quiet" }                       a change too small to be a dart (it may have bounced out)
   function createDetector(views, options) {
     const o = Object.assign({}, DEFAULTS, options);
-    const cams = views.map((view) => ({ view, ref: null, prev: null, empty: null, R2: view.pxPerR * view.pxPerR }));
+    // `noise`: how much each camera's picture flickers from frame to frame with nothing going on
+    // (changed pixels, a slowly fading maximum). Twice that counts as movement, if it is more than
+    // motionArea: cameras differ, and so does the light.
+    const cams = views.map((view) => ({ view, ref: null, prev: null, empty: null, R2: view.pxPerR * view.pxPerR, noise: 0 }));
     let state = "start", still = 0, movedAt = 0, refreshedAt = 0, darts = 0;
     let last = null; // what the last read was made from, for saving test pictures
 
@@ -1299,11 +1306,14 @@
           return [{ type: "ready" }];
         }
         let moving = false, changed = false;
+        const motion = cams.map((c, i) => countChanged(c.prev, cur[i], c.view, o.motionThreshold, 3, gainOf(c.prev, cur[i], c.view)));
         cams.forEach((c, i) => {
-          if (countChanged(c.prev, cur[i], c.view, o.motionThreshold, 3, gainOf(c.prev, cur[i], c.view)) > o.motionArea * c.R2) moving = true;
+          if (motion[i] > Math.max(o.motionArea * c.R2, 2 * c.noise)) moving = true;
           if (state === "watching" && countChanged(c.ref, cur[i], c.view, o.threshold, 3, gainOf(c.ref, cur[i], c.view)) > o.changeArea * c.R2) changed = true;
           c.prev = cur[i];
         });
+        // Learn the flicker while nothing is going on (never from a dart or a hand).
+        if (state === "watching" && !changed) cams.forEach((c, i) => { c.noise = Math.min(Math.max(c.noise * 0.98, motion[i]), o.changeArea * c.R2); });
         if (state === "watching") {
           if (!changed) {
             if (!moving && now - refreshedAt > o.refreshMs) { cams.forEach((c, i) => { c.ref = cur[i]; }); refreshedAt = now; }
