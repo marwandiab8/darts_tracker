@@ -673,6 +673,13 @@
     bigShare: 0.09,
     emptyArea: 0.006, // the board counts as clear when it differs from the empty board by less
     removedShare: 0.7, // a change that looks like the empty board again over this share of it is darts pulled out
+    // A visit is three darts. Something read after the third and within this long of it, before the
+    // darts are out, is a hand at the board pulling them out, not a fourth dart.
+    visitDarts: 3,
+    handMs: 10000,
+    // With no darts in the board and nothing going on, the empty board is looked at again this often,
+    // so it follows the light (dusk through a window, a lamp switched on).
+    emptyRefreshMs: 15000,
   };
 
   // Brightness drift between two frames (the camera adjusting its exposure, a cloud): the middle
@@ -763,6 +770,19 @@
       if (Math.max(Math.abs(cur[i] - empty[i] * g), Math.abs(cur[i + 1] - empty[i + 1] * g), Math.abs(cur[i + 2] - empty[i + 2] * g)) <= o.threshold) same += 1;
     }
     return total ? same / total : 0;
+  }
+
+  // The same, over a list of pixels (indices into the crop) rather than a mask.
+  function backToEmptyAt(empty, cur, pixels, view, options) {
+    const o = Object.assign({}, DEFAULTS, options);
+    if (!empty || !pixels || !pixels.length) return 1;
+    const g = gainOf(empty, cur, view);
+    let same = 0;
+    for (const p of pixels) {
+      const i = p << 2;
+      if (Math.max(Math.abs(cur[i] - empty[i] * g), Math.abs(cur[i + 1] - empty[i + 1] * g), Math.abs(cur[i + 2] - empty[i + 2] * g)) <= o.threshold) same += 1;
+    }
+    return same / pixels.length;
   }
 
   // Connected pieces of a mask (8-connected), biggest first, each { pixels, area, x0, y0, x1, y1 }.
@@ -1257,6 +1277,8 @@
   //   { type: "takeout", darts }              the darts were pulled out: the board is clear again
   //   { type: "removed" }                     a dart was pulled out, but others are still in
   //   { type: "blocked" }                     a big change (a hand, a person) that left no new dart
+  //   { type: "hand", ... }                   something read after a visit's third dart, before they are
+  //                                           out: a hand at the board, not a dart (what was read is kept)
   //   { type: "quiet" }                       a change too small to be a dart (it may have bounced out)
   function createDetector(views, options) {
     const o = Object.assign({}, DEFAULTS, options);
@@ -1266,8 +1288,41 @@
     const cams = views.map((view) => ({ view, ref: null, prev: null, empty: null, R2: view.pxPerR * view.pxPerR, noise: 0 }));
     let state = "start", still = 0, movedAt = 0, refreshedAt = 0, darts = 0;
     let last = null; // what the last read was made from, for saving test pictures
+    // The darts in the board since it was last clear, each as a sample of its pixels in each camera.
+    // The darts are out when those spots look like the empty board again: only there, so it still
+    // works when the light has changed since the empty board was seen (the whole board no longer
+    // matches it). visitCount/lastDartAt: this visit's darts, for telling a hand from a fourth dart.
+    let inBoard = [], visitCount = 0, lastDartAt = -Infinity, emptyAt = 0;
 
     const take = (frames) => frames.map((f) => f.data);
+    const sample = (pixels) => {
+      if (!pixels || !pixels.length) return null;
+      const step = Math.max(1, Math.ceil(pixels.length / 300)), out = [];
+      for (let k = 0; k < pixels.length; k += step) out.push(pixels[k]);
+      return out;
+    };
+    const pulledOut = (dart, cur) => cams.every((c, i) => {
+      const px = dart.px[i];
+      return !px || px.length < 12 || backToEmptyAt(c.empty, cur[i], px, c.view, o) >= o.removedShare;
+    });
+    // Whether every dart known to be in the board is out now (and forgets the ones that are).
+    function allOut(cur) {
+      if (!inBoard.length) return false;
+      inBoard = inBoard.filter((dart) => !pulledOut(dart, cur));
+      return !inBoard.length;
+    }
+    const clearBoard = (cur) => cams.every((c, i) => diffMask(c.empty, cur[i], c.view, o).count < o.emptyArea * c.R2);
+    // The darts are out. With `asEmpty`, this picture is the empty board from now on (only when the
+    // whole board matches it, so a hand or a person still in the picture is never taken for it).
+    function takeout(events, cur, now, asEmpty) {
+      const n = darts;
+      darts = 0; inBoard = []; visitCount = 0;
+      cams.forEach((c, i) => { c.ref = cur[i]; if (asEmpty) c.empty = cur[i]; });
+      if (asEmpty) emptyAt = now;
+      events.push({ type: "takeout", darts: n });
+    }
+    // After a visit's third dart, until they are out (or a while has passed): a hand at the board.
+    const handTime = (now) => visitCount >= o.visitDarts && now - lastDartAt < o.handMs;
 
     function read(cur, now) {
       const events = [];
@@ -1277,13 +1332,10 @@
       const before = cams.map((c) => c.ref);
       last = { before, after: cur, masks: masks.map((m) => m.mask) };
       if (big) {
-        const clear = cams.every((c, i) => diffMask(c.empty, cur[i], c.view, o).count < o.emptyArea * c.R2);
-        cams.forEach((c, i) => { c.ref = cur[i]; if (clear) c.empty = cur[i]; });
-        if (clear) {
-          const n = darts;
-          darts = 0;
-          events.push({ type: "takeout", darts: n });
-        } else events.push({ type: "blocked" });
+        const clear = clearBoard(cur);
+        if (clear || allOut(cur)) { takeout(events, cur, now, clear); return events; }
+        cams.forEach((c, i) => { c.ref = cur[i]; });
+        events.push({ type: "blocked" });
         return events;
       }
       // Darts pulled out (one at a time, or with a hand too small to count as in the way) change
@@ -1292,16 +1344,11 @@
       const sized = cams.map((c, i) => masks[i].count >= o.dartArea * c.R2);
       const back = cams.map((c, i) => (sized[i] ? backToEmpty(c.empty, cur[i], masks[i].mask, c.view, o) : 1));
       if (sized.some(Boolean) && back.every((share) => share >= o.removedShare)) {
-        const clear = cams.every((c, i) => diffMask(c.empty, cur[i], c.view, o).count < o.emptyArea * c.R2);
-        cams.forEach((c, i) => { c.ref = cur[i]; if (clear) c.empty = cur[i]; });
-        if (clear) {
-          const n = darts;
-          darts = 0;
-          events.push({ type: "takeout", darts: n });
-        } else {
-          darts = Math.max(0, darts - 1);
-          events.push({ type: "removed" });
-        }
+        const clear = clearBoard(cur);
+        if (clear || allOut(cur)) { takeout(events, cur, now, clear); return events; }
+        cams.forEach((c, i) => { c.ref = cur[i]; });
+        darts = inBoard.length || Math.max(0, darts - 1);
+        events.push({ type: "removed" });
         return events;
       }
       const readings = cams.map((c, i) => readView(c.view, masks[i].mask, o));
@@ -1311,11 +1358,19 @@
         return events;
       }
       const fused = fuse(readings, o);
+      // A visit's three darts are in and it hasn't been long: fingers round the darts, not a dart.
+      if (handTime(now)) {
+        events.push(Object.assign({ type: "hand", readings }, fused || {}));
+        return events;
+      }
       if (!fused) {
         events.push({ type: "unreadable", readings });
         return events;
       }
-      darts += 1;
+      // Long after a visit's third dart, with its take-out missed: this is the next visit.
+      if (visitCount >= o.visitDarts) visitCount = 0;
+      darts += 1; visitCount += 1; lastDartAt = now;
+      inBoard.push({ px: readings.map((r) => sample(r && r.cluster && r.cluster.pixels)) });
       events.push(Object.assign({ type: "dart", index: darts, readings }, fused));
       return events;
     }
@@ -1331,19 +1386,19 @@
       reset(frames, empty) {
         const cur = take(frames);
         cams.forEach((c, i) => { c.ref = cur[i]; c.prev = cur[i]; if (empty || !c.empty) c.empty = cur[i]; });
-        state = "watching"; still = 0; darts = 0;
+        state = "watching"; still = 0; darts = 0; inBoard = []; visitCount = 0;
       },
       markEmpty(frames) {
         const cur = take(frames);
         cams.forEach((c, i) => { c.empty = cur[i]; c.ref = cur[i]; c.prev = cur[i]; });
-        darts = 0; state = "watching";
+        darts = 0; inBoard = []; visitCount = 0; state = "watching";
       },
       push(frames, now) {
         if (!frames || frames.length !== cams.length || frames.some((f) => !f)) return [];
         const cur = take(frames);
         if (state === "start") {
           cams.forEach((c, i) => { c.ref = cur[i]; c.prev = cur[i]; c.empty = cur[i]; });
-          state = "watching"; refreshedAt = now;
+          state = "watching"; refreshedAt = now; emptyAt = now;
           return [{ type: "ready" }];
         }
         let moving = false, changed = false;
@@ -1358,6 +1413,8 @@
         if (state === "watching") {
           if (!changed) {
             if (!moving && now - refreshedAt > o.refreshMs) { cams.forEach((c, i) => { c.ref = cur[i]; }); refreshedAt = now; }
+            // No darts in the board and nothing going on: the empty board as the light shows it now.
+            if (!moving && !darts && !inBoard.length && now - emptyAt > o.emptyRefreshMs) { cams.forEach((c, i) => { c.empty = cur[i]; }); emptyAt = now; }
             return [];
           }
           state = "settling"; movedAt = now; still = 0;
@@ -1399,6 +1456,7 @@
     countChanged,
     diffMask,
     backToEmpty,
+    backToEmptyAt,
     components,
     fitStreak,
     cameraPose,

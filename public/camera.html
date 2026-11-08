@@ -177,8 +177,8 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
-<script src="board-vision.js?v=7"></script>
-<script src="board-camera.js?v=8"></script>
+<script src="board-vision.js?v=8"></script>
+<script src="board-camera.js?v=9"></script>
 <script>
 (function () {
   "use strict";
@@ -712,6 +712,7 @@
     if (e.type === "blocked") { $("watchStatus").textContent = "Something big in the way (a hand?). Waiting…"; return; }
     if (e.type === "unreadable") { $("watchStatus").textContent = "Something changed, but neither camera could read a dart in it."; return; }
     if (e.type === "quiet") { $("watchStatus").textContent = "A small change, not a dart. Watching."; }
+    if (e.type === "hand") { $("watchStatus").textContent = "A hand by the darts after the third one: not counted as a dart."; return; }
   }
 
   // The camera pictures as the detector sees them, with the last change and its reading drawn on.

@@ -378,3 +378,91 @@ test("pulling darts out without a big hand in the picture is not read as a dart"
   const next = feed([b], 8).filter((e) => e.type === "dart");
   assert.equal(next.length, 1);
 });
+
+// The light changing while darts are in the board (dusk through a window, a lamp switched on):
+// darker by up to `amount` towards one side of each picture. Not something a gain can undo.
+function dusk(frame, amount) {
+  const data = Uint8ClampedArray.from(frame.data), w = frame.width;
+  for (let i = 0; i < data.length; i += 4) {
+    const k = 1 - amount * (((i >> 2) % w) / w);
+    data[i] *= k; data[i + 1] *= k; data[i + 2] *= k;
+  }
+  return { data, width: frame.width, height: frame.height };
+}
+
+// A hand (a skin-coloured patch) by board position p (in mm), w x h crop pixels: smaller than a
+// hand in the way, as when fingers close round the darts to pull them out.
+function withFingers(frame, view, p, w = 26, h = 34) {
+  const data = Uint8ClampedArray.from(frame.data), c = view.toCrop(p.x / S.R, p.y / S.R);
+  for (let y = Math.round(c.y - h / 2); y < c.y + h / 2; y += 1) {
+    for (let x = Math.round(c.x - w / 2); x < c.x + w / 2; x += 1) {
+      if (x < 0 || y < 0 || x >= frame.width || y >= frame.height) continue;
+      const i = (y * frame.width + x) * 4;
+      data[i] = 214; data[i + 1] = 160; data[i + 2] = 130;
+    }
+  }
+  return { data, width: frame.width, height: frame.height };
+}
+
+const visit = [
+  { at: { x: 4, y: -103 }, lean: { x: 0.05, y: -0.25 }, spin: 1.1 },
+  { at: { x: -30, y: -112 }, lean: { x: -0.05, y: -0.3 }, spin: 2.0 },
+  { at: { x: 22, y: -95 }, lean: { x: 0.08, y: -0.2 }, spin: 0.4 },
+];
+
+test("the light changing while the darts are in: pulling them out is still a take-out", () => {
+  const { views, renders } = rig(51);
+  const detector = V.createDetector(views);
+  let now = 0;
+  const feed = (darts, times, light = 0) => {
+    const out = [];
+    for (let i = 0; i < times; i += 1) { now += 100; out.push(...detector.push(renders.map((r) => dusk(flicker(r(darts)), typeof light === "function" ? light() : light)), now)); }
+    return out;
+  };
+  feed([], 10);
+  const read = [];
+  visit.forEach((_, k) => { read.push(...feed(visit.slice(0, k + 1), 8).filter((e) => e.type === "dart")); });
+  assert.equal(read.length, 3, "three darts read");
+  // The light goes down slowly, darker towards one side, while the darts are in.
+  let amount = 0;
+  const ramp = feed(visit, 300, () => (amount = Math.min(0.32, amount + 0.0012)));
+  assert.equal(ramp.filter((e) => e.type === "dart").length, 0, "the light changing is not a dart: " + ramp.map((e) => e.type).join(","));
+  // All three pulled out at once: that is "darts out", and the next throw is read as usual.
+  const out = feed([], 10, 0.32);
+  assert.equal(out.filter((e) => e.type === "dart").length, 0, out.map((e) => e.type).join(","));
+  const takeout = out.find((e) => e.type === "takeout");
+  assert.ok(takeout, "darts out: " + out.map((e) => e.type).join(","));
+  assert.equal(takeout.darts, 3);
+  assert.equal(detector.darts, 0);
+  const next = feed([visit[0]], 8, 0.32).filter((e) => e.type === "dart");
+  assert.equal(next.length, 1, "the next dart");
+  assert.equal(next[0].index, 1, "is the first of the next visit");
+});
+
+test("a hand by the darts after the third one is not a fourth dart", () => {
+  const { views, renders } = rig(53);
+  const detector = V.createDetector(views);
+  let now = 0;
+  const feed = (make, times) => {
+    const out = [];
+    for (let i = 0; i < times; i += 1) { now += 100; out.push(...detector.push(make(), now)); }
+    return out;
+  };
+  const board = (darts) => () => renders.map((r) => flicker(r(darts)));
+  feed(board([]), 10);
+  const read = [];
+  visit.forEach((_, k) => { read.push(...feed(board(visit.slice(0, k + 1)), 8).filter((e) => e.type === "dart")); now += 2000; });
+  assert.equal(read.length, 3, "three darts read");
+  // Walking up to the board: fingers close round the darts, and hold still for a moment.
+  const fingers = () => renders.map((r, i) => withFingers(flicker(r(visit)), views[i], { x: 8, y: -128 }));
+  const reaching = feed(fingers, 8);
+  assert.equal(reaching.filter((e) => e.type === "dart").length, 0, "no fourth dart: " + reaching.map((e) => e.type).join(","));
+  // The darts come out with the hand: darts out.
+  const out = feed(board([]), 10);
+  assert.ok(out.some((e) => e.type === "takeout"), out.map((e) => e.type).join(","));
+  assert.equal(out.filter((e) => e.type === "dart").length, 0);
+  // The next visit's darts are read (well after the last one).
+  now += 8000;
+  const next = feed(board([visit[1]]), 8).filter((e) => e.type === "dart");
+  assert.equal(next.length, 1, "the next visit's first dart");
+});
