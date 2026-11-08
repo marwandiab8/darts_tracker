@@ -441,6 +441,10 @@
   const nameOf = (who) => match.names[who];
   // Whether the phone is in a person's hands: always your turn, and both turns with another player.
   const humanTurn = () => !!game && (game.turn === "player" || versus());
+  // The bot has just checked out. The game waits here rather than ending, so that a dart of yours the
+  // cameras misread (a double that would have won, read as a miss) can still be corrected with "Edit
+  // my last visit"; "Finish game" ends it.
+  const botWonWaiting = () => !!game && !versus() && game.winner === "bot" && !reviewing && !editing && !botBusy;
   const turnWord = () => (versus() ? nameOf(game.turn) + "'s turn" : "Your turn");
   const scoreWord = (who) => (versus() ? nameOf(who) + "'s score" : who === "player" ? "Your score" : "Its score");
   const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -893,8 +897,10 @@
   }
   const short = (label) => (label === "SB" ? "25" : label === "DB" ? "Bull" : label[0] === "S" ? label.slice(1) : label);
 
+  // A game in play is kept on this device, and so is one waiting on the bot's checkout (botWonWaiting),
+  // so a reload comes back to it rather than to the bot's last dart.
   function persistGame() {
-    if (game && !game.winner && !editing) store.set(GAME_KEY, { game, startedAt, settings, match, series, timer });
+    if (game && (!game.winner || (game.winner === "bot" && !versus())) && !editing) store.set(GAME_KEY, { game, startedAt, settings, match, series, timer });
   }
 
   // Seconds played, by the timer.
@@ -992,7 +998,7 @@
 
   function looksLikeGame(g) {
     return g && typeof g === "object" && (g.kind === "x01" || g.kind === "cricket") && g.darts && Array.isArray(g.darts.player) && Array.isArray(g.darts.bot)
-      && Array.isArray(g.visits) && Array.isArray(g.visitDarts) && (g.turn === "player" || g.turn === "bot") && !g.winner
+      && Array.isArray(g.visits) && Array.isArray(g.visitDarts) && (g.turn === "player" || g.turn === "bot") && (!g.winner || g.winner === "bot")
       && (g.kind === "cricket" ? g.marks && g.points && g.marksThrown : g.remaining && Number.isFinite(g.remaining.player) && Number.isFinite(g.remaining.bot));
   }
 
@@ -1045,7 +1051,7 @@
     if (saved.settings && RANK_IDS.includes(saved.settings.rank)) settings = Object.assign(settings, saved.settings);
     reviewing = false; lastMessage = "Game resumed."; pendingRecord = null;
     showGame(); render();
-    if (game.turn === "bot" && !versus()) {
+    if (game.turn === "bot" && !versus() && !game.winner) { // (a checkout waiting to be finished stays as it is)
       // A bot turn was interrupted: start it over from the beginning of the visit.
       while (game.visitDarts.length && E.undoDart(game)) { /* take back its unfinished darts */ }
       runBot();
@@ -1151,6 +1157,8 @@
       line.append(el("strong", "", turnWord()), document.createTextNode(" · dart " + (game.visitDarts.length + 1) + " of 3. " + (cam ? "Throw, or tap where it landed." : "Tap where it landed.")));
     } else if (humanTurn()) {
       line.append(el("strong", "", game.winner ? (versus() ? nameOf(game.winner) + " won the game!" : "You won the game!") : "Visit finished"), document.createTextNode(game.winner ? " Check the darts, then finish." : editing ? ". Saving your change. Undo to change a dart." : passTimer ? ". " + (versus() ? nameOf(game.turn === "player" ? "bot" : "player") : "The bot") + " is up next. Undo to change a dart." : settings.confirm && !keypadActive() ? ". Check the darts. Press Enter when they are right, or Undo to change one." : ". Pass to " + (versus() ? nameOf(game.turn === "player" ? "bot" : "player") : "the bot") + " when you are ready."));
+    } else if (botWonWaiting()) {
+      line.append(el("strong", "", "The bot checked out."), document.createTextNode(" If one of your darts was read or entered wrong, Edit my last visit: if the right one wins, you win. Otherwise, Finish game."));
     } else {
       line.append(el("strong", "", "Bot's turn"), document.createTextNode(" · " + (botBusy ? "throwing…" : "waiting")));
     }
@@ -1176,9 +1184,10 @@
     $("undoBtn").disabled = !(humanTurn() && game.undo.length > 0 && !botBusy && !game.winner) ;
     $("missBtn").disabled = !canThrow;
     const pending = humanTurn() && game.visitDone && !reviewing;
-    $("nextBtn").classList.toggle("hidden", !pending || keypadActive());
+    const botWon = botWonWaiting();
+    $("nextBtn").classList.toggle("hidden", botWon ? false : !pending || keypadActive());
     $("nextBtn").textContent = editing ? "Save change" : game.winner ? "Finish game" : settings.confirm && !keypadActive() ? "Enter" : "Bot's turn";
-    const me = game.turn, them = otherSide(game.turn);
+    const me = botWon ? "player" : game.turn, them = otherSide(me);
     $("editBtn").classList.toggle("hidden", !showEdit(me));
     $("editBtn").textContent = versus() ? "Edit " + nameOf(me) + "'s last visit" : "Edit my last visit";
     $("editOtherBtn").classList.toggle("hidden", !(versus() && showEdit(them)));
@@ -1561,6 +1570,7 @@
     if (e.type === "ready") return camCheckWarning ? cameraSays("Camera on. " + camCheckWarning, true) : cameraSays("Camera on: watching the board.");
     if (e.type === "blocked") return cameraSays("Camera: something is in front of the board.");
     if (e.type === "unreadable") return cameraSays("The cameras saw something but couldn't read it. Tap the board for that dart.", true);
+    if (editing && (e.type === "dart" || e.type === "takeout")) return cameraSays("Camera paused while you correct a visit: tap where those darts landed.");
     const myThrow = humanTurn() && !reviewing && !botBusy && !game.winner && !keypadActive();
     if (e.type === "dart") {
       if (!myThrow) return cameraSays("Camera saw " + describe(e.label) + ", but it isn't your turn to throw.", true);
@@ -1582,7 +1592,8 @@
   // --- correcting a previous visit -------------------------------------------------------------------
   // Shown whenever there is a visit to go back to and it is time to start a new one. With two people on
   // the phone either player's latest visit can be corrected.
-  const canEditNow = () => !!game && !reviewing && !editing && !botBusy && !game.winner && humanTurn() && !game.visitDone && !game.visitDarts.length;
+  const canEditNow = () => !!game && !reviewing && !editing && !botBusy
+    && (botWonWaiting() || (!game.winner && humanTurn() && !game.visitDone && !game.visitDarts.length));
   const showEdit = (who) => canEditNow() && game.visits.some((v) => v.who === who);
   const otherSide = (who) => (who === "player" ? "bot" : "player");
 
@@ -1625,6 +1636,8 @@
       return;
     }
     game = result.game;
+    // The corrected visit didn't win and the bot's checkout stands: back to waiting, to look again.
+    if (game.winner === "bot" && !versus()) { lastMessage = "Visit corrected. The bot still checked out."; persistGame(); render(); return; }
     if (game.winner) { finishGame(game.winner === "player" ? "won" : "lost"); return; }
     lastMessage = "Visit corrected.";
     persistGame(); render();
@@ -1655,9 +1668,8 @@
           if (token !== botToken || !game) return;
           announce(E.endVisit(game));
           botBusy = false;
-          if (game.winner) { finishGame("lost"); return; }
           lastMessage = "";
-          persistGame(); render();
+          persistGame(); render(); // a checkout waits (see botWonWaiting)
         }, BOT_PAUSE);
         return;
       }
@@ -1910,9 +1922,9 @@
   $("board").addEventListener("pointerdown", (event) => { if (event.button === 0 || event.pointerType === "touch") onBoardTap(event); });
   $("undoBtn").addEventListener("click", undo);
   $("missBtn").addEventListener("click", missDart);
-  $("nextBtn").addEventListener("click", passTurn);
+  $("nextBtn").addEventListener("click", () => (botWonWaiting() ? finishGame("lost") : passTurn()));
   $("quitBtn").addEventListener("click", quitGame);
-  $("editBtn").addEventListener("click", () => startEdit(game && game.turn));
+  $("editBtn").addEventListener("click", () => startEdit(botWonWaiting() ? "player" : game && game.turn));
   $("editOtherBtn").addEventListener("click", () => startEdit(game && otherSide(game.turn)));
   $("cancelEditBtn").addEventListener("click", cancelEdit);
   $("againBtn").addEventListener("click", startGame);
