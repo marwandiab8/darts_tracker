@@ -140,3 +140,65 @@ test("the board's lighting setting is kept in the account alongside the cameras"
   assert.deepEqual(setup.options, { shadow: true }, "kept through choosing cameras and saving calibrations");
   assert.ok(setup.cameras[0].cal, "and the calibration with it");
 });
+
+test("each saved camera is found among those plugged in now, never one camera for two", () => {
+  const nexi = "NexiGo N660P FHD Webcam (1bcf:2284)";
+  const saved = [{ deviceId: "a", label: nexi }, { deviceId: "b", label: nexi }];
+  const ids = (list) => list.map((d) => (d ? d.deviceId : null));
+  // As they were.
+  assert.deepEqual(ids(C.matchCameras(saved, [{ deviceId: "x", label: "Integrated Camera" }, { deviceId: "b", label: nexi }, { deviceId: "a", label: nexi }])), ["a", "b"]);
+  // Plugged in again under new ids (Linux numbers them as they come): one each, by name.
+  assert.deepEqual(ids(C.matchCameras(saved, [{ deviceId: "x", label: "Integrated Camera" }, { deviceId: "c", label: nexi }, { deviceId: "d", label: nexi }])), ["c", "d"]);
+  // One back under its old id, the other under a new one.
+  assert.deepEqual(ids(C.matchCameras(saved, [{ deviceId: "c", label: nexi }, { deviceId: "b", label: nexi }])), ["c", "b"]);
+  // Only one plugged in: the other is missing, not given the same camera.
+  assert.deepEqual(ids(C.matchCameras(saved, [{ deviceId: "c", label: nexi }])), ["c", null]);
+  assert.deepEqual(ids(C.matchCameras(saved, [])), [null, null]);
+  // An id that now belongs to a camera of another name isn't that camera.
+  assert.deepEqual(ids(C.matchCameras([{ deviceId: "a", label: nexi }], [{ deviceId: "a", label: "Integrated Camera" }])), [null]);
+  // OBS's virtual camera, both halves calibrated: one camera for both, as saved.
+  const obs = [{ deviceId: "o", label: "OBS Virtual Camera" }, { deviceId: "o", label: "OBS Virtual Camera" }];
+  assert.deepEqual(ids(C.matchCameras(obs, [{ deviceId: "o2", label: "OBS Virtual Camera" }])), ["o2", "o2"]);
+  // Nothing saved for a slot.
+  assert.deepEqual(ids(C.matchCameras([null, { deviceId: "a", label: nexi }], [{ deviceId: "a", label: nexi }])), [null, "a"]);
+});
+
+test("choosing a camera of the same model under a new id keeps its calibration", async () => {
+  const db = fakeDb();
+  const other = { H: [2, 0, 0, 0, 2, 0, 0, 0, 1], width: 1280, height: 720 };
+  db.write("cameraStations/me", station({ setup: { version: 1, cameras: [{ deviceId: "a", label: "NexiGo", cal }, { deviceId: "b", label: "NexiGo", cal: other }] } }));
+  const st = C.createStation({ db, uid: "me", name: "Linux computer" });
+  // Plugged in again, both under new ids: the calibrations stay (the station sorts out which is which).
+  await st.choose([{ deviceId: "c", label: "NexiGo" }, { deviceId: "d", label: "NexiGo" }]);
+  let cams = db.docs.get("cameraStations/me").setup.cameras;
+  assert.deepEqual(cams.map((c) => [c.deviceId, c.cal && c.cal.H[0]]), [["c", 1], ["d", 2]]);
+  // Then one isn't plugged in: the page keeps it chosen as saved, and so its calibration.
+  await st.choose([{ deviceId: "e", label: "NexiGo" }, { deviceId: "d", label: "NexiGo" }]);
+  cams = db.docs.get("cameraStations/me").setup.cameras;
+  assert.deepEqual(cams.map((c) => [c.deviceId, c.cal && c.cal.H[0]]), [["e", 1], ["d", 2]]);
+});
+
+test("the two cameras are swapped only when the calibrations fit the board clearly better that way", () => {
+  const at = (shift) => ({ refined: { shift } });
+  // Plugged in the other way round: neither fits as saved, both fit swapped.
+  assert.equal(C.otherWayFits([null, null], [at(0.2), at(0.4)]), true);
+  // Swapped, and one camera has something in front of it.
+  assert.equal(C.otherWayFits([null, null], [at(0.2), null]), true);
+  // Two cameras close together seem to fit each other's calibrations, only far off.
+  assert.equal(C.otherWayFits([at(18), at(16)], [at(0.1), at(0.2)]), true);
+  // One camera blocked, the other as saved: leave them.
+  assert.equal(C.otherWayFits([at(0.3), null], [null, null]), false);
+  assert.equal(C.otherWayFits([at(0.3), null], [null, at(0.6)]), false);
+  // One camera knocked: it was followed, and the other way round is no better.
+  assert.equal(C.otherWayFits([at(9), at(0.2)], [at(17), at(14)]), false);
+  assert.equal(C.otherWayFits([at(9), at(0.2)], [null, null]), false);
+  // Nothing fits either way.
+  assert.equal(C.otherWayFits([null, null], [null, null]), false);
+});
+
+test("a check event says whether the cameras were swapped back", () => {
+  const slim = C.slimEvent({ type: "check", warning: null, swapped: true, cameras: [{ label: "NexiGo", ok: true, moved: 0.123 }, { label: "NexiGo", ok: true, moved: 0.4 }] });
+  assert.equal(slim.swapped, true);
+  assert.deepEqual(slim.cameras.map((c) => c.moved), [0.12, 0.4]);
+  assert.equal(C.slimEvent({ type: "check", cameras: [] }).swapped, false);
+});

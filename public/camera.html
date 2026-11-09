@@ -178,7 +178,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
 <script src="board-vision.js?v=9"></script>
-<script src="board-camera.js?v=10"></script>
+<script src="board-camera.js?v=11"></script>
 <script>
 (function () {
   "use strict";
@@ -685,8 +685,10 @@
   function onEvent(e) {
     if (e.type === "check") {
       // How each calibration compared with what its camera shows now.
-      const lines = e.cameras.map((c) => (c.ok ? `"${c.label}": ${c.moved < 1 ? "where it was calibrated" : `followed, it had moved ${c.moved.toFixed(1)} mm`}` : `"${c.label}": couldn't be checked`));
-      show("testMsg", (e.warning ? e.warning + " " : "") + "Checked against the board: " + lines.join("; ") + ".", !e.warning);
+      const name = (c, i) => (e.cameras.filter((x) => x.label === c.label).length > 1 ? `Camera ${i + 1}` : `"${c.label}"`);
+      const lines = e.cameras.map((c, i) => (c.ok ? `${name(c, i)}: ${c.moved < 1 ? "where it was calibrated" : `followed, it had moved ${c.moved.toFixed(1)} mm`}` : `${name(c, i)}: couldn't be checked`));
+      const swapped = e.swapped ? "The two cameras had been plugged in the other way round, so they were swapped back. " : "";
+      show("testMsg", swapped + (e.warning ? e.warning + " " : "") + "Checked against the board: " + lines.join("; ") + ".", !e.warning);
       return;
     }
     if (e.type === "status") { $("watchStatus").textContent = e.text; return; }

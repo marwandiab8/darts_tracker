@@ -52,6 +52,7 @@
   <section class="card">
     <h2>Score with these cameras from any computer</h2>
     <p class="muted">Open this page on the computer the cameras are plugged into, and leave it open. It watches the board, reads every dart here, and sends it to your games on any computer or tablet where you are signed in with the same account (turn "Camera" on there). Calibrate the cameras from any computer on the <a href="camera.html" style="color:var(--accent)">Cameras</a> page: it gets pictures from this station.</p>
+    <p class="muted">Unplugging the cameras (taking this computer away) is fine: leave this page open, and when they are plugged back in the station starts again by itself and works out which camera is which, so they don't need calibrating again.</p>
   </section>
 
   <section class="card" id="signCard">
@@ -105,7 +106,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
 <script src="board-vision.js?v=9"></script>
 <script src="board-learn.js?v=3"></script>
-<script src="board-camera.js?v=10"></script>
+<script src="board-camera.js?v=11"></script>
 <script>
 (function () {
   "use strict";
@@ -123,7 +124,8 @@
   const $ = (id) => document.getElementById(id);
   const PREFS = "dt_station";
 
-  let user = null, station = null, cameras = [], wakeLock = null;
+  // cameras: plugged in now; shown: the station's cameras (from the account) the lists were filled for.
+  let user = null, station = null, cameras = [], shown = [], wakeLock = null;
   const prefs = (() => { try { return JSON.parse(localStorage.getItem(PREFS) || "{}") || {}; } catch (_) { return {}; } })();
   const savePrefs = () => { try { localStorage.setItem(PREFS, JSON.stringify(prefs)); } catch (_) { /* private mode */ } };
   const defaultName = () => (/Windows/i.test(navigator.userAgent) ? "Windows computer" : /Mac/i.test(navigator.userAgent) ? "Mac" : /Linux/i.test(navigator.userAgent) ? "Linux computer" : "Camera computer");
@@ -154,25 +156,48 @@
     if (!named) { cameras = []; if (!ask) return; }
     $("accessBox").classList.add("hidden");
     $("pickBox").classList.remove("hidden");
-    // What the station used last (from the account), else what was picked here before.
+    // What the station used last (from the account).
     const saved = await C.getStation(db, user.uid);
-    const savedCams = (saved && saved.setup && saved.setup.cameras) || [];
     $("hardShadows").checked = !!(saved && saved.setup && saved.setup.options && saved.setup.options.shadow);
-    [0, 1].forEach((i) => {
-      const sel = $("sel" + i);
-      sel.innerHTML = "";
-      sel.append(new Option("None", ""));
-      cameras.forEach((cam, k) => sel.append(new Option(cam.label + (cameras.filter((c) => c.label === cam.label).length > 1 ? ` (${k + 1})` : ""), cam.deviceId)));
-      const want = savedCams[i];
-      const match = want && (cameras.find((c) => c.deviceId === want.deviceId) || cameras.find((c) => c.label === want.label));
-      sel.value = match ? match.deviceId : "";
-    });
+    fillLists((saved && saved.setup && saved.setup.cameras) || []);
   }
   $("accessBtn").addEventListener("click", () => findCameras(true));
 
+  // The lists show the station's cameras among those plugged in now (two of one model are told
+  // apart by the station, by what each sees). One that isn't plugged in stays chosen, calibration
+  // and all, and says so.
+  function fillLists(saved) {
+    shown = (saved || []).filter(Boolean).slice(0, 2);
+    const found = C.matchCameras(shown, cameras);
+    [0, 1].forEach((i) => {
+      const sel = $("sel" + i), want = shown[i];
+      sel.innerHTML = "";
+      sel.append(new Option("None", ""));
+      cameras.forEach((cam, k) => sel.append(new Option(cam.label + (cameras.filter((c) => c.label === cam.label).length > 1 ? ` (${k + 1})` : ""), cam.deviceId)));
+      if (want && !found[i]) sel.append(new Option(`${want.label || "Camera " + (i + 1)} (not plugged in)`, "saved:" + i));
+      sel.value = found[i] ? found[i].deviceId : want ? "saved:" + i : "";
+    });
+  }
+  async function refreshLists(saved) {
+    if (!user || $("pickBox").classList.contains("hidden")) return;
+    try { cameras = await C.listCameras(); } catch (_) { return; }
+    fillLists(saved);
+  }
+  // Cameras plugged in or out (a running station starts again by itself once its cameras are back).
+  if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+    navigator.mediaDevices.addEventListener("devicechange", async () => {
+      if (!user) return;
+      if (!$("pickBox").classList.contains("hidden")) { refreshLists(station && station.setup ? station.setup.cameras : shown); return; }
+      // The page opened with no cameras at all.
+      await findCameras(false);
+      if (prefs.auto && cameras.length && !station) start();
+    });
+  }
+
   const choice = () => [0, 1].map((i) => {
     const id = $("sel" + i).value;
-    const cam = cameras.find((c) => c.deviceId === id);
+    const kept = /^saved:(\d)$/.exec(id);
+    const cam = kept ? shown[Number(kept[1])] : cameras.find((c) => c.deviceId === id);
     return cam ? { deviceId: cam.deviceId, label: cam.label } : null;
   });
   [0, 1].forEach((i) => $("sel" + i).addEventListener("change", () => { if (station) station.choose(choice()).catch((e) => setStatus(e.message, true)); }));
@@ -233,8 +258,10 @@
     else if (e.type === "takeout") addLog("Darts out");
     else if (e.type === "unreadable") addLog("Something changed, but no dart could be read");
     else if (e.type === "hand") addLog(`<span class="muted">A hand by the darts after the third one: not counted${e.label ? ` (it looked like ${e.label})` : ""}</span>`);
-    else if (e.type === "check" && e.warning) addLog(e.warning);
-    else if (e.type === "error") addLog(e.text);
+    else if (e.type === "check") {
+      if (e.swapped) addLog("Camera 1 and camera 2 had been plugged in the other way round, so the station swapped them back. No need to calibrate again.");
+      if (e.warning) addLog(e.warning);
+    } else if (e.type === "error") addLog(e.text);
   }
 
   async function keepAwake() {
@@ -247,7 +274,7 @@
     const picked = choice();
     if (!picked.some(Boolean)) { setStatus("Choose at least one camera.", true); return; }
     prefs.name = $("name").value.trim() || defaultName(); savePrefs();
-    station = C.createStation({ db, uid: user.uid, name: prefs.name, onStatus: setStatus, onEvent, onLearn });
+    station = C.createStation({ db, uid: user.uid, name: prefs.name, onStatus: setStatus, onEvent, onLearn, onSetup: (setup) => refreshLists((setup && setup.cameras) || []) });
     $("startBtn").disabled = true; $("stopBtn").disabled = false;
     try {
       await station.choose(picked);

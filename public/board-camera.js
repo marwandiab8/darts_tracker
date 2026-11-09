@@ -53,21 +53,65 @@
     }
   }
 
-  // Finds the camera saved in the setup among those plugged in now: by its id, else by its name.
-  async function resolve(saved) {
-    const cams = await listCameras();
-    return cams.find((c) => c.deviceId === saved.deviceId) || cams.find((c) => saved.label && c.label === saved.label) || null;
+  // Which of the cameras plugged in now (`devices`, as listCameras gives them) each saved camera is:
+  // a list, with null where none is. The one with its id, while its name still matches; else one
+  // with its name. Never one camera for two saved ones, unless they were saved as one (OBS's
+  // virtual camera, both halves). Two cameras of the same model have the same name, and on Linux a
+  // camera's id goes with the order the cameras were plugged in, so two of a model can come back
+  // with each other's ids, or new ones: the watcher tells them apart by what they see.
+  function matchCameras(saved, devices) {
+    const keyOf = (s) => (s ? s.deviceId || "name:" + (s.label || "") : null);
+    const keys = [], firsts = [];
+    saved.forEach((s) => { const k = keyOf(s); if (k && !keys.includes(k)) { keys.push(k); firsts.push(s); } });
+    const taken = new Set(), found = new Map();
+    const pass = (test) => firsts.forEach((s, g) => {
+      if (found.has(keys[g])) return;
+      const d = (devices || []).find((x) => x && !taken.has(x.deviceId) && test(s, x));
+      if (d) { found.set(keys[g], d); taken.add(d.deviceId); }
+    });
+    pass((s, d) => !!s.deviceId && d.deviceId === s.deviceId && (!s.label || !d.label || d.label === s.label));
+    pass((s, d) => !!s.label && d.label === s.label);
+    return saved.map((s) => (s ? found.get(keyOf(s)) || null : null));
   }
 
-  async function openStream(deviceId, label) {
-    try {
-      return await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
-      });
-    } catch (error) {
-      throw new Error(explain(error, label));
+  // Finds the camera saved in the setup among those plugged in now (see matchCameras).
+  async function resolve(saved) {
+    return matchCameras([saved], await listCameras())[0];
+  }
+
+  const pause = (ms) => new Promise((done) => setTimeout(done, ms));
+
+  // `tries`: a camera just plugged in can refuse to open for a moment, so try again (a second apart).
+  async function openStream(deviceId, label, tries = 1) {
+    for (let k = 1; ; k += 1) {
+      try {
+        return await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+        });
+      } catch (error) {
+        if (k >= tries || error.name === "NotAllowedError") throw new Error(explain(error, label));
+        await pause(1000);
+      }
     }
+  }
+
+  // What a camera of a setup is called in messages: by its name, or "camera 1" / "camera 2" when
+  // both have the same name (two of one model, or both halves of OBS's virtual camera).
+  function cameraName(cams, i) {
+    const label = cams[i] && cams[i].label;
+    return label && cams.filter((c) => c && c.label === label).length < 2 ? `"${label}"` : `camera ${i + 1}`;
+  }
+  const capital = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+  // Why the cameras couldn't all be found (cams[i] wasn't): `missing` is set on the error.
+  function missingError(cams, found) {
+    const lost = cams.map((c, i) => (found[i] ? -1 : i)).filter((i) => i >= 0), cam = cams[lost[0]];
+    let text;
+    if (cams.length > 1 && lost.length === cams.length) text = "The cameras aren't plugged in.";
+    else if (cams.filter((c) => c.label === cam.label).length > 1) text = `Only one of the two "${cam.label}" cameras is plugged in. Check the other one's cable.`;
+    else text = explain({ name: "NotFoundError" }, cam.label);
+    return Object.assign(new Error(text), { missing: true });
   }
 
   // A <video> playing the stream. Kept in the page (out of sight) because some browsers only keep
@@ -127,6 +171,18 @@
     }
   }
 
+  // A camera followed further than this (mm) since it was calibrated is worth a word.
+  const MOVED_MM = 6;
+
+  // Whether the calibrations fit the board better with the two cameras the other way round:
+  // `fits` and `tried` are, for each calibration, its match on the board this way and the other
+  // (refineCalibration's result, or null where it didn't fit). More of them fitting wins; as many,
+  // fitting nearer where they were calibrated (by more than a few mm in all) wins.
+  function otherWayFits(fits, tried) {
+    const score = (list) => list.reduce((total, f) => total + (f ? 1000 - f.refined.shift : 0), 0);
+    return score(tried) > score(fits) + 3;
+  }
+
   // A camera's picture once it has had a moment to settle its exposure.
   function settled(video, ms) {
     return new Promise((resolve) => {
@@ -140,9 +196,12 @@
   // calls onEvent with what the detector says (see BoardVision.createDetector), plus
   //   { type: "status", text }   for showing what it is doing,
   //   { type: "error", text }    when a camera can't be opened or stops, and
-  //   { type: "check", cameras, warning }  once at the start: each calibration checked against
-  //       what its camera shows now ({ label, ok, moved (mm) } each), and a warning to show if
-  //       one couldn't be checked or has moved a lot (else null).
+  //   { type: "check", cameras, warning, swapped }  once at the start: each calibration checked
+  //       against what its camera shows now ({ label, ok, moved (mm) } each), a warning to show if
+  //       one couldn't be checked or has moved a lot (else null), and whether two cameras had come
+  //       back plugged in the other way round (each calibration is then used with the camera it fits).
+  //   { type: "error", text, unplugged: true }  when a camera stops (unplugged).
+  // If a camera isn't plugged in, start() fails with an error that has `missing` set.
   // onFrames(frames, detector), if given, is called with every set of frames (for drawing).
   // With `recheck` (the default), a camera that has been knocked a little since it was calibrated
   // is followed for this session: its calibration is matched to the board again from a still.
@@ -152,59 +211,72 @@
     // is lit (setup.options, e.g. { shadow: true } for hard shadows), then the caller's.
     const options = Object.assign({}, learnedOptions(setup), (setup && setup.options) || {}, callerOptions);
     let cams = ready(setup);
-    let streams = [], videos = [], views = [], canvases = [], stills = [], checks = [], detector = null, timer = null, running = false;
+    let streams = [], videos = [], views = [], canvases = [], stills = [], checks = [], detector = null, timer = null, running = false, swapped = false;
     const bgTimer = background ? workerTimer() : null;
 
     async function start() {
       if (running) return;
       if (!cams.length) throw new Error("No cameras are set up yet.");
       running = true;
-      stills = []; checks = [];
+      stills = []; checks = []; swapped = false;
       onEvent({ type: "status", text: "Opening the cameras…" });
       try {
-        // One stream per physical camera, shared by views that use the same one.
-        const byDevice = new Map(), using = [];
-        for (const cam of cams) {
-          let entry = byDevice.get(cam.deviceId);
+        const found = matchCameras(cams, await listCameras());
+        if (found.some((d) => !d)) throw missingError(cams, found);
+        // One stream per physical camera, shared by views that use the same one (OBS side by side).
+        const byDevice = new Map();
+        let order = [];
+        for (let i = 0; i < cams.length; i += 1) {
+          const device = found[i];
+          let entry = byDevice.get(device.deviceId);
           if (!entry) {
-            const found = await resolve(cam);
-            if (!found) throw new Error(explain({ name: "NotFoundError" }, cam.label));
-            const stream = await openStream(found.deviceId, cam.label);
+            const stream = await openStream(device.deviceId, device.label || cams[i].label, 3);
             streams.push(stream);
             const video = await videoFor(stream);
+            entry = { device, video, still: null };
+            const mine = entry;
             stream.getVideoTracks().forEach((track) => track.addEventListener("ended", () => {
-              if (running) onEvent({ type: "error", text: `"${cam.label}" stopped. Was it unplugged?` });
+              const k = Math.max(0, order.indexOf(mine));
+              if (running) onEvent({ type: "error", text: `${capital(cameraName(cams, k))} stopped. Was it unplugged?`, unplugged: true });
             }));
-            entry = { video, still: null };
-            byDevice.set(cam.deviceId, entry);
+            byDevice.set(device.deviceId, entry);
           }
+          order.push(entry);
+        }
+        // What each camera shows now, once its exposure has settled.
+        await Promise.all([...byDevice.values()].map((entry) => settled(entry.video, 600)));
+        for (const entry of byDevice.values()) entry.still = still(entry.video);
+        // A camera sharing its picture with another (OBS side by side) has its lens in the middle
+        // of its own half.
+        const shared = (i) => cams.filter((c) => c.deviceId === cams[i].deviceId).length > 1;
+        // Each calibration checked against what its camera shows now (null: it couldn't be).
+        const fit = (i, entry) => (recheck ? snap(cams[i].cal, entry.still, shared(i), { taps: false }) : null);
+        let fits = order.map((entry, i) => fit(i, entry));
+        // Two cameras of one model look the same to the computer, so they can come back plugged in
+        // the other way round. When a calibration doesn't fit its camera (or only far from where it
+        // was: two cameras close together can seem to fit each other's), try the two the other way
+        // round, and keep whichever way fits the board better.
+        if (recheck && order.length === 2 && order[0] !== order[1] && fits.some((f) => !f || f.refined.shift > MOVED_MM)) {
+          const other = [order[1], order[0]], tried = other.map((entry, i) => fit(i, entry));
+          if (otherWayFits(fits, tried)) { order = other; fits = tried; swapped = true; }
+        }
+        const using = [];
+        order.forEach((entry, i) => {
+          const cam = cams[i], again = fits[i], cal = again || cam.cal;
           videos.push(entry.video);
-          // A camera sharing its picture with another (OBS side by side) has its lens in the middle
-          // of its own half.
-          const shared = cams.filter((c) => c.deviceId === cam.deviceId).length > 1;
-          // Check the calibration against what the camera shows now.
-          if (!entry.still) {
-            await settled(entry.video, 600);
-            entry.still = still(entry.video);
-          }
           stills.push(entry.still);
-          let cal = cam.cal, check = { label: cam.label, ok: false, moved: null };
-          if (recheck) {
-            const again = snap(cam.cal, entry.still, shared, { taps: false });
-            if (again) {
-              cal = again;
-              check = { label: cam.label, ok: true, moved: again.refined.shift, edges: again.refined.edges, rms: again.refined.rms };
-            }
-          }
-          checks.push(check);
-          using.push(Object.assign({}, cam, { cal }));
-          const view = V.makeView(cal, entry.video.videoWidth, entry.video.videoHeight, Object.assign({}, options, shared ? { center: V.halfCenter(cal) } : {}));
-          if (!view) throw new Error(`The calibration for "${cam.label}" doesn't fit its picture any more. Calibrate it again.`);
+          checks.push(again
+            ? { label: cam.label, ok: true, moved: again.refined.shift, edges: again.refined.edges, rms: again.refined.rms }
+            : { label: cam.label, ok: false, moved: null });
+          // `device`: the camera plugged in now that this calibration is used with.
+          using.push(Object.assign({}, cam, { cal, device: { deviceId: entry.device.deviceId, label: entry.device.label || cam.label } }));
+          const view = V.makeView(cal, entry.video.videoWidth, entry.video.videoHeight, Object.assign({}, options, shared(i) ? { center: V.halfCenter(cal) } : {}));
+          if (!view) throw new Error(`The calibration for ${cameraName(cams, i)} doesn't fit its picture any more. Calibrate it again.`);
           views.push(view);
           const canvas = document.createElement("canvas");
           canvas.width = view.width; canvas.height = view.height;
           canvases.push(canvas.getContext("2d", { willReadFrequently: true }));
-        }
+        });
         // Two views of one picture must not watch the same pixels.
         for (let i = 0; i < cams.length; i += 1) {
           for (let j = i + 1; j < cams.length; j += 1) if (cams[i].deviceId === cams[j].deviceId) V.separateViews(views[i], views[j]);
@@ -216,14 +288,14 @@
         throw error;
       }
       if (recheck) {
-        const unchecked = checks.filter((c) => !c.ok).map((c) => `"${c.label}"`);
-        const movedFar = checks.filter((c) => c.ok && c.moved > 6);
+        const unchecked = checks.map((c, i) => (c.ok ? null : cameraName(cams, i))).filter(Boolean);
+        const movedFar = checks.map((c, i) => (c.ok && c.moved > MOVED_MM ? i : -1)).filter((i) => i >= 0);
         const warning = unchecked.length
           ? `Couldn't check ${unchecked.join(" and ")} against the board (something in the way?), so it uses its calibration as saved.`
           : movedFar.length
-            ? `${movedFar.map((c) => `"${c.label}"`).join(" and ")} moved about ${Math.round(Math.max(...movedFar.map((c) => c.moved)))} mm since calibrating. It's followed, but calibrate it again if darts read wrong.`
+            ? `${capital(movedFar.map((i) => cameraName(cams, i)).join(" and "))} moved about ${Math.round(Math.max(...movedFar.map((i) => checks[i].moved)))} mm since calibrating. It's followed, but calibrate it again if darts read wrong.`
             : null;
-        onEvent({ type: "check", cameras: checks.slice(), warning });
+        onEvent({ type: "check", cameras: checks.slice(), warning, swapped });
       }
       onEvent({ type: "status", text: cams.length > 1 ? `Watching with ${cams.length} cameras.` : "Watching with one camera." });
       tick();
@@ -274,11 +346,14 @@
       get running() { return running; },
       get views() { return views; },
       get detector() { return detector; },
-      // The cameras watched, with the calibrations in use (checked against the board at the start).
+      // The cameras watched, with the calibrations in use (checked against the board at the start),
+      // and (`device`) the camera plugged in now that each is used with.
       get cameras() { return cams; },
       // Each camera's picture from the start (canvases), and how its check went.
       get stills() { return stills; },
       get checks() { return checks; },
+      // Whether two cameras had come back plugged in the other way round (and were put right).
+      get swapped() { return swapped; },
       // The board as the cameras see it now has no darts in it.
       markEmpty() {
         const frames = grab();
@@ -335,7 +410,7 @@
           method: e.method, nearWire: !!e.nearWire, labels: e.labels || [],
         };
       case "takeout": return { type: "takeout", darts: e.darts || 0 };
-      case "check": return { type: "check", warning: e.warning || null, cameras: (e.cameras || []).map((c) => ({ label: c.label, ok: !!c.ok, moved: round(c.moved, 2) })) };
+      case "check": return { type: "check", warning: e.warning || null, swapped: !!e.swapped, cameras: (e.cameras || []).map((c) => ({ label: c.label, ok: !!c.ok, moved: round(c.moved, 2) })) };
       case "error": return { type: "error", text: String(e.text || "").slice(0, 300) };
       case "unreadable": case "blocked": case "ready": return { type: e.type };
       default: return null; // "moving", "quiet", "status": too chatty to pass on
@@ -353,12 +428,19 @@
 
   // Runs the camera station on this computer for the signed-in user `uid`. `name` names this
   // computer for the others. onStatus(text, warn) says what it is doing; onEvent(event) passes on
-  // the watcher's events (for showing them here too). Returns { start, stop, choose(cameras),
-  // running, setup }: choose([{deviceId, label} | null, ...]) picks this computer's cameras.
-  function createStation({ db, uid, name, onStatus = () => {}, onEvent = () => {}, onLearn = () => {}, fps = 10 }) {
+  // the watcher's events (for showing them here too); onSetup(setup) is told when the account's
+  // choice of cameras changes (the station puts each calibration with the camera it fits). Returns
+  // { start, stop, choose(cameras), running, setup }: choose([{deviceId, label} | null, ...]) picks
+  // this computer's cameras.
+  //
+  // Cameras can be unplugged and plugged in again (a laptop taken away and brought back): the
+  // station stops watching when one is unplugged, and starts again by itself once they are all
+  // plugged in, as it does when it starts with one missing.
+  function createStation({ db, uid, name, onStatus = () => {}, onEvent = () => {}, onLearn = () => {}, onSetup = () => {}, fps = 10 }) {
     const ref = stationRef(db, uid), events = ref.collection("events").doc("latest");
     let unsub = null, doc = null, watcher = null, watchingKey = "", previews = [], recent = [], seq = 0;
     let beat = null, running = false, status = "", handled = { still: null, clear: null }, busy = Promise.resolve();
+    let waiting = null, shownCameras = null;
     const beatTimer = workerTimer();
     const learning = createLearning();
 
@@ -378,6 +460,54 @@
       if (e.type === "dart") learning.keep(seq, e);
       recent = recent.concat([Object.assign({ seq, at: Date.now() }, slim)]).slice(-20);
       events.set({ seq, events: recent, updated: Date.now() }).catch((error) => say("Couldn't pass a dart on: " + error.message, true));
+      if (e.type === "error" && e.unplugged) unplugged();
+    }
+
+    // A camera stopped (unplugged): stop watching, and start again once the cameras are back.
+    function unplugged() {
+      if (!watcher || !running) return;
+      watcher.stop();
+      watcher = null;
+      say("A camera was unplugged. The station starts watching again by itself once the cameras are plugged back in.", true);
+      heartbeat();
+      waitForCameras();
+    }
+
+    // Looks every few seconds (and whenever a camera is plugged in or out) for the chosen cameras;
+    // once they are all plugged in, watches with them.
+    function waitForCameras() {
+      if (waiting || !running) return;
+      const me = { timer: workerTimer(), t: null, onChange: null };
+      const later = (ms) => {
+        if (waiting !== me) return;
+        if (me.timer) me.timer.set(look, ms);
+        else { clearTimeout(me.t); me.t = setTimeout(look, ms); }
+      };
+      async function look() {
+        if (waiting !== me) return;
+        let devices = null;
+        try { devices = await listCameras(); } catch (_) { /* try again */ }
+        const want = ready({ cameras: chosen() });
+        if (waiting === me && devices && want.length && matchCameras(want, devices).every(Boolean)) {
+          stopWaiting();
+          busy = busy.then(() => reconcile()).catch((error) => say(error.message, true));
+          return;
+        }
+        later(3000);
+      }
+      // A camera just plugged in is given a moment to settle before it is opened.
+      me.onChange = () => later(1500);
+      waiting = me;
+      if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) navigator.mediaDevices.addEventListener("devicechange", me.onChange);
+      later(3000);
+    }
+    function stopWaiting() {
+      const me = waiting;
+      if (!me) return;
+      waiting = null;
+      if (me.timer) me.timer.close();
+      clearTimeout(me.t);
+      if (navigator.mediaDevices && navigator.mediaDevices.removeEventListener) navigator.mediaDevices.removeEventListener("devicechange", me.onChange);
     }
 
     async function heartbeat() {
@@ -413,15 +543,15 @@
     }
 
     async function openPreviews() {
-      const want = chosen().map((c) => c.deviceId || c.label);
+      const cams = chosen(), want = cams.map((c) => c.deviceId || c.label);
       for (const p of previews) if (!want.includes(p.key)) closePreview(p);
       previews = previews.filter((p) => want.includes(p.key));
-      for (const cam of chosen()) {
-        const key = cam.deviceId || cam.label;
-        if (previews.some((p) => p.key === key)) continue;
-        const found = await resolve(cam);
-        if (!found) { say(explain({ name: "NotFoundError" }, cam.label), true); continue; }
-        const stream = await openStream(found.deviceId, cam.label);
+      const found = matchCameras(cams, await listCameras());
+      if (found.some((d) => !d)) say(missingError(cams, found).message, true);
+      for (let i = 0; i < cams.length; i += 1) {
+        const cam = cams[i], key = want[i];
+        if (previews.some((p) => p.key === key) || !found[i]) continue;
+        const stream = await openStream(found[i].deviceId, cam.label);
         const video = await videoFor(stream);
         await settled(video, 400);
         previews.push({ key, stream, video });
@@ -433,16 +563,22 @@
     }
     function closePreviews() { previews.forEach(closePreview); previews = []; }
 
+    // What the watcher depends on, field by field (the account may return a map's fields in
+    // another order, which must not count as a change).
+    function watchKey(cameras, options) {
+      const lensKey = (l) => (l ? [l.cx, l.cy, l.s, l.k].join(",") : "");
+      return JSON.stringify(ready({ cameras }).map((c) => [c.deviceId, c.label, c.cal.H.join(","), lensKey(c.cal.lens)])) + "|shadow=" + !!(options && options.shadow);
+    }
+
     // Watch with the calibrated cameras; start again when the calibration changes.
     async function reconcile() {
       const setup = { version: 1, cameras: chosen(), options: (doc && doc.setup && doc.setup.options) || {} };
       const calibrated = ready(setup);
-      // What the watcher depends on, field by field (the account may return a map's fields in
-      // another order, which must not count as a change).
-      const lensKey = (l) => (l ? [l.cx, l.cy, l.s, l.k].join(",") : "");
-      const key = JSON.stringify(calibrated.map((c) => [c.deviceId, c.label, c.cal.H.join(","), lensKey(c.cal.lens)])) + "|shadow=" + !!setup.options.shadow;
-      if (key === watchingKey && (watcher || !calibrated.length)) return;
+      const key = watchKey(setup.cameras, setup.options);
+      // Nothing new: watching already, or waiting for these cameras to be plugged in.
+      if (key === watchingKey && (watcher || waiting || !calibrated.length)) return;
       if (watcher) { watcher.stop(); watcher = null; }
+      stopWaiting();
       watchingKey = key;
       if (!calibrated.length) {
         say(chosen().length ? "Waiting for the cameras to be calibrated (Cameras page, on any computer)." : "Choose this computer's cameras.");
@@ -454,18 +590,54 @@
       watcher = w;
       try {
         await w.start();
-        say(`Watching with ${calibrated.length} camera${calibrated.length > 1 ? "s" : ""}. Darts go to your games on any computer.`);
+        keepDevices(w, setup, calibrated);
+        say(`Watching with ${calibrated.length} camera${calibrated.length > 1 ? "s" : ""}. Darts go to your games on any computer.`
+          + (w.swapped ? " (Camera 1 and camera 2 had been plugged in the other way round: swapped back.)" : ""));
       } catch (error) {
         if (watcher === w) watcher = null;
-        watchingKey = "";
-        say(error.message, true);
+        if (error.missing && running) {
+          say(error.message + " The station starts watching by itself once they're plugged in.", true);
+          waitForCameras();
+        } else {
+          watchingKey = ""; // tried again when the account changes (every heartbeat)
+          say(error.message, true);
+        }
       }
       heartbeat();
+    }
+
+    // Tells the account which camera each calibration was found on, when that isn't the one it was
+    // saved with (two of a model plugged in the other way round, or under new ids), so every
+    // computer shows the right camera for each and the next start finds them straight away. The
+    // watching carries on: nothing it depends on changes.
+    function keepDevices(w, setup, calibrated) {
+      const now = w.cameras;
+      // Changed while the cameras were starting (a new calibration): it starts again with that.
+      if (now.length !== calibrated.length || watchKey(chosen(), setup.options) !== watchKey(setup.cameras, setup.options)) return;
+      let changed = false;
+      const cameras = setup.cameras.map((c) => {
+        const j = calibrated.indexOf(c), d = j >= 0 ? now[j].device : null;
+        if (!d || (d.deviceId === c.deviceId && d.label === c.label)) return c;
+        changed = true;
+        return Object.assign({}, c, { deviceId: d.deviceId, label: d.label });
+      });
+      // Never two cameras on one id where there weren't (that would read as OBS's two halves).
+      const twice = (list) => list.length - new Set(list.map((c) => c.deviceId)).size;
+      if (!changed || twice(cameras) > twice(setup.cameras)) return;
+      watchingKey = watchKey(cameras, setup.options);
+      // Here straight away too, so nothing reads the old ids before the account answers.
+      doc = Object.assign({}, doc, { setup: Object.assign({}, doc && doc.setup, { cameras }) });
+      ref.set({ uid, setup: { version: 1, cameras } }, { merge: true }).catch((error) => say("Couldn't save which camera is which: " + error.message, true));
     }
 
     function onDoc(snap) {
       doc = snap.exists ? snap.data() : null;
       const ask = (doc && doc.ask) || {};
+      const cams = JSON.stringify(chosen().map((c) => [c.deviceId || "", c.label || ""]));
+      if (cams !== shownCameras) {
+        shownCameras = cams;
+        try { onSetup((doc && doc.setup) || null); } catch (_) { /* the page's business */ }
+      }
       busy = busy.then(async () => {
         await reconcile();
         learning.apply();
@@ -636,13 +808,15 @@
         if (beatTimer) beatTimer.clear();
         if (watcher) watcher.stop();
         watcher = null; watchingKey = "";
+        stopWaiting();
         closePreviews();
         learning.stop();
         ref.set({ station: { name, seen: Date.now(), running: false, status: "Stopped." } }, { merge: true }).catch(() => {});
         say("Stopped.");
       },
-      // This computer's cameras for the station (up to two; null for none). A camera that changes
-      // loses its calibration.
+      // This computer's cameras for the station (up to two; null for none). A camera of another
+      // model loses its calibration. One of the same model keeps it: two of a model can come back
+      // with each other's ids when plugged in again, and the station tells them apart by what they see.
       async choose(list) {
         // Called before start() too (the page picks the cameras, then starts): read what is saved
         // first, so the calibrations of cameras that stay the same are kept.
@@ -654,7 +828,7 @@
         const cameras = list.slice(0, 2).map((c, i) => {
           if (!c) return null;
           const old = before[i];
-          const same = old && (old.deviceId === c.deviceId || (!old.deviceId && old.label === c.label));
+          const same = old && (old.deviceId === c.deviceId || (!!old.label && old.label === c.label));
           return { deviceId: c.deviceId, label: c.label, cal: same && old.cal ? old.cal : null };
         }).filter(Boolean);
         await ref.set({ uid, setup: { version: 1, cameras } }, { merge: true });
@@ -827,7 +1001,7 @@
   }
 
   root.DartCamera = {
-    KEY, load, save, ready, listCameras, requestAccess, openStream, videoFor, still, pixelsOf, lensOptions, snap, explain, resolve, createWatcher,
+    KEY, load, save, ready, listCameras, requestAccess, openStream, videoFor, still, pixelsOf, lensOptions, snap, explain, resolve, matchCameras, otherWayFits, createWatcher,
     isOnline, slimEvent, createStation, createRemoteWatcher, getStation, chooseWatcher, requestStills, saveStationSetup, setStationOptions,
     noteDart, forgetLearned, learnedOptions,
   };
