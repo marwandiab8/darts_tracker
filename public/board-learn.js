@@ -14,7 +14,7 @@
 // up), and by the tests (module.exports).
 (function (root, factory) {
   const inWorker = typeof WorkerGlobalScope !== "undefined" && root instanceof WorkerGlobalScope;
-  if (inWorker && !root.BoardVision) root.importScripts("board-vision.js?v=8");
+  if (inWorker && !root.BoardVision) root.importScripts("board-vision.js?v=9");
   if (typeof module === "object" && module.exports) module.exports = factory(require("./board-vision.js"), false);
   else root.BoardLearn = factory(root.BoardVision, inWorker);
 })(typeof self !== "undefined" ? self : this, function (V, inWorker) {

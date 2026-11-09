@@ -374,7 +374,8 @@ test("pulling darts out without a big hand in the picture is not read as a dart"
   assert.equal(second.filter((e) => e.type === "dart").length, 0, second.map((e) => e.type).join(","));
   const out = second.find((e) => e.type === "takeout");
   assert.ok(out, second.map((e) => e.type).join(","));
-  // And the next throw is read as usual.
+  // And the next throw is read as usual (from the oche, a few seconds later).
+  now += 4000;
   const next = feed([b], 8).filter((e) => e.type === "dart");
   assert.equal(next.length, 1);
 });
@@ -434,6 +435,8 @@ test("the light changing while the darts are in: pulling them out is still a tak
   assert.ok(takeout, "darts out: " + out.map((e) => e.type).join(","));
   assert.equal(takeout.darts, 3);
   assert.equal(detector.darts, 0);
+  // Back at the oche a few seconds later.
+  now += 4000;
   const next = feed([visit[0]], 8, 0.32).filter((e) => e.type === "dart");
   assert.equal(next.length, 1, "the next dart");
   assert.equal(next[0].index, 1, "is the first of the next visit");
@@ -465,4 +468,30 @@ test("a hand by the darts after the third one is not a fourth dart", () => {
   now += 8000;
   const next = feed(board([visit[1]]), 8).filter((e) => e.type === "dart");
   assert.equal(next.length, 1, "the next visit's first dart");
+});
+
+test("a slow pull, one dart at a time with the hand at the board, is no darts and then darts out", () => {
+  const { views, renders } = rig(57);
+  const detector = V.createDetector(views);
+  let now = 0;
+  const feed = (make, frames, ms = 100) => {
+    const out = [];
+    for (let i = 0; i < frames; i += 1) { now += ms; out.push(...detector.push(make(), now)); }
+    return out;
+  };
+  const board = (darts) => () => renders.map((r) => flicker(r(darts)));
+  const fingers = (darts) => () => renders.map((r, i) => withFingers(flicker(r(darts)), views[i], { x: 8, y: -128 }));
+  feed(board([]), 10);
+  const read = [];
+  visit.forEach((_, k) => { read.push(...feed(board(visit.slice(0, k + 1)), 25).filter((e) => e.type === "dart")); });
+  assert.equal(read.length, 3, "three darts read");
+  // Walking up (9 s), then pulling them out one by one over 10 s, the hand at the board throughout.
+  const events = feed(board(visit), 60)
+    .concat(feed(fingers(visit), 30), feed(fingers(visit.slice(0, 2)), 30), feed(fingers(visit.slice(0, 1)), 30), feed(fingers([]), 30), feed(board([]), 40));
+  assert.equal(events.filter((e) => e.type === "dart").length, 0, "nothing read as a dart: " + events.map((e) => e.type).join(","));
+  assert.equal(events.filter((e) => e.type === "takeout").length, 1, "darts out once: " + events.map((e) => e.type).join(","));
+  // The next visit, a few seconds later.
+  const next = feed(board([visit[1]]), 25).filter((e) => e.type === "dart");
+  assert.equal(next.length, 1, "the next visit's first dart");
+  assert.equal(next[0].index, 1);
 });

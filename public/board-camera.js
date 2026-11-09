@@ -540,7 +540,7 @@
       function inWorker(current) {
         return new Promise((resolve, reject) => {
           let w;
-          try { w = new Worker("board-learn.js?v=2"); } catch (error) { reject(error); return; }
+          try { w = new Worker("board-learn.js?v=3"); } catch (error) { reject(error); return; }
           const end = (fn, value) => { w.terminate(); fn(value); };
           w.onmessage = (event) => {
             const m = event.data || {};
