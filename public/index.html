@@ -1267,7 +1267,12 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
 
   // iOS Safari / iPadOS Web Speech (TTS) is finicky:
   // - voices load async (voiceschanged)
-  // - the engine often needs a user-gesture "unlock"
+  // - nothing is spoken until one utterance has been started inside a tap or key press; until then
+  //   every other one is dropped without a sound, an error or an event. Only the END of a touch counts
+  //   (touchend / click), not touching down (pointerdown), and a try from anywhere else (page load, a
+  //   camera dart, a timer) unlocks nothing - so __ttsUnlocked is set only by a try from a tap or key
+  //   (the listeners after this section), and cleared when a word is never heard, so the next tap
+  //   tries again.
   let __ttsInit = false;
   let __ttsVoices = [];
   let __ttsUnlocked = false;
@@ -1291,22 +1296,21 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
     loadVoices();
   }
 
-  // 2) Stronger Unlock (call from a USER gesture, e.g. checkbox change)
+  // 2) Stronger Unlock: ONLY from a tap or key press (the gesture listeners, the Voice checkbox's change)
   function unlockTTS() {
     if (!tapVoiceEnabled || __ttsUnlocked) return;
     if (!("speechSynthesis" in window)) return;
 
     try {
       const synth = window.speechSynthesis;
-      // Cancel anything pending before "waking" the engine
-      try { synth.cancel(); } catch (e) {}
-
-      // A truly "empty" but valid utterance to wake the engine
+      if (synth.paused) synth.resume();
+      // A truly "empty" but valid utterance to wake the engine. A tap gives several tries (pointerup,
+      // touchend, click) and not every browser counts each one, so it counts as unlocked only once this
+      // is actually spoken (a blocked one fires nothing); until then the next try goes ahead too.
       const utterance = new SpeechSynthesisUtterance(" ");
       utterance.volume = 0; // silent
+      utterance.onstart = utterance.onend = () => { __ttsUnlocked = true; };
       synth.speak(utterance);
-      __ttsUnlocked = true;
-      console.log("Speech engine unlocked for iOS/iPadOS");
     } catch (e) {}
   }
 
@@ -1348,29 +1352,27 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
 
     const synth = window.speechSynthesis;
     initTTS();
-    unlockTTS();
+    // Not unlockTTS() here: this runs from a timer, where a "warm-up" unlocks nothing and would only
+    // stop the next tap from doing it for real.
+    try { if (synth.paused) synth.resume(); } catch (e) {} // back from the background paused
 
     try { __ttsVoices = synth.getVoices() || __ttsVoices; } catch (e) {}
 
     const utterance = buildUtterance(text);
     utterance.onstart = () => { __ttsUnlocked = true; };
-    utterance.onerror = () => {
+    utterance.onerror = (e) => {
+      // Cut off by a newer word: nothing wrong with the voice.
+      if (e && (e.error === "interrupted" || e.error === "canceled")) return;
       __ttsUnlocked = false;
       if (allowRetry && seq === __speakSeq) {
-        __speakRetryTimer = setTimeout(() => {
-          scheduleTTSUnlock();
-          speakNow(text, seq, false);
-        }, 140);
+        __speakRetryTimer = setTimeout(() => speakNow(text, seq, false), 140);
       }
     };
 
     try { synth.speak(utterance); } catch (e) {
       __ttsUnlocked = false;
       if (allowRetry && seq === __speakSeq) {
-        __speakRetryTimer = setTimeout(() => {
-          scheduleTTSUnlock();
-          speakNow(text, seq, false);
-        }, 140);
+        __speakRetryTimer = setTimeout(() => speakNow(text, seq, false), 140);
       }
       return;
     }
@@ -1379,8 +1381,8 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
       __speakRetryTimer = setTimeout(() => {
         if (seq !== __speakSeq) return;
         if (!synth.speaking && !synth.pending) {
+          // Never started: blocked (an iPad says nothing), so the next tap unlocks it again.
           __ttsUnlocked = false;
-          scheduleTTSUnlock();
           speakNow(text, seq, false);
         }
       }, 260);
@@ -1392,7 +1394,6 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
     if (!tapVoiceEnabled || !("speechSynthesis" in window)) return;
 
     initTTS();
-    unlockTTS();
 
     const synth = window.speechSynthesis;
     const now = Date.now();
@@ -1574,19 +1575,20 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
     }
   })();
 
-  ["pointerdown", "touchend", "click"].forEach(evt => {
-    document.addEventListener(evt, () => {
+  // Every tap and key press, at its end (where Safari lets a page start sound; a touch going down
+  // doesn't count) and before the page's own handlers: the voice until it works, and the beeps' audio
+  // whenever iOS has suspended it.
+  ["touchend", "pointerup", "click", "keydown"].forEach(evt => {
+    window.addEventListener(evt, () => {
       if (tapVoiceEnabled) scheduleTTSUnlock();
-    }, { passive: true });
+      if (tapSoundEnabled && (!__audioCtx || __audioCtx.state !== "running")) ensureAudio();
+    }, { capture: true, passive: true });
   });
 
-  window.addEventListener("pageshow", () => {
-    if (tapVoiceEnabled) scheduleTTSUnlock({ force: true });
-  });
-
-  document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && tapVoiceEnabled) scheduleTTSUnlock({ force: true });
-  });
+  // Back on the page (or out of the back/forward cache): if the voice was lost meanwhile, the next tap
+  // unlocks it again. (Trying here, outside a tap, would unlock nothing.)
+  window.addEventListener("pageshow", () => { __ttsUnlocked = false; });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) __ttsUnlocked = false; });
 
 
 

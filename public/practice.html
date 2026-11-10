@@ -21,6 +21,7 @@
   .head-right { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
   #soundBtn { min-height: 36px; padding: 6px 12px; font-size: 14px; }
   #soundBtn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+  #soundUnlock { min-height: 36px; padding: 6px 12px; font-size: 14px; }
   .head-left { display: flex; align-items: center; gap: 12px; min-width: 0; flex-wrap: wrap; }
   a.back { color: var(--accent); text-decoration: none; font-weight: 700; font-size: 14px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 999px; }
   .pill { display: inline-flex; align-items: center; padding: 6px 12px; border-radius: 999px; background: rgba(255,255,255,.05); border: 1px solid var(--border); font-size: 14px; max-width: 100%; }
@@ -191,6 +192,7 @@
       <h1>Practice</h1>
     </div>
     <div class="head-right">
+      <button type="button" class="hidden" id="soundUnlock" title="The browser keeps the voice quiet until the page is tapped">Tap to hear the scores</button>
       <button type="button" class="secondary hidden" id="soundBtn" aria-pressed="true" title="Announce each visit's score out loud">Sound: on</button>
       <span class="pill hidden" id="userPill"><span id="userName"></span></span>
     </div>
@@ -502,8 +504,16 @@
 
   // --- announcing scores -----------------------------------------------------------------------------
   // Each finished visit is said out loud, by a caller's voice, unless muted. Browsers only let a page
-  // speak (or play audio) once it has been touched, so the first tap anywhere warms both up silently.
+  // start speech or audio from inside a tap or a key press, and an iPad is strict about it: until one
+  // utterance has been started inside a tap, Safari drops every other one without a sound, an error or
+  // an event. Only the END of a touch counts (touchend / click), never touching down (pointerdown).
+  // The scores are mostly called from timers - camera darts, the bot, auto-pass, the other device -
+  // not from a tap, so the voice stayed silent until a tap happened to call a score itself (a corrected
+  // visit), often a couple of games in. So every tap and key press warms the voice and the audio up
+  // until they work, a score that was never heard marks the voice as blocked again, and while it is
+  // blocked a "Tap to hear the scores" button shows.
   const canSpeak = !!window.speechSynthesis && typeof window.SpeechSynthesisUtterance === "function";
+  // Something was actually spoken (a warm-up or a score): the voice works from timers too.
   let speechReady = false;
 
   // The fixed set of big/special calls (see FIXED_CLIPS/clipForScore in practice-engine.js) are
@@ -566,22 +576,61 @@
     noteSound("unlocked");
   }
 
-  function warmUpSpeech() {
-    if (speechReady || !canSpeak) return;
+  // Called from every tap and key press (the end of it: see the listeners at the bottom), so it runs
+  // inside the gesture. The speech warm-up is a silent space (an empty string can be skipped without
+  // counting). A finger's tap gives several tries (pointerup, touchend, click), and not every browser
+  // counts each of them, so only a warm-up that is actually spoken (it starts or ends: a blocked one
+  // fires nothing) marks the voice as working; until then every tap tries again. The audio is woken
+  // whenever it isn't running (iOS suspends it in the background).
+  function voiceWorks() {
+    if (speechReady) return;
     speechReady = true;
-    try { const u = new SpeechSynthesisUtterance(""); u.volume = 0; window.speechSynthesis.speak(u); } catch (_) {}
-    unlockAudio();
+    noteSound("voice unlocked");
+    renderSound();
+  }
+
+  function warmUpSpeech() {
+    if (!canSpeak) return;
+    if (!speechReady) {
+      try {
+        const synth = window.speechSynthesis;
+        if (synth.paused) synth.resume();
+        const u = new SpeechSynthesisUtterance(" ");
+        u.volume = 0; u.lang = "en-GB";
+        u.onstart = voiceWorks;
+        u.onend = voiceWorks;
+        synth.speak(u);
+      } catch (_) {}
+    }
+    if (!audioCtx || audioCtx.state !== "running") unlockAudio();
+  }
+
+  // The voice was asked to say something and never did: blocked (or lost), so the next tap unlocks it.
+  function speechBlocked(why) {
+    if (!speechReady) return;
+    speechReady = false;
+    noteSound("voice blocked (" + why + ") - tap to unlock");
+    renderSound();
   }
 
   function speakSeg(seg, botPitch) {
     return new Promise((resolve) => {
+      const synth = window.speechSynthesis;
+      try { if (synth.paused) synth.resume(); } catch (_) {} // Safari can come back from the background paused
       const u = new SpeechSynthesisUtterance(seg.text);
       u.rate = seg.rate; u.pitch = seg.pitch * botPitch; u.volume = seg.volume; u.lang = "en-GB";
-      let t = null;
+      let t = null, heard = false;
+      const asked = announceToken;
       const done = () => { clearTimeout(t); resolve(); };
-      t = setTimeout(done, 6000); // some browsers never fire onend
-      u.onend = done; u.onerror = done;
-      window.speechSynthesis.speak(u);
+      const started = () => { heard = true; voiceWorks(); };
+      // Some browsers never fire onend; a blocked iPad fires nothing at all, not even onstart. (A call
+      // cancelled by a newer one may never start either: that's not the voice being blocked.)
+      t = setTimeout(() => { if (!heard && asked === announceToken) speechBlocked("no start"); done(); }, 6000);
+      u.onstart = started;
+      u.onend = () => { started(); done(); };
+      // "not-allowed": no tap yet (Chrome says so; Safari says nothing). Cancelled calls end as errors too.
+      u.onerror = (e) => { if (e && e.error === "not-allowed") speechBlocked("not allowed"); done(); };
+      synth.speak(u);
     });
   }
 
@@ -617,9 +666,16 @@
 
   async function announce(visit) {
     if (!canSpeak || settings.mute || !visit || !game) return;
+    let busy = false;
+    try { busy = window.speechSynthesis.speaking || window.speechSynthesis.pending; } catch (_) {}
     stopAnnouncing();
     const token = announceToken;
     if (audioCtx && audioCtx.state !== "running" && audioCtx.resume) audioCtx.resume().catch(() => {});
+    // Safari can drop a line started straight after cancel(): give it a moment when one was cut off.
+    if (busy) {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      if (token !== announceToken) return;
+    }
     try {
       // A caller's voice: flat for a normal return, more excited for a big one, peaking at 180 - see
       // E.visitAnnouncement, which also names a pre-recorded clip for the calls big enough to have one.
@@ -644,6 +700,8 @@
     button.classList.toggle("hidden", !canSpeak || !user);
     button.setAttribute("aria-pressed", String(!settings.mute));
     button.textContent = "Sound: " + (settings.mute ? "off" : "on");
+    // The browser won't let the voice speak until the page is tapped (see warmUpSpeech): say so.
+    $("soundUnlock").classList.toggle("hidden", !canSpeak || !user || settings.mute || speechReady);
   }
 
   function setMute(mute) {
@@ -2210,12 +2268,15 @@
   $("confirmToggle").addEventListener("click", () => setConfirm(!settings.confirm));
   $("cameraToggle").addEventListener("click", () => setCamera(!settings.camera));
   $("soundBtn").addEventListener("click", () => setMute(!settings.mute));
-  document.addEventListener("pointerdown", warmUpSpeech, { once: true });
-  document.addEventListener("keydown", warmUpSpeech, { once: true });
-  // iOS suspends ("interrupts") Web Audio when the page goes to the background or a call comes in;
-  // any later tap wakes it again, so the recorded calls don't quietly fall back to the plain voice.
-  document.addEventListener("pointerdown", () => {
-    if (audioCtx && audioCtx.state !== "running") unlockAudio();
+  // Every tap and key press, at its end (touchend / click / pointerup: where Safari lets a page start
+  // sound; a touch going down doesn't count), and before the page's own handlers (capture), wakes the
+  // voice until it works and the audio whenever iOS has suspended it (background, a phone call), so
+  // the recorded calls don't quietly fall back to the plain voice.
+  ["touchend", "pointerup", "click", "keydown"].forEach((type) => window.addEventListener(type, warmUpSpeech, { capture: true, passive: true }));
+  // A tap on it is all it takes (the listeners above do the work); it says so out loud.
+  $("soundUnlock").addEventListener("click", () => {
+    if (!canSpeak || settings.mute) return;
+    playSeg({ text: "Scores on", rate: 1, pitch: 1, volume: 1, clip: null }, 1);
   });
   renderSound();
   $("entryBoard").addEventListener("click", () => setEntry("board"));
