@@ -389,6 +389,89 @@ function mapChallengeGameToTimeLeft(game, gameId, syncStatus = "active") {
   };
 }
 
+// A finished round of the Doubles game (doubles.html): every double, D1 to the bull, against the clock.
+// Written by the browser, so every field is checked or clamped. Rounds carried over from the old My
+// Doubles Progress app (importedFrom) were sent to Time Left by that app already, so the trigger skips them.
+const DOUBLES_KEYS = [...Array.from({ length: 20 }, (_, index) => `D${index + 1}`), "DBULL"];
+
+function formatDuration(ms) {
+  const sec = Math.floor(Math.max(0, ms) / 1000);
+  const m = Math.floor(sec / 60), s = sec % 60, h = Math.floor(m / 60), mm = m % 60;
+  return h > 0 ? `${h}:${String(mm).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${mm}:${String(s).padStart(2, "0")}`;
+}
+
+function mapDoublesSessionToTimeLeft(session, sessionId, syncStatus = "active") {
+  const timeZone = DARTS_DEFAULT_TIME_ZONE.value() || "America/Toronto";
+  const appBaseUrl = String(DARTS_APP_BASE_URL.value() || "").replace(/\/+$/, "");
+  const startedAtMs = cleanNumber(session.startedAtMs, 0, 4102444800000, 0);
+  const endedAtMs = cleanNumber(session.endedAtMs, 0, 4102444800000, 0);
+  const dateId = isDateId(session.localDate) ? session.localDate.trim() : startedAtMs ? timestampDateId(new Date(startedAtMs), timeZone) : "";
+  const activeMs = cleanNumber(session.activeMs, 0, 86400000, 0) || 0;
+  const darts = cleanNumber(session.totalDarts, 0, 3000, 0);
+  const extra = cleanNumber(session.extraDarts, 0, 3000, 0) || 0;
+  const per = session.perDouble && typeof session.perDouble === "object" ? session.perDouble : {};
+  const done = DOUBLES_KEYS.filter((key) => per[key] && per[key].completed === true).length;
+  const tries = DOUBLES_KEYS.map((key) => ({ key, attempts: cleanNumber(per[key] && per[key].attempts, 0, 1000, 0) || 0 }));
+  const hardest = tries.reduce((best, d) => (d.attempts > best.attempts ? d : best), { key: null, attempts: 0 });
+  const firstTry = DOUBLES_KEYS.filter((key) => per[key] && per[key].completed === true && Number(per[key].attempts) === 1).length;
+  const time = formatDuration(activeMs);
+  const summary = `Finished ${done === 21 ? "every double, D1 to the bull," : `${done} of 21 doubles`} in ${time} of active time` +
+    (darts !== null ? ` with ${darts} darts${extra ? ` (${extra} extra, staying on a double)` : ""}` : "") + "." +
+    ` ${firstTry} went in on the first try` + (hardest.key && hardest.attempts > 1 ? `; ${hardest.key} took ${hardest.attempts} tries.` : ".");
+
+  return {
+    dateId: dateId || undefined,
+    sourceApp: "DartstRacker2026",
+    category: "dartsRecord",
+    title: `Doubles: ${done === 21 ? "all 21" : `${done} of 21`} in ${time}`,
+    summary,
+    description: "Doubles practice in Darts Tracker: every double from D1 to the bull, up to three darts a try, against the clock.",
+    sourceFirebaseProjectId: DARTS_FIREBASE_PROJECT_ID.value() || "dartstracker2026",
+    sourceProjectName: "Darts Tracker",
+    sourceProjectId: DARTS_SOURCE_PROJECT_ID,
+    sourceCollection: "doublesSessions",
+    sourceDocumentId: sessionId,
+    sourceDocumentPath: `doublesSessions/${sessionId}`,
+    sourceStoragePath: null,
+    sourceUrl: appBaseUrl ? `${appBaseUrl}/doubles.html` : "",
+    fileUrl: null,
+    thumbnailUrl: null,
+    contentType: null,
+    fileName: null,
+    fileSize: null,
+    originalCreatedAt: isoOrNull(session.createdAt),
+    originalUpdatedAt: isoOrNull(endedAtMs),
+    capturedAt: isoOrNull(startedAtMs),
+    visibility: "ownerOnly",
+    syncStatus,
+    metadata: {
+      uid: session.uid || null,
+      practiceType: "doubles",
+      doublesDone: done,
+      darts,
+      extraDarts: extra,
+      activeMs,
+      firstTryHits: firstTry,
+      hardestDouble: hardest.attempts > 1 ? hardest.key : null,
+      hardestTries: hardest.attempts > 1 ? hardest.attempts : null,
+      startedAtMs,
+      endedAtMs,
+      source: "dartstracker2026",
+      note: summary,
+    },
+    // Filed under Darts and timed like the other practice, so it shows on the Activity wheel.
+    eventType: "darts_practice",
+    activityFamily: "darts",
+    durationSeconds: activeMs > 0 ? Math.round(activeMs / 1000) : undefined,
+    metrics: Object.fromEntries(Object.entries({
+      darts,
+      doublesHit: done,
+      firstTryHits: firstTry,
+      extraDarts: extra || null,
+    }).filter(([, value]) => value !== null && value !== undefined)),
+  };
+}
+
 // --- emailing the result of a game between two players ---------------------------------------------
 
 const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -650,6 +733,18 @@ exports.syncChallengeGameToTimeLeft = onDocumentWritten(
   (event) => forwardOwnerDocument({ event, collectionName: "challengeGames", idParam: "gameId", mapItem: mapChallengeGameToTimeLeft })
 );
 
+function forwardDoublesSession(event) {
+  const after = event.data && event.data.after && event.data.after.exists ? event.data.after.data() || {} : null;
+  const before = event.data && event.data.before && event.data.before.exists ? event.data.before.data() || {} : null;
+  if ((after || before || {}).importedFrom) return Promise.resolve(null); // the old app already sent it
+  return forwardOwnerDocument({ event, collectionName: "doublesSessions", idParam: "sessionId", mapItem: mapDoublesSessionToTimeLeft });
+}
+
+exports.syncDoublesSessionToTimeLeft = onDocumentWritten(
+  { ...SYNC_OPTIONS, document: "doublesSessions/{sessionId}" },
+  (event) => forwardDoublesSession(event)
+);
+
 // What happens when a two-player game is saved: who may have it emailed, the daily cap, the send, and
 // the status written back to the game. `countRecent` and `send` are passed in so it can be tested.
 async function processVersusGame({ game, ref, ownerUid, countRecent, send }) {
@@ -775,6 +870,7 @@ module.exports._test = {
   authorizeBackfill,
   buildVersusEmail,
   escapeHtml,
+  forwardDoublesSession,
   forwardOwnerDocument,
   processVersusGame,
   sendVersusResults,
@@ -784,6 +880,7 @@ module.exports._test = {
   normalizeDarts,
   mapBotGameToTimeLeft,
   mapChallengeGameToTimeLeft,
+  mapDoublesSessionToTimeLeft,
   mapSessionToTimeLeft,
   rowScoreForMode,
   summarizeTargets,

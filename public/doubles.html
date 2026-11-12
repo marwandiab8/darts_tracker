@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+<meta name="description" content="Finish every double, D1 to the bull, against the clock. The cameras can enter the darts.">
+<title>Doubles - Darts Tracker</title>
+<style>
+  :root {
+    --bg: #0b0f17; --muted: #94a3b8; --text: #e5e7eb; --accent: #f59e0b; --blue: #38bdf8;
+    --good: #22c55e; --warn: #ef4444; --border: rgba(148, 163, 184, .18); --chip: #0f172a;
+  }
+  * { box-sizing: border-box; }
+  html, body { touch-action: manipulation; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; }
+  .shell { background: radial-gradient(1200px 600px at 20% 0%, rgba(245, 158, 11, .12), transparent 55%), var(--bg); min-height: 100vh; padding: 12px 16px 16px; }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  header { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  header h1 { margin: 0; font-size: 22px; }
+  .head-left, .head-right { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; }
+  a.back { color: var(--accent); text-decoration: none; font-weight: 700; font-size: 14px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 999px; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; background: rgba(255,255,255,.05); border: 1px solid var(--border); font-size: 14px; max-width: 100%; }
+  #userName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+  .card { background: rgba(255,255,255,.02); border: 1px solid var(--border); border-radius: 16px; padding: 16px; margin-bottom: 16px; min-width: 0; }
+  .card h2 { margin: 0 0 12px; font-size: 18px; }
+  .hidden { display: none !important; }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+  button { font: inherit; cursor: pointer; background: var(--accent); color: #111; border: 0; border-radius: 12px; padding: 12px 18px; font-weight: 800; min-height: 44px; }
+  button.secondary { background: rgba(255,255,255,.07); color: var(--text); border: 1px solid var(--border); }
+  button.hit { background: var(--good); }
+  button.miss { background: transparent; color: #fca5a5; border: 1px solid rgba(239,68,68,.45); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button:focus-visible, a:focus-visible, summary:focus-visible, select:focus-visible, input:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+  select, input[type=date] { font: inherit; color: var(--text); background: var(--chip); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; min-height: 40px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+  @media (min-width: 960px) { .grid { grid-template-columns: 420px minmax(0, 1fr); } .grid > .card { margin-bottom: 0; } }
+  details.rules summary { cursor: pointer; font-weight: 700; color: var(--accent); }
+  details.rules ul { margin: 10px 0 0; padding-left: 20px; line-height: 1.55; }
+
+  /* Playing */
+  .clock { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 14px 0 6px; }
+  .clock .time { font-size: 40px; font-weight: 900; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+  .progress { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 12px; }
+  .now { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: end; margin: 6px 0 10px; }
+  .now .label { font-size: 13px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .now .target { font-size: clamp(48px, 14vw, 72px); font-weight: 950; line-height: 1; color: var(--accent); }
+  .next { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .tag { padding: 4px 9px; border-radius: 999px; background: var(--chip); border: 1px solid var(--border); font-size: 13px; font-weight: 700; color: var(--muted); }
+  .buttons { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+  .buttons button { padding: 12px 6px; }
+  .camrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+  .switch { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; cursor: pointer; }
+  .switch input { width: 20px; height: 20px; accent-color: var(--accent); }
+  .camnote { min-height: 22px; font-size: 15px; margin-top: 8px; }
+  .camnote.warn { color: #fca5a5; }
+  .dartchips { display: flex; gap: 6px; margin-top: 6px; min-height: 30px; }
+  .dartchips .chip { padding: 4px 10px; border-radius: 8px; background: var(--chip); border: 1px solid var(--border); font-weight: 800; }
+  .extra { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .extra h3 { margin: 0 0 8px; font-size: 15px; }
+  .extra .hint { font-size: 13px; color: var(--muted); margin-top: 6px; }
+
+  /* Tables */
+  .tablewrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { padding: 7px 8px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+  th { color: var(--muted); font-weight: 700; font-size: 12px; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.c, th.c { text-align: center; }
+  .ok { color: var(--good); font-weight: 800; }
+  .open { color: var(--muted); }
+  tr.current td { background: rgba(245, 158, 11, .08); }
+
+  .heat { display: grid; grid-template-columns: repeat(auto-fill, 16px); gap: 4px; margin-top: 10px; }
+  .heat button { width: 16px; height: 16px; min-height: 0; padding: 0; border-radius: 4px; background: #1f2937; border: 0; }
+  .heat button.h1 { background: #b45309; } .heat button.h2 { background: #d97706; } .heat button.h3 { background: #fbbf24; }
+  .heat button[aria-pressed="true"] { outline: 2px solid #fff; outline-offset: 1px; }
+  .dayinfo { margin-top: 10px; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="shell"><div class="wrap">
+  <header>
+    <div class="head-left">
+      <a class="back" href="./">&larr; Tracker</a>
+      <h1>Doubles</h1>
+    </div>
+    <div class="head-right">
+      <a class="back" href="practice.html">Play the bot</a>
+      <a class="back" href="camera.html">Cameras</a>
+      <span class="pill hidden" id="userPill"><span id="userName"></span></span>
+    </div>
+  </header>
+
+  <div id="authScreen" class="card hidden">
+    <h2>Sign in to play</h2>
+    <p class="muted">Use the same Google account as the tracker, so your doubles are saved with the rest of your practice.</p>
+    <button id="signInBtn" type="button">Sign in with Google</button>
+  </div>
+
+  <div id="app" class="hidden">
+    <details class="rules card">
+      <summary>How it works</summary>
+      <ul>
+        <li>Finish every double, D1 to D20 and then the bull. Each try is up to 3 darts: hit on dart 1, 2 or 3, or a miss.</li>
+        <li>A missed double stays open. After the bull, play goes back round to the earliest open double until all 21 are done.</li>
+        <li>The clock counts active time only: pause it for breaks.</li>
+        <li>Kept throwing at one double because it felt close? Log it under <strong>Stayed on this double</strong>. Missed a run of doubles, then hit one? Use <strong>Hit a later double</strong>.</li>
+        <li><strong>With the cameras on</strong>, just throw. A dart in the double is a hit on that dart, and three darts without one are a miss. If you stay on a double you just missed, the next darts in that number count for it, and a hit there is logged as "stayed, hit on dart 4" (or 5, 6...). Darts pulled out before the cameras saw all 3 count the unseen ones as misses. Anything wrong: Undo, then tap what really happened.</li>
+      </ul>
+    </details>
+
+    <div class="grid">
+      <section class="card" aria-labelledby="sessionHead">
+        <h2 id="sessionHead">Session</h2>
+        <div class="row">
+          <button id="startBtn" type="button">Start a new session</button>
+        </div>
+        <div class="clock">
+          <div class="time" id="timer" aria-live="off">0:00</div>
+          <button id="pauseBtn" class="secondary" type="button" disabled>Pause</button>
+        </div>
+        <div class="muted small" id="timerNote">No session yet.</div>
+        <div class="progress">
+          <span class="pill"><strong id="doneCount">0/21</strong>&nbsp;done</span>
+          <span class="pill" id="dartsCount">0 darts</span>
+        </div>
+
+        <div class="now">
+          <div>
+            <div class="label">Current double</div>
+            <div class="target" id="target">-</div>
+          </div>
+          <div class="next" id="upNext" aria-label="Up next"></div>
+        </div>
+
+        <div class="buttons">
+          <button class="hit" id="hit1" type="button" disabled>Hit on 1</button>
+          <button class="hit" id="hit2" type="button" disabled>Hit on 2</button>
+          <button class="hit" id="hit3" type="button" disabled>Hit on 3</button>
+          <button class="miss" id="missBtn" type="button" disabled>Miss</button>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button class="secondary" id="undoBtn" type="button" disabled>Undo last</button>
+        </div>
+
+        <div class="camrow">
+          <label class="switch" title="Let the cameras by the board enter your darts (set them up on the Cameras page)">
+            <input type="checkbox" id="camToggle"> Camera
+          </label>
+          <span class="muted small" id="camWhere"></span>
+        </div>
+        <div class="camnote" id="camNote" aria-live="polite"></div>
+        <div class="dartchips" id="camDarts" aria-label="Darts the cameras saw at this double"></div>
+
+        <div class="extra">
+          <h3>Stayed on this double</h3>
+          <div class="row">
+            <label class="visually-hidden" for="stayOutcome">How the extra darts ended</label>
+            <select id="stayOutcome"></select>
+            <button class="secondary" id="stayBtn" type="button" disabled>Log</button>
+          </div>
+          <div class="hint" id="stayHint"></div>
+        </div>
+        <div class="extra">
+          <h3>Hit a later double</h3>
+          <div class="row">
+            <select id="laterDouble" aria-label="The double you hit"></select>
+            <select id="laterDarts" aria-label="Total darts since your last hit"></select>
+            <button class="secondary" id="laterBtn" type="button" disabled>Log</button>
+          </div>
+          <div class="hint" id="laterHint"></div>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="boardHead">
+        <div class="row" style="justify-content:space-between">
+          <h2 id="boardHead" style="margin:0">Every double</h2>
+          <div class="row">
+            <label class="small muted" for="sort">Sort</label>
+            <select id="sort">
+              <option value="order">D1 to the bull</option>
+              <option value="openFirst">Open first</option>
+              <option value="sessDesc">This session, most tries</option>
+              <option value="lifeDesc">All time, most tries</option>
+              <option value="lifePctAsc">All time, lowest %</option>
+              <option value="lifePctDesc">All time, highest %</option>
+              <option value="sincePctAsc">Since date, lowest %</option>
+            </select>
+            <label class="small muted" for="since">Since</label>
+            <input type="date" id="since">
+          </div>
+        </div>
+        <div class="tablewrap" style="margin-top:10px">
+          <table>
+            <thead><tr><th>Double</th><th class="num">Tries</th><th class="c">Status</th><th class="c">Dart</th><th class="num">All-time tries</th><th class="num">All-time %</th><th class="num">Since tries</th><th class="num">Since %</th></tr></thead>
+            <tbody id="boardBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <section class="card" style="margin-top:16px" aria-labelledby="heatHead">
+      <h2 id="heatHead">Last 90 days</h2>
+      <div class="muted small" id="heatLegend">Each square is a day; brighter means more sessions.</div>
+      <div class="heat" id="heat"></div>
+      <div class="dayinfo" id="dayInfo"></div>
+    </section>
+
+    <section class="card" aria-labelledby="histHead">
+      <h2 id="histHead">Latest sessions</h2>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Started</th><th class="num">Time</th><th class="num">Darts</th></tr></thead>
+          <tbody id="historyBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</div></div>
+<style>.visually-hidden{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}</style>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
+<script src="doubles-engine.js?v=1"></script>
+<script src="board-vision.js?v=9"></script>
+<script src="board-camera.js?v=11"></script>
+<script>
+(function () {
+  "use strict";
+  const E = window.DoublesEngine;
+  const firebaseConfig = {
+    apiKey: "AIzaSyCAfRz72zGeDxKQGk3TGPAra1US64BGF90",
+    authDomain: "dartstracker2026.firebaseapp.com",
+    projectId: "dartstracker2026",
+    storageBucket: "dartstracker2026.firebasestorage.app",
+    messagingSenderId: "151826966768",
+    appId: "1:151826966768:web:a409ac8d409bf0f796ba35",
+  };
+  if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+  const auth = firebase.auth(), db = firebase.firestore();
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : v; } catch (_) { return d; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (_) { /* blocked */ } },
+  };
+
+  // The state document doublesState/{uid} = { uid, activeSession, lifetime, lastUndo, updatedAt };
+  // finished sessions are doublesSessions/{sessionKey} with uid (see doubles-engine.js).
+  let uid = null, model = { state: null, history: [], heat: {}, since: null };
+  let unsubs = [], sinceUnsub = null, tick = null, busy = false, saving = new Set();
+  const stateRef = () => db.collection("doublesState").doc(uid);
+  const sessionsCol = () => db.collection("doublesSessions");
+
+  function fail(error) {
+    console.error(error);
+    note((error && error.message) || String(error), true);
+  }
+
+  // Runs change(u, sess, now) on the latest state inside a transaction. change returns null to do
+  // nothing, a string to refuse with it, or the undo record of what it did. Then a finished round is
+  // saved to history. Resolves with the change's record (or null).
+  async function transact(change) {
+    if (!uid) return null;
+    let record = null, refusal = null, finished = null;
+    await db.runTransaction(async (tx) => {
+      record = null; refusal = null; finished = null;
+      const snap = await tx.get(stateRef());
+      const u = snap.exists ? E.clone(snap.data()) : { uid };
+      u.uid = uid;
+      E.ensureLifetime(u);
+      if (u.activeSession) E.ensureSession(u.activeSession, Date.now());
+      const out = change(u, u.activeSession || null, Date.now());
+      if (!out) return;
+      if (typeof out === "string") { refusal = out; return; }
+      record = out;
+      if (out.keys) u.lastUndo = E.clone(out);
+      if (out.finishingShot) finished = E.clone(u.activeSession);
+      u.updatedAt = Date.now();
+      tx.set(stateRef(), JSON.parse(JSON.stringify(u)));
+    });
+    if (refusal) { note(refusal, true); return null; }
+    if (finished) await saveFinished(finished).catch(fail);
+    return record;
+  }
+
+  // A finished round goes to history under its own key (so a retry overwrites, never duplicates),
+  // then leaves the state document. A failure leaves it there to be saved again on the next load.
+  async function saveFinished(sess) {
+    if (!sess || !E.isFinished(sess)) return;
+    const key = sess.meta.sessionKey || sessionsCol().doc().id;
+    if (saving.has(key)) return;
+    saving.add(key);
+    try {
+      await sessionsCol().doc(key).set(Object.assign({ uid, createdAt: Date.now() }, E.historyPayload(sess, Date.now())));
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(stateRef());
+        const u = snap.exists ? snap.data() : null;
+        const a = u && u.activeSession;
+        if (a && a.meta && a.meta.startedAtMs === sess.meta.startedAtMs && E.isFinished(E.ensureSession(E.clone(a), Date.now()))) {
+          tx.update(stateRef(), { activeSession: null, updatedAt: Date.now() });
+        }
+      });
+      note(`Session saved: all 21 doubles in ${E.fmt(sess.timer.activeMsAccum || 0)}, ${E.dartsSummary(sess.doubles)}.`);
+    } finally {
+      saving.delete(key);
+    }
+  }
+
+  // ---- what the buttons do ----
+  // A tap decides the current double, so the cameras' darts held for it are dropped.
+  function manual(plan) {
+    return transact((u, sess, now) => {
+      if (!sess || sess.timer.isPaused || E.isFinished(sess)) return null;
+      const p = plan(sess);
+      if (!p) return null;
+      if (p.error) return p.error;
+      return E.applyChange(u, sess, { visits: p.visits, cam: E.freshCam(sess.cam && sess.cam.seq) }, now);
+    });
+  }
+  $("hit1").onclick = () => manual((s) => E.planResult(s, "hit1")).catch(fail);
+  $("hit2").onclick = () => manual((s) => E.planResult(s, "hit2")).catch(fail);
+  $("hit3").onclick = () => manual((s) => E.planResult(s, "hit3")).catch(fail);
+  $("missBtn").onclick = () => manual((s) => E.planResult(s, "miss")).catch(fail);
+  $("stayBtn").onclick = () => manual((s) => E.planStay(s, $("stayOutcome").value)).then((r) => { if (r) $("stayOutcome").value = ""; }).catch(fail);
+  $("laterBtn").onclick = () => manual((s) => E.planLater(s, $("laterDouble").value, Number($("laterDarts").value)))
+    .then((r) => { if (r) { $("laterDouble").value = ""; $("laterDarts").value = ""; } }).catch(fail);
+
+  $("undoBtn").onclick = async () => {
+    try {
+      const st = model.state || {};
+      const p = st.lastUndo;
+      if (!p) return;
+      let key = null;
+      await transact((u, sess, now) => {
+        if (!u.lastUndo || u.lastUndo.startedAtMs !== p.startedAtMs) return "Nothing to undo.";
+        const err = E.undo(u, u.lastUndo, now);
+        if (err) return err;
+        key = u.lastUndo.finishingShot ? u.lastUndo.sessionKey : null;
+        u.lastUndo = null;
+        return { undone: true };
+      });
+      // Undoing the finishing throw takes the saved round back out of history.
+      if (key) await sessionsCol().doc(key).delete().catch(() => note("Undone, but the saved session couldn't be removed from history. Finishing again replaces it.", true));
+      note("Undone.");
+    } catch (e) { fail(e); }
+  };
+
+  $("startBtn").onclick = async () => {
+    const a = model.state && model.state.activeSession;
+    const tries = a ? E.KEYS.reduce((n, k) => n + ((a.doubles[k] && a.doubles[k].attempts) || 0), 0) : 0;
+    if (tries > 0 && !E.isFinished(a)) {
+      const done = E.KEYS.filter((k) => a.doubles[k] && a.doubles[k].completed).length;
+      if (!confirm(`Start over? This session has ${tries} tr${tries === 1 ? "y" : "ies"} logged and ${done} of 21 doubles done, and it will be thrown away.`)) return;
+    }
+    try {
+      await transact((u, sess, now) => {
+        u.activeSession = E.defaultSession(now, sessionsCol().doc().id);
+        u.activeSession.cam = E.freshCam(sess && sess.cam && sess.cam.seq);
+        u.lastUndo = null;
+        return { started: true };
+      });
+      note(camOn() ? "New session. Throw at D1: the cameras are watching." : "New session. Throw at D1.");
+    } catch (e) { fail(e); }
+  };
+
+  $("pauseBtn").onclick = () => transact((u, sess, now) => (sess && E.pauseResume(sess, now) ? { paused: true } : null)).catch(fail);
+
+  // ---- the cameras ----
+  // With "Camera" ticked (remembered on this device), darts from the camera station (or cameras on
+  // this computer) are entered here: see cameraDart() in doubles-engine.js for how they're read.
+  let watcher = null, camQueue = Promise.resolve();
+  const camOn = () => !!watcher;
+  function note(text, warn) {
+    const box = $("camNote");
+    box.textContent = text || "";
+    box.classList.toggle("warn", !!warn);
+  }
+  async function setCamera(on) {
+    store.set("dt_doublesCamera", on ? "1" : "0");
+    if (watcher) { watcher.stop(); watcher = null; }
+    $("camWhere").textContent = "";
+    if (!on) { note(""); return; }
+    note("Looking for the cameras...");
+    let w = null;
+    try { w = window.DartCamera ? await DartCamera.chooseWatcher({ db, user: auth.currentUser, onEvent: onCamera }) : null; } catch (_) { w = null; }
+    if (!$("camToggle").checked) { if (w) w.stop(); return; }
+    if (!w) {
+      $("camToggle").checked = false;
+      store.set("dt_doublesCamera", "0");
+      note("No cameras yet: no camera station is running for your account, and none are set up in this browser. Set them up on the Cameras page.", true);
+      return;
+    }
+    watcher = w;
+    try { await w.start(); } catch (error) {
+      watcher = null;
+      $("camToggle").checked = false;
+      note(error.message, true);
+    }
+  }
+  $("camToggle").addEventListener("change", (e) => setCamera(e.target.checked));
+
+  let camCheckWarning = "";
+  function onCamera(e) {
+    if (e.type === "check") { camCheckWarning = e.warning || ""; return; }
+    if (e.type === "status") return note(e.text);
+    if (e.type === "error") return note(e.text, true);
+    if (e.type === "ready") return note(camCheckWarning ? "Camera on. " + camCheckWarning : "Camera on: watching the board.", !!camCheckWarning);
+    if (e.type === "blocked") return note("Camera: something is in front of the board.");
+    if (e.type === "unreadable") return note("The cameras saw something but couldn't read it. Tap what happened for that visit.", true);
+    if (e.type !== "dart" && e.type !== "takeout") return;
+    // One at a time, in order, each inside its own transaction.
+    camQueue = camQueue.then(() => camEvent(e)).catch(fail);
+  }
+  async function camEvent(e) {
+    let message = null;
+    await transact((u, sess, now) => {
+      message = null;
+      if (!sess) { message = "Start a session and the cameras will enter your darts."; return null; }
+      let r;
+      if (e.type === "dart") {
+        const x = Math.round(e.app.x * 10000) / 10000, y = Math.round(e.app.y * 10000) / 10000;
+        const label = BoardVision.classify(x, y, BoardVision.APP).label;
+        r = E.cameraDart(sess, { seq: e.seq || 0, label, x, y });
+        if (r && e.uncertain && r.visits) r.message += " It wasn't sure: Undo if that's wrong.";
+      } else {
+        r = E.cameraTakeout(sess, { seq: e.seq || 0, darts: e.darts || 0 });
+      }
+      if (!r) return null; // already in: another device watching the cameras put it in
+      message = r.message;
+      const rec = E.applyChange(u, sess, r, now);
+      return (r.visits && r.visits.length) || r.takeBack ? rec : { cam: true };
+    });
+    if (message) note(message, /wasn't sure/.test(message));
+  }
+
+  // ---- drawing ----
+  function setOptions(select, html, keep) {
+    if (select.dataset.html === html) return; // rewriting would close an open list
+    select.dataset.html = html;
+    select.innerHTML = html;
+    select.value = keep;
+  }
+  function render() {
+    const st = model.state || {};
+    const sess = st.activeSession ? E.ensureSession(E.clone(st.activeSession), Date.now()) : null;
+    const life = (st.lifetime && st.lifetime.doubles) ? st.lifetime : E.defaultLifetime();
+    const finished = sess && E.isFinished(sess);
+    const canLog = !!sess && !sess.timer.isPaused && !finished;
+    ["hit1", "hit2", "hit3", "missBtn"].forEach((id) => { $(id).disabled = !canLog; });
+    $("pauseBtn").disabled = !sess || finished;
+    $("undoBtn").disabled = !st.lastUndo;
+    $("startBtn").textContent = sess && !finished ? "Start over" : "Start a new session";
+
+    if (!sess) {
+      $("timer").textContent = "0:00";
+      $("timerNote").textContent = "No session yet. Start one when you're at the board.";
+      $("doneCount").textContent = "0/21";
+      $("dartsCount").textContent = "0 darts";
+      $("target").textContent = "-";
+      $("upNext").innerHTML = "";
+    } else {
+      $("timer").textContent = E.fmt(E.computeElapsed(sess, Date.now()));
+      $("pauseBtn").textContent = sess.timer.isPaused ? "Resume" : "Pause";
+      $("timerNote").textContent = finished ? "All 21 done." : sess.timer.isPaused ? "Paused: the clock is stopped." : "Running: active time only.";
+      $("doneCount").textContent = `${E.KEYS.filter((k) => sess.doubles[k].completed).length}/21`;
+      $("dartsCount").textContent = E.dartsSummary(sess.doubles);
+      const order = E.playOrder(sess);
+      $("target").textContent = order.length ? E.TARGETS[order[0]].label : "Done";
+      $("upNext").innerHTML = order.slice(1, 5).map((i) => `<span class="tag">${E.TARGETS[i].label}</span>`).join("");
+    }
+    const camDarts = (sess && sess.cam && sess.cam.at === E.currentKey(sess) && sess.cam.darts) || [];
+    $("camDarts").innerHTML = camDarts.map((l, i) => `<span class="chip" title="Dart ${i + 1}">${esc(E.describe(l))}</span>`).join("");
+    renderStay(sess, canLog);
+    renderLater(sess, canLog);
+    renderBoard(sess, life);
+  }
+
+  function renderStay(sess, canLog) {
+    const key = canLog ? E.currentKey(sess) : null;
+    const hits = E.STAY_OUTCOMES.filter((o) => o.startsWith("hit:")).map((o) => `<option value="${o}">Hit on dart ${o.slice(4)}</option>`);
+    const misses = E.STAY_OUTCOMES.filter((o) => o.startsWith("miss:")).map((o) => `<option value="${o}">Missed after ${o.slice(5)} darts</option>`);
+    const html = '<option value="">More than 3 darts...</option>' + (key ? `<optgroup label="Hit it on dart...">${hits.join("")}</optgroup><optgroup label="Missed, then moved on after...">${misses.join("")}</optgroup>` : "");
+    const sel = $("stayOutcome");
+    setOptions(sel, html, key && E.STAY_OUTCOMES.includes(sel.value) ? sel.value : "");
+    $("stayBtn").disabled = !(canLog && sel.value);
+    $("stayHint").textContent = key ? `Threw more than 3 darts at ${key}? Log how it ended; the darts past 3 count as extra.` : "Threw more than 3 darts at the current double? Log how it ended here.";
+  }
+
+  function renderLater(sess, canLog) {
+    const ahead = canLog ? E.playOrder(sess).slice(1) : [];
+    const dSel = $("laterDouble"), nSel = $("laterDarts");
+    setOptions(dSel, '<option value="">Double you hit...</option>' + ahead.map((i, n) => `<option value="${E.KEYS[i]}">${E.TARGETS[i].label} (skips ${n + 1})</option>`).join(""),
+      ahead.some((i) => E.KEYS[i] === dSel.value) ? dSel.value : "");
+    const skipped = ahead.findIndex((i) => E.KEYS[i] === dSel.value) + 1;
+    const totals = skipped ? Array.from({ length: E.MAX_STAY_DARTS }, (_, i) => 3 * skipped + i + 1) : [];
+    const opt = (t) => `<option value="${t}">${t} darts (hit on dart ${t - 3 * skipped})</option>`;
+    setOptions(nSel, '<option value="">Total darts...</option>' + (skipped ? `<optgroup label="Hit within 3 darts">${totals.slice(0, 3).map(opt).join("")}</optgroup><optgroup label="Stayed on it">${totals.slice(3).map(opt).join("")}</optgroup>` : ""),
+      totals.includes(Number(nSel.value)) ? nSel.value : "");
+    const total = Number(nSel.value);
+    const ready = skipped > 0 && totals.includes(total);
+    $("laterBtn").disabled = !(canLog && ready);
+    let hint = "Pick the double you hit and the total darts since your last hit. The doubles before it count as misses (3 darts each).";
+    if (canLog && !ahead.length) hint = "Nothing ahead of the current double yet.";
+    if (canLog && ready) hint = `Logs ${skipped} missed double${skipped === 1 ? "" : "s"} (${3 * skipped} darts), then ${dSel.value} hit on dart ${total - 3 * skipped}.`;
+    $("laterHint").textContent = hint;
+  }
+
+  function renderBoard(sess, life) {
+    const since = model.since;
+    const cur = sess ? E.currentKey(sess) : null;
+    const rows = E.TARGETS.map((t, i) => {
+      const s = sess ? sess.doubles[t.key] : { attempts: 0, completed: false, hitDart: null };
+      const l = life.doubles[t.key] || { attempts: 0, hits: 0 };
+      const sd = (since && since[t.key]) || { attempts: 0, hits: 0 };
+      const pct = l.attempts ? (100 * l.hits) / l.attempts : null;
+      const spct = sd.attempts ? (100 * sd.hits) / sd.attempts : null;
+      return { i, s, l, sd, pct, spct, html:
+        `<tr class="${t.key === cur ? "current" : ""}"><td><strong>${t.label}</strong></td>` +
+        `<td class="num">${s.attempts || 0}${s.extraDarts ? ` <span class="muted">(+${s.extraDarts})</span>` : ""}</td>` +
+        `<td class="c">${s.completed ? '<span class="ok">Done</span>' : '<span class="open">Open</span>'}</td>` +
+        `<td class="c">${s.completed ? `<span class="ok">${s.hitDart}</span>` : '<span class="open">-</span>'}</td>` +
+        `<td class="num">${l.attempts || 0}</td><td class="num">${pct == null ? "-" : pct.toFixed(1) + "%"}</td>` +
+        `<td class="num">${since ? sd.attempts || 0 : "-"}</td><td class="num">${since && spct != null ? spct.toFixed(1) + "%" : "-"}</td></tr>` };
+    });
+    const by = $("sort").value;
+    const val = (r) => ({ openFirst: r.s.completed ? 1 : 0, sessDesc: -(r.s.attempts || 0), lifeDesc: -(r.l.attempts || 0),
+      lifePctAsc: r.pct == null ? 999 : r.pct, lifePctDesc: r.pct == null ? 999 : -r.pct, sincePctAsc: r.spct == null ? 999 : r.spct }[by] || 0);
+    if (by !== "order") rows.sort((a, b) => (val(a) - val(b)) || (a.i - b.i));
+    const html = rows.map((r) => r.html).join("");
+    if ($("boardBody").dataset.html !== html) { $("boardBody").dataset.html = html; $("boardBody").innerHTML = html; }
+  }
+  $("sort").addEventListener("change", () => { store.set("dt_doublesSort", $("sort").value); render(); });
+
+  function renderHistory() {
+    const rows = model.history.map((s) => {
+      const start = E.sessionStart(s), active = E.sessionActive(s), darts = E.sessionTotalDarts(s), extra = E.sessionExtraDarts(s);
+      return `<tr><td>${start ? new Date(start).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "-"}</td>` +
+        `<td class="num">${active == null ? "-" : E.fmt(active)}</td>` +
+        `<td class="num">${darts == null ? "-" : darts}${extra ? ` <span class="muted">(+${extra} extra)</span>` : ""}</td></tr>`;
+    });
+    $("historyBody").innerHTML = rows.join("") || '<tr><td colspan="3" class="muted">No sessions yet.</td></tr>';
+  }
+
+  function renderHeat() {
+    const today = new Date();
+    let html = "";
+    for (let i = 89; i >= 0; i -= 1) {
+      const d = new Date(today); d.setDate(d.getDate() - i);
+      const key = E.msToLocalISODate(d.getTime());
+      const n = (model.heat[key] && model.heat[key].count) || 0;
+      html += `<button type="button" class="${n ? "h" + Math.min(3, n) : ""}" data-date="${key}" aria-label="${key}: ${n} session${n === 1 ? "" : "s"}" aria-pressed="false"></button>`;
+    }
+    $("heat").innerHTML = html;
+  }
+  $("heat").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-date]");
+    if (!b) return;
+    $("heat").querySelectorAll('[aria-pressed="true"]').forEach((x) => x.setAttribute("aria-pressed", "false"));
+    b.setAttribute("aria-pressed", "true");
+    const key = b.dataset.date, info = model.heat[key];
+    const day = new Date(key + "T12:00:00").toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+    $("dayInfo").innerHTML = info
+      ? `<strong>${day}</strong>: ${info.count} session${info.count === 1 ? "" : "s"}, ${E.fmt(info.totalActiveMs)} in all, best ${E.fmt(info.bestActiveMs || 0)}.`
+      : `<strong>${day}</strong>: no sessions.`;
+  });
+
+  // ---- loading ----
+  function subscribe() {
+    unsubs.push(stateRef().onSnapshot((snap) => {
+      model.state = snap.exists ? snap.data() : {};
+      // A finished round still here means a save was interrupted: save it now.
+      const a = model.state.activeSession;
+      if (a && E.isFinished(E.ensureSession(E.clone(a), Date.now()))) saveFinished(E.clone(a)).catch(fail);
+      render();
+    }, fail));
+    unsubs.push(sessionsCol().where("uid", "==", uid).orderBy("startedAtMs").limitToLast(15).onSnapshot((snap) => {
+      model.history = snap.docs.map((d) => d.data()).reverse();
+      renderHistory();
+    }, fail));
+    const cutoff = Date.now() - 92 * 86400000;
+    unsubs.push(sessionsCol().where("uid", "==", uid).where("startedAtMs", ">=", cutoff).onSnapshot((snap) => {
+      model.heat = E.heatByDate(snap.docs.map((d) => d.data()));
+      renderHeat();
+    }, fail));
+    subscribeSince();
+  }
+  function subscribeSince() {
+    if (sinceUnsub) { sinceUnsub(); sinceUnsub = null; }
+    const v = $("since").value;
+    store.set("dt_doublesSince", v);
+    if (!v || !uid) { model.since = null; render(); return; }
+    const [y, m, d] = v.split("-").map(Number);
+    const from = new Date(y, m - 1, d).getTime();
+    sinceUnsub = sessionsCol().where("uid", "==", uid).where("startedAtMs", ">=", from).onSnapshot((snap) => {
+      model.since = E.statsFromSessions(snap.docs.map((x) => x.data()));
+      render();
+    }, fail);
+  }
+  $("since").addEventListener("change", subscribeSince);
+
+  $("signInBtn").addEventListener("click", () => auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).catch((e) => {
+    if (e && (e.code === "auth/popup-blocked" || e.code === "auth/operation-not-supported-in-this-environment")) return auth.signInWithRedirect(new firebase.auth.GoogleAuthProvider());
+    alert("Sign-in didn't work: " + (e.message || e));
+  }));
+
+  $("sort").value = store.get("dt_doublesSort", "order");
+  $("since").value = store.get("dt_doublesSince", "");
+
+  auth.onAuthStateChanged((user) => {
+    unsubs.forEach((u) => u()); unsubs = [];
+    if (sinceUnsub) { sinceUnsub(); sinceUnsub = null; }
+    if (watcher) { watcher.stop(); watcher = null; }
+    clearInterval(tick);
+    uid = user ? user.uid : null;
+    model = { state: null, history: [], heat: {}, since: null };
+    $("authScreen").classList.toggle("hidden", !!user);
+    $("app").classList.toggle("hidden", !user);
+    $("userPill").classList.toggle("hidden", !user);
+    if (!user) return;
+    $("userName").textContent = user.displayName || user.email || "Signed in";
+    subscribe();
+    renderHeat();
+    tick = setInterval(() => { if (document.visibilityState !== "hidden") render(); }, 500);
+    // Camera stays on between visits on this device.
+    if (store.get("dt_doublesCamera", "0") === "1") { $("camToggle").checked = true; setCamera(true); }
+  });
+})();
+</script>
+</body>
+</html>

@@ -240,6 +240,36 @@ service cloud.firestore {
         && (request.resource.data.parent == resource.data.vid || request.resource.data.parent == '');
     }
 
+    // The Doubles game (doubles.html, doubles-engine.js): one state document per player with the
+    // round in progress, the lifetime totals and the last thing Undo can take back.
+    match /doublesState/{uid} {
+      allow read, delete: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['uid', 'activeSession', 'lifetime', 'lastUndo', 'updatedAt'])
+        && request.resource.data.uid == uid
+        && request.resource.data.lifetime is map
+        && (!('activeSession' in request.resource.data) || request.resource.data.activeSession == null || request.resource.data.activeSession is map)
+        && (!('lastUndo' in request.resource.data) || request.resource.data.lastUndo == null || request.resource.data.lastUndo is map);
+    }
+
+    // Finished Doubles rounds, one per session key. Sessions carried over from the old My Doubles
+    // Progress app keep the fields its versions wrote, and are marked importedFrom.
+    function validDoublesSession(data) {
+      return data.keys().hasOnly(['uid', 'startedAtMs', 'localDate', 'endedAtMs', 'activeMs', 'totalDarts', 'extraDarts',
+          'perDouble', 'createdAt', 'importedFrom', 'rounds', 'startedAt', 'durationMs', 'dartsUsed', 'endedAt',
+          'lastTarget', 'savedAt', 'totalDartsPlanned'])
+        && data.uid == request.auth.uid
+        && data.startedAtMs is number
+        && (!('perDouble' in data) || data.perDouble is map)
+        && (!('perDouble' in data) || data.perDouble.size() <= 21);
+    }
+
+    match /doublesSessions/{sessionId} {
+      allow read, delete: if signedIn() && resource.data.uid == request.auth.uid;
+      allow create: if signedIn() && validDoublesSession(request.resource.data);
+      allow update: if signedIn() && resource.data.uid == request.auth.uid && validDoublesSession(request.resource.data);
+    }
+
     // Saved sessions history.
     match /sessions/{sessionId} {
       allow read: if signedIn() && resource.data.uid == request.auth.uid;

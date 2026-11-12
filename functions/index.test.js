@@ -480,3 +480,54 @@ test("a tracker practice is filed under Darts with its score and note, but no ti
   assert.equal(item.metadata.note, item.summary);
   assert.equal(item.durationSeconds, undefined);
 });
+
+// --- Doubles rounds -------------------------------------------------------------------------------
+
+const doublesSession = (overrides = {}) => {
+  const perDouble = {};
+  for (let i = 1; i <= 20; i += 1) perDouble[`D${i}`] = { attempts: 1, completed: true, hitDart: 2, completedAt: 1 };
+  perDouble.DBULL = { attempts: 1, completed: true, hitDart: 1, completedAt: 1 };
+  perDouble.D7 = { attempts: 4, completed: true, hitDart: 3, completedAt: 1, extraDarts: 2 };
+  return { uid: "owner-1", startedAtMs: Date.UTC(2026, 10, 12, 9, 0), localDate: "2026-11-12", endedAtMs: Date.UTC(2026, 10, 12, 9, 20), activeMs: 872000, totalDarts: 52, extraDarts: 2, perDouble, createdAt: 1, ...overrides };
+};
+
+test("a Doubles round becomes a timed Darts practice item", () => {
+  const item = _test.mapDoublesSessionToTimeLeft(doublesSession(), "d1");
+  assert.equal(item.dateId, "2026-11-12");
+  assert.equal(item.title, "Doubles: all 21 in 14:32");
+  assert.equal(item.summary, "Finished every double, D1 to the bull, in 14:32 of active time with 52 darts (2 extra, staying on a double). 20 went in on the first try; D7 took 4 tries.");
+  assert.equal(item.sourceDocumentPath, "doublesSessions/d1");
+  assert.deepEqual([item.eventType, item.activityFamily, item.durationSeconds], ["darts_practice", "darts", 872]);
+  assert.deepEqual(item.metrics, { darts: 52, doublesHit: 21, firstTryHits: 20, extraDarts: 2 });
+  assert.equal(item.metadata.hardestDouble, "D7");
+});
+
+test("a Doubles round's contents are treated as untrusted", () => {
+  const item = _test.mapDoublesSessionToTimeLeft(doublesSession({ activeMs: -5, totalDarts: "lots", perDouble: "x", localDate: "soon" }), "d2");
+  assert.equal(item.durationSeconds, undefined);
+  assert.equal(item.metadata.darts, null);
+  assert.equal(item.metadata.doublesDone, 0);
+  assert.equal(item.dateId, "2026-11-12", "falls back to the start time in Toronto");
+});
+
+test("the owner's new Doubles round is sent once; rounds carried over from the old app are not sent again", async () => {
+  const env = { DARTS_OWNER_UID: "owner-1", TIME_LEFT_SINGLE_INGEST_ENDPOINT: "https://example.test/ingest", TIME_LEFT_CALENDAR_ID: "cal", TIME_LEFT_CONNECTION_ID: "conn", TIME_LEFT_INGESTION_TOKEN: "test-token", DARTS_ALLOWED_SOURCE_PROJECT_IDS: "" };
+  const saved = {};
+  for (const key of Object.keys(env)) { saved[key] = process.env[key]; process.env[key] = env[key]; }
+  const realFetch = global.fetch;
+  const sent = [];
+  global.fetch = async (url, init) => { sent.push(JSON.parse(init.body)); return { ok: true, text: async () => "{}" }; };
+  const snap = (data) => ({ exists: data !== null, data: () => data });
+  const event = (doc) => ({ params: { sessionId: "d1" }, data: { before: snap(null), after: snap(doc) } });
+  try {
+    await _test.forwardDoublesSession(event(doublesSession()));
+    assert.equal(sent.length, 1);
+    assert.equal((sent[0].item || sent[0]).sourceCollection, "doublesSessions");
+    await _test.forwardDoublesSession(event(doublesSession({ importedFrom: "mydoublesprogress" })));
+    await _test.forwardDoublesSession(event(doublesSession({ uid: "someone" })));
+    assert.equal(sent.length, 1);
+  } finally {
+    global.fetch = realFetch;
+    for (const key of Object.keys(env)) { if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key]; }
+  }
+});

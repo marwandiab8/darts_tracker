@@ -509,3 +509,38 @@ test("the station can keep what it learned with its setup", async () => {
   await assertSucceeds(setDoc(ref, { uid: me, setup: { learned: { options: { threshold: 26 }, at: 1, n: 40, right: 36, was: 33 }, learning: { at: 1, n: 40, right: 36, was: 33, used: true } } }, { merge: true }));
   await assertSucceeds(setDoc(ref, { uid: me, setup: { learned: null } }, { merge: true }));
 });
+
+// --- Doubles (doubles.html) --------------------------------------------------------------------
+
+const doublesState = (overrides = {}) => ({ uid: me, lifetime: { doubles: { D1: { attempts: 2, hits: 1, hits1: 1, hits2: 0, hits3: 0 } } }, activeSession: null, lastUndo: null, updatedAt: 1, ...overrides });
+const doublesSession = (overrides = {}) => ({ uid: me, startedAtMs: 1762600000000, localDate: "2026-11-08", endedAtMs: 1762600900000, activeMs: 800000, totalDarts: 90, extraDarts: 0, perDouble: { D1: { attempts: 1, completed: true, hitDart: 2, completedAt: 1 } }, createdAt: 1, ...overrides });
+
+test("a player keeps their own Doubles state, and nobody else can read or change it", async () => {
+  const ref = doc(asUser(me), "doublesState", me);
+  await assertSucceeds(setDoc(ref, doublesState()));
+  await assertSucceeds(setDoc(ref, doublesState({ activeSession: { meta: { startedAtMs: 1 }, doubles: {} }, lastUndo: { startedAtMs: 1, keys: {} } })));
+  await assertSucceeds(getDoc(ref));
+  await assertFails(getDoc(doc(asUser(other), "doublesState", me)));
+  await assertFails(setDoc(doc(asUser(other), "doublesState", me), doublesState({ uid: other })));
+  await assertFails(setDoc(ref, doublesState({ uid: other })));
+  await assertFails(setDoc(ref, doublesState({ extra: 1 })));
+  await assertFails(setDoc(ref, doublesState({ lifetime: "lots" })));
+});
+
+test("finished Doubles rounds are saved, read and deleted by their owner only", async () => {
+  const ref = doc(asUser(me), "doublesSessions", "s1");
+  await assertSucceeds(setDoc(ref, doublesSession()));
+  await assertSucceeds(getDoc(ref));
+  await assertSucceeds(setDoc(ref, doublesSession({ totalDarts: 91 })));
+  await assertFails(getDoc(doc(asUser(other), "doublesSessions", "s1")));
+  await assertFails(setDoc(doc(asUser(other), "doublesSessions", "s1"), doublesSession({ uid: other })));
+  await assertFails(setDoc(doc(asUser(me), "doublesSessions", "s2"), doublesSession({ uid: other })));
+  await assertFails(setDoc(doc(asUser(me), "doublesSessions", "s3"), doublesSession({ startedAtMs: "today" })));
+  await assertFails(setDoc(doc(asUser(me), "doublesSessions", "s4"), doublesSession({ score: 5 })));
+  await assertSucceeds(deleteDoc(ref));
+});
+
+test("Doubles sessions carried over from the old app keep their old fields", async () => {
+  await assertSucceeds(setDoc(doc(asUser(me), "doublesSessions", "-Oold1"), { uid: me, importedFrom: "mydoublesprogress", startedAtMs: 1769323000000, startedAt: 1769323000000, durationMs: 600000, dartsUsed: 77, endedAt: 1769323600000, lastTarget: "DBULL", savedAt: 1769323600000, totalDartsPlanned: 63 }));
+  await assertSucceeds(setDoc(doc(asUser(me), "doublesSessions", "-Oold2"), doublesSession({ importedFrom: "mydoublesprogress", rounds: 2 })));
+});
