@@ -4,7 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Practice - Darts Tracker</title>
-<link rel="stylesheet" href="board-mode.css?v=3">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="nav.css?v=1">
+<link rel="stylesheet" href="board-mode.css?v=4">
 <style>
   :root {
     --bg: #0b0f17; --muted: #94a3b8; --text: #e5e7eb; --accent: #f59e0b; --bot: #38bdf8;
@@ -21,6 +23,9 @@
   header h1 { margin: 0; font-size: 22px; }
   .head-right { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
   #soundBtn { min-height: 36px; padding: 6px 12px; font-size: 14px; }
+  details.howto { margin: 0 0 12px; }
+  details.howto summary { cursor: pointer; font-weight: 700; color: var(--accent); }
+  details.howto ul { margin: 10px 0 0; padding-left: 20px; line-height: 1.55; color: var(--text); }
   .over-report .bm-report { margin-top: 12px; text-align: left; }
   .over-report table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
   .over-report th, .over-report td { padding: 3px 12px 3px 0; text-align: left; font-size: 14px; }
@@ -191,13 +196,10 @@
 </head>
 <body>
 <div class="shell"><div class="wrap">
+  <nav class="dt-nav" data-page="bot"></nav>
   <header>
     <div class="head-left">
-      <a class="back" href="./">&larr; Tracker</a>
-      <a class="back" href="challenge.html">JDC Challenge</a>
-      <a class="back" href="doubles.html">Doubles</a>
-      <a class="back" href="camera.html">Cameras</a>
-      <h1>Practice</h1>
+      <h1>The bot game</h1>
     </div>
     <div class="head-right">
       <button type="button" class="hidden" id="soundUnlock" title="The browser keeps the voice quiet until the page is tapped">Tap to hear the scores</button>
@@ -216,6 +218,17 @@
     <!-- Choosing a game -->
     <section class="card" id="setupCard">
       <h2>New game</h2>
+      <details class="howto">
+        <summary>How it works</summary>
+        <ul>
+          <li><b>501 (or 201 to 701):</b> score down to exactly 0, finishing on a double (or any dart, straight out). Going below 0, leaving 1, or reaching 0 without a double is a bust: back to the score at the start of the visit, and the visit counts as 3 darts in your average.</li>
+          <li><b>Cricket:</b> close 20 to 15 and the bull (3 marks each); marks on a number you've closed score points while the other side hasn't closed it.</li>
+          <li><b>The bot</b> throws on a real board at its level's average (or one you set), standard, a steady grinder or a heavy scorer. The ladder starts at 52: win 2 of 3 to move up.</li>
+          <li><b>Entering darts:</b> tap where each dart landed, the score keypad, or the cameras. After your third dart the turn passes to the bot by itself; with Press Enter, it waits for Enter (or your darts being pulled out).</li>
+          <li><b>Board mode</b> is a full-screen scoreboard for the oche: your score, each dart's box (tap one to fix it), the route, the bot's last visit, big moments and the match report at the end.</li>
+          <li><b>Matches:</b> first to 2 to 9 legs, who throws first alternating, or a bull-up. Every leg is saved with its visits.</li>
+        </ul>
+      </details>
       <div class="resume hidden" id="resumeBox">
         <div id="resumeText"></div>
         <div class="actions">
@@ -422,7 +435,7 @@
      still forced to fetch the matching engine instead of silently pairing a new page with a stale
      one, which throws inside announce()'s catch-all and looks like "no sound at all". -->
 <script src="practice-engine.js?v=8"></script>
-<script src="board-mode.js?v=3"></script>
+<script src="board-mode.js?v=4"></script>
 <script src="practice-timer.js?v=2"></script>
 <script src="live-sync.js?v=1"></script>
 <script src="board-vision.js?v=9"></script>
@@ -2799,5 +2812,6 @@
   });
 })();
 </script>
+<script src="nav.js?v=1"></script>
 </body>
 </html>

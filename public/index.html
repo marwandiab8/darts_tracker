@@ -119,6 +119,22 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
   #entryBody tr.current-target .target-label { color: var(--accent); font-weight: 900; }
 
   .board-btn-row { display: flex; gap: 10px; margin: 0 0 12px; }
+  details.howto { margin: 0 0 12px; font-size: 14px; }
+  details.howto summary { cursor: pointer; font-weight: 800; color: var(--accent); }
+  details.howto ul { margin: 8px 0 0; padding-left: 20px; line-height: 1.5; }
+  .plan-card { margin-bottom: 16px; height: auto !important; }
+  .plan-card[hidden] { display: none !important; }
+  .plan-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .plan-head h3 { margin: 0; font-size: 18px; }
+  .plan-stats { color: var(--accent); font-weight: 800; text-decoration: none; }
+  .plan { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  .plan li { display: flex; }
+  .plan li a { display: block; flex: 1; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--border); background: rgba(255,255,255,.03); color: var(--text); text-decoration: none; }
+  .plan li a:hover { border-color: rgba(245,158,11,.6); }
+  .plan li b { display: block; font-size: 16px; }
+  .plan li span { display: block; font-size: 13px; color: var(--muted); margin-top: 4px; line-height: 1.35; }
+  .plan li.done a { opacity: .6; }
+  .plan li.done b::after { content: " ✓ done today"; color: var(--good); font-size: 13px; }
   .board-btn-row button { flex: 1; min-height: 52px; font-size: 18px; font-weight: 900; border-radius: 14px; background: var(--accent); color: #111; border: 0; cursor: pointer; }
   /* ===== Next Target Banner (big, at-a-distance) ===== */
   .next-target-banner{
@@ -402,12 +418,15 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
     th, td { padding-left: 6px; padding-right: 6px; }
   }
 </style>
-  <link rel="stylesheet" href="board-mode.css?v=3">
+  <link rel="stylesheet" href="board-mode.css?v=4">
   <title>Darts Tracker</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="nav.css?v=1">
 </head>
 <body>
 <div class="dt-shell">
   <div class="dt-container">
+  <nav class="dt-nav" data-page="tracker"></nav>
     <div id="authScreen" style="display:none; text-align:center; padding: 80px 0;">
       <div class="dt-card" style="max-width: 400px; margin: auto;">
         <h2>Darts Tracker</h2>
@@ -422,10 +441,6 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
           <span class="dt-revision">Cloud • v8.8.15 Live</span>
         </div>
         <div class="dt-header-actions" style="display:flex; gap:10px; align-items:center;">
-          <a href="practice.html" class="dt-pill" style="text-decoration:none; color:var(--accent); font-weight:800;">Play the bot</a>
-          <a href="challenge.html" class="dt-pill" style="text-decoration:none; color:var(--accent); font-weight:800;">JDC Challenge</a>
-          <a href="doubles.html" class="dt-pill" style="text-decoration:none; color:var(--accent); font-weight:800;">Doubles</a>
-          <a href="camera.html" class="dt-pill" style="text-decoration:none; color:var(--accent); font-weight:800;">Cameras</a>
           <div id="syncPill" class="dt-pill"><div class="status-dot"></div> <span id="syncText">Syncing...</span></div>
 
           <div class="dt-pill" style="display:flex; align-items:center; gap:10px;">
@@ -438,6 +453,11 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
 <div class="dt-pill"><b id="userName"></b> <button id="signOutBtn" style="font-size:10px; padding:4px 8px; margin-left:5px;">Logout</button></div>
         </div>
       </header>
+
+      <section class="dt-card plan-card" id="planCard" hidden aria-labelledby="planTitle">
+        <div class="plan-head"><h3 id="planTitle">Today's practice</h3><a href="stats.html" class="plan-stats">Your stats</a></div>
+        <ol class="plan" id="plan"></ol>
+      </section>
 
       <div class="dt-grid-main">
         <div class="dt-card">
@@ -465,6 +485,16 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
           <div id="saveNote" class="save-note" aria-live="polite"></div>
           <div id="loadedNote" class="loaded-note"></div>
           <div class="board-btn-row"><button type="button" id="boardBtn" title="A full-screen scoreboard to read from the oche">Board mode</button></div>
+          <details class="howto">
+            <summary>How it works</summary>
+            <ul>
+              <li><b>Three darts at each number,</b> 20 down to 1, then the bull. Only the number you're throwing at counts; any other dart is a miss.</li>
+              <li><b>Standard scoring:</b> a single is 1 mark, a double 2, a treble 3; at the bull the outer ring is 1 and the bullseye 2. Singles mode counts hits.</li>
+              <li><b>Enter darts</b> by tapping where they landed, the S/D/T/Miss buttons in Board mode, typing a row in the table, or the cameras. With the cameras, a visit belongs to the number at its first dart; pulling the darts out counts any not seen as misses there.</li>
+              <li><b>Board mode</b> shows the number huge, each dart's box (tap one to fix it), your pace against your average and best, and a recap at the end. The voice says each dart and each number's total.</li>
+              <li><b>Saving part way through</b> asks whether to save it as partial (kept out of your averages and best) or count the rest as misses.</li>
+            </ul>
+          </details>
 
           <!-- NEXT TARGET BANNER -->
     <div id="nextTargetBanner" class="next-target-banner" style="display:none;">
@@ -559,7 +589,10 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
 <script src="practice-timer.js?v=2"></script>
 <script src="live-sync.js?v=1"></script>
 <script src="tracker-engine.js?v=2"></script>
-<script src="board-mode.js?v=3"></script>
+<script src="board-mode.js?v=4"></script>
+<script src="practice-engine.js?v=8"></script>
+<script src="challenge-engine.js?v=3"></script>
+<script src="stats-engine.js?v=1"></script>
 <script src="board-vision.js?v=9"></script>
 <script src="board-camera.js?v=11"></script>
 
@@ -630,7 +663,7 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
 
 
   // App revision (shown in header)
-  const APP_REV = "v8.8.12 Live";
+  const APP_REV = "v9.0 Live";
   const __revEl = document.querySelector(".dt-revision");
   if (__revEl) __revEl.textContent = `Cloud • ${APP_REV}`;
 
@@ -1162,6 +1195,7 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
 
     renderChart(full);
     renderPracticeHeatMap();
+    renderPlan();
   }
 
   function renderChart(list) {
@@ -2247,6 +2281,33 @@ function applyBoardHit(hit){
     keepAwake(!v.finished);
   }
   document.getElementById("boardBtn").addEventListener("click", () => setBoard(true));
+
+  // ---- Today's practice (stats-engine.js practicePlan) ----
+  // One item per game, from what's weakest lately, each opening its game; ticked when played today.
+  // The bot games, JDC rounds and Doubles rounds are read when the page opens (and when it comes back).
+  const planData = { botGames: [], challengeGames: [], doublesSessions: [], hidden: new Set() };
+  let planLoadedAt = 0;
+  async function loadPlanData() {
+    const u = auth.currentUser;
+    if (!u || !window.StatsEngine || Date.now() - planLoadedAt < 60000) return;
+    planLoadedAt = Date.now();
+    const get = (coll) => db.collection(coll).where("uid", "==", u.uid).get().then((q) => q.docs.map((d) => Object.assign({ id: d.id }, d.data()))).catch(() => []);
+    const [bots, jdc, dbl, hid] = await Promise.all([get("botGames"), get("challengeGames"), get("doublesSessions"),
+      db.collection("statsHidden").doc(u.uid).get().then((d) => (d.exists ? d.data() : null)).catch(() => null)]);
+    Object.assign(planData, { botGames: bots, challengeGames: jdc, doublesSessions: dbl, hidden: StatsEngine.hiddenOf(hid) });
+    renderPlan();
+  }
+  function renderPlan() {
+    const card = document.getElementById("planCard");
+    if (!card || !window.StatsEngine || !auth.currentUser) return;
+    const items = StatsEngine.practicePlan(Object.assign({ sessions: sessionsAll }, planData), todayISO());
+    const esc = (x) => String(x).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    document.getElementById("plan").innerHTML = items.map((it) => `<li class="${it.done ? "done" : ""}"><a href="${esc(it.href)}"><b>${esc(it.title)}</b><span>${esc(it.why)}</span></a></li>`).join("");
+    card.hidden = !items.length;
+  }
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") loadPlanData(); });
+  // index.html?board=1 (the plan's link): straight into Board mode.
+  if (/[?&]board=1\b/.test(location.search)) { try { localStorage.setItem("dt_trackerBoard", "1"); } catch (_) { /* private mode */ } history.replaceState(null, "", location.pathname); }
   setInterval(() => { if (board && boardWanted() && document.visibilityState !== "hidden") renderBoard(); }, 500);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") renderBoard(); });
 
@@ -2274,6 +2335,7 @@ function applyBoardHit(hit){
       try { camWanted = localStorage.getItem(CAMERA_KEY) === "1"; } catch (_) { camWanted = false; }
       if (camToggle && camWanted && !boardCam) { camToggle.checked = true; setTrackerCamera(true); }
       renderBoard();
+      planLoadedAt = 0; loadPlanData();
     } else {
       stopListeners();
       renderBoard();
@@ -2506,5 +2568,6 @@ document.getElementById("signInBtn").onclick = () => auth.signInWithPopup(new fi
 </script>
 
 <div id="tapToast" class="tap-toast" aria-live="polite"></div>
+<script src="nav.js?v=1"></script>
 </body>
 </html>

@@ -4,7 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
 <title>JDC Challenge - Darts Tracker</title>
-<link rel="stylesheet" href="board-mode.css?v=3">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="nav.css?v=1">
+<link rel="stylesheet" href="board-mode.css?v=4">
 <style>
   :root {
     --bg: #0b0f17; --muted: #94a3b8; --text: #e5e7eb; --accent: #f59e0b; --blue: #38bdf8;
@@ -113,14 +115,12 @@
 </head>
 <body>
 <div class="shell"><div class="wrap">
+  <nav class="dt-nav" data-page="jdc"></nav>
   <header>
     <div class="head-left">
-      <a class="back" href="./">&larr; Tracker</a>
       <h1>JDC Challenge</h1>
     </div>
     <div class="head-right">
-      <a class="back" href="practice.html">Play the bot</a>
-      <a class="back" href="doubles.html">Doubles</a>
       <span class="pill hidden" id="userPill"><span id="userName"></span></span>
     </div>
   </header>
@@ -231,7 +231,7 @@
 <script src="live-sync.js?v=1"></script>
 <script src="board-vision.js?v=9"></script>
 <script src="board-camera.js?v=11"></script>
-<script src="board-mode.js?v=3"></script>
+<script src="board-mode.js?v=4"></script>
 <script>
 (function () {
   "use strict";
@@ -1099,5 +1099,6 @@
   });
 })();
 </script>
+<script src="nav.js?v=1"></script>
 </body>
 </html>

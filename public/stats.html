@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+<title>Stats - Darts Tracker</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="nav.css?v=1">
+<link rel="stylesheet" href="board-mode.css?v=4">
+<style>
+  :root {
+    --bg: #0b0f17; --muted: #94a3b8; --text: #e5e7eb; --accent: #f59e0b; --blue: #38bdf8;
+    --good: #22c55e; --warn: #ef4444; --border: rgba(148, 163, 184, .18); --panel: rgba(255,255,255,.02);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .shell { background: radial-gradient(1200px 600px at 20% 0%, rgba(245, 158, 11, .12), transparent 55%), var(--bg); min-height: 100vh; padding: 12px 16px 24px; }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 16px; margin-bottom: 16px; min-width: 0; }
+  .card h2 { margin: 0 0 4px; font-size: 20px; }
+  .card h3 { margin: 18px 0 6px; font-size: 16px; }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+  .hidden { display: none !important; }
+  button { font: inherit; cursor: pointer; background: var(--accent); color: #111; border: 0; border-radius: 12px; padding: 10px 16px; font-weight: 800; min-height: 44px; }
+  button.secondary { background: rgba(255,255,255,.07); color: var(--text); border: 1px solid var(--border); }
+  button:focus-visible, a:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+  .tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
+  .tabs button[aria-selected="true"] { background: var(--accent); color: #111; }
+  .tabs button[aria-selected="false"] { background: rgba(255,255,255,.07); color: var(--text); border: 1px solid var(--border); }
+  .ranges { display: flex; gap: 6px; flex-wrap: wrap; }
+  .ranges button { min-height: 36px; padding: 6px 12px; font-size: 14px; }
+  .ranges button[aria-pressed="false"] { background: rgba(255,255,255,.07); color: var(--text); border: 1px solid var(--border); }
+  .row { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+  .kpis { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); margin-top: 12px; }
+  .kpi { border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; background: rgba(0,0,0,.2); }
+  .kpi .k { font-size: 13px; color: var(--muted); font-weight: 700; }
+  .kpi .v { font-size: 26px; font-weight: 900; font-variant-numeric: tabular-nums; }
+  .kpi .def { font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.35; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 7px 6px; border-bottom: 1px solid var(--border); }
+  th { font-size: 12px; color: var(--muted); font-weight: 700; }
+  td.num, th.num { text-align: right; }
+  .table-wrap { overflow-x: auto; }
+  .up { color: #86efac; } .down { color: #fca5a5; }
+  svg.chart { width: 100%; height: auto; display: block; }
+  .cal { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 12px); gap: 3px; overflow-x: auto; padding-bottom: 4px; }
+  .cal span { width: 12px; height: 12px; border-radius: 3px; background: rgba(255,255,255,.06); }
+  .cal span.l1 { background: rgba(245,158,11,.35); } .cal span.l2 { background: rgba(245,158,11,.65); } .cal span.l3 { background: var(--accent); }
+  .list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+  .list li { display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--border); padding: 6px 0; }
+  .list li .def { display: block; font-size: 12px; color: var(--muted); }
+  .two { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  .heat { display: grid; gap: 12px; grid-template-columns: minmax(0, 300px) minmax(0, 1fr); align-items: start; }
+  .heat select { font: inherit; padding: 8px; border-radius: 10px; background: #0f172a; color: var(--text); border: 1px solid var(--border); }
+  .bars { display: grid; grid-template-columns: repeat(21, minmax(0, 1fr)); gap: 3px; align-items: end; height: 120px; }
+  .bars div { background: rgba(56,189,248,.75); border-radius: 3px 3px 0 0; min-height: 2px; }
+  .bars div.low { background: rgba(239,68,68,.8); }
+  .barlabels { display: grid; grid-template-columns: repeat(21, minmax(0, 1fr)); gap: 3px; font-size: 10px; color: var(--muted); text-align: center; }
+  td button { min-height: 32px; padding: 4px 10px; font-size: 12px; }
+  .hiddenrow td { opacity: .5; }
+  @media (max-width: 640px) { .heat { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="shell"><div class="wrap">
+  <nav class="dt-nav" data-page="stats"></nav>
+  <div id="authScreen" class="card hidden">
+    <h2>Sign in to see your stats</h2>
+    <p class="muted">Use the same Google account as your games.</p>
+    <button id="signInBtn" type="button">Sign in with Google</button>
+  </div>
+  <div id="app" class="hidden">
+    <section class="card">
+      <h2>Your practice</h2>
+      <p class="muted small" id="loadNote">Loading your games…</p>
+      <div class="kpis" id="overall"></div>
+      <h3>Every day you practised</h3>
+      <p class="muted small">The last 26 weeks, darker for more games that day.</p>
+      <div class="cal" id="cal" role="img" aria-label="Days practised"></div>
+      <div class="two">
+        <div><h3>Records</h3><ul class="list" id="records"></ul></div>
+        <div><h3>Milestones</h3><ul class="list" id="milestones"></ul></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="row">
+        <div class="tabs" role="tablist" id="tabs">
+          <button type="button" role="tab" data-tab="tracker" aria-selected="true">Tracker</button>
+          <button type="button" role="tab" data-tab="bot" aria-selected="false">Bot game</button>
+          <button type="button" role="tab" data-tab="jdc" aria-selected="false">JDC Challenge</button>
+          <button type="button" role="tab" data-tab="doubles" aria-selected="false">Doubles</button>
+        </div>
+        <div class="ranges" id="ranges" aria-label="Range">
+          <button type="button" data-range="30d" aria-pressed="false">30 days</button>
+          <button type="button" data-range="90d" aria-pressed="true">90 days</button>
+          <button type="button" data-range="1y" aria-pressed="false">1 year</button>
+          <button type="button" data-range="all" aria-pressed="false">All</button>
+        </div>
+      </div>
+      <div id="panel"></div>
+    </section>
+  </div>
+</div></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
+<script src="tracker-engine.js?v=2"></script>
+<script src="practice-engine.js?v=8"></script>
+<script src="challenge-engine.js?v=3"></script>
+<script src="board-mode.js?v=4"></script>
+<script src="stats-engine.js?v=1"></script>
+<script src="nav.js?v=1"></script>
+<script>
+(function () {
+  "use strict";
+  const S = window.StatsEngine, TE = window.TrackerEngine, CE = window.ChallengeEngine;
+  const firebaseConfig = {
+    apiKey: "AIzaSyCAfRz72zGeDxKQGk3TGPAra1US64BGF90",
+    authDomain: "dartstracker2026.firebaseapp.com",
+    projectId: "dartstracker2026",
+    storageBucket: "dartstracker2026.firebasestorage.app",
+    messagingSenderId: "151826966768",
+    appId: "1:151826966768:web:a409ac8d409bf0f796ba35"
+  };
+  if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+  const auth = firebase.auth(), db = firebase.firestore();
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const fmt = (n, d = 0) => (n == null || !Number.isFinite(n) ? "-" : Number(n).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d }));
+  const pc = (x) => (x == null ? "-" : Math.round(x * 100) + "%");
+  const today = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; })();
+  const store = { get(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (_) { /* private mode */ } } };
+
+  let user = null, tab = store.get("dt_statsTab") || "tracker", range = store.get("dt_statsRange") || "90d", heatNum = "20", dblKey = "D16";
+  const data = { sessions: [], botGames: [], challengeGames: [], doublesSessions: [], hidden: new Set() };
+  let hiddenRef = null;
+
+  // ---- charts: inline SVG, no library -----------------------------------------------------------
+  // A line of values (orange dots) with a rolling average (blue), the dates along the bottom.
+  function lineChart(series, opts) {
+    const o = opts || {};
+    const pts = series.filter((p) => Number.isFinite(p.value));
+    if (pts.length < 2) return `<p class="muted small">${pts.length ? "One so far: the chart starts with the second." : "Nothing in this range."}</p>`;
+    const W = 720, H = 220, L = 44, R = 10, T = 10, B = 26;
+    const vals = pts.map((p) => p.value), lo = Math.min(0, ...vals), hi = Math.max(...vals) * 1.05 || 1;
+    const x = (i) => L + (i * (W - L - R)) / (pts.length - 1), y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+    const avg = S.rolling(vals, o.window || 7);
+    let s = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(o.label || "Chart")}">`;
+    for (let k = 0; k <= 4; k += 1) { const v = lo + ((hi - lo) * k) / 4; s += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="rgba(148,163,184,.18)"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="#94a3b8">${fmt(v, o.digits || 0)}</text>`; }
+    s += `<text x="${L}" y="${H - 6}" font-size="11" fill="#94a3b8">${esc(pts[0].date || "")}</text><text x="${W - R}" y="${H - 6}" text-anchor="end" font-size="11" fill="#94a3b8">${esc(pts[pts.length - 1].date || "")}</text>`;
+    s += `<path d="${avg.map((v, i) => (i ? "L" : "M") + x(i).toFixed(1) + "," + y(v).toFixed(1)).join("")}" fill="none" stroke="#38bdf8" stroke-width="2.5"/>`;
+    pts.forEach((p, i) => { s += `<circle cx="${x(i).toFixed(1)}" cy="${y(p.value).toFixed(1)}" r="${pts.length > 80 ? 2 : 3.2}" fill="#f59e0b"><title>${esc(p.date)}: ${fmt(p.value, o.digits || 0)}</title></circle>`; });
+    return s + `</svg><p class="muted small">Orange dots: ${esc(o.what || "each one")}. Blue line: the average of the last ${o.window || 7}.</p>`;
+  }
+  const kpi = (k, v, def) => `<div class="kpi"><div class="k">${esc(k)}</div><div class="v">${v}</div>${def ? `<div class="def">${esc(def)}</div>` : ""}</div>`;
+
+  // ---- the overview -----------------------------------------------------------------------------
+  function renderOverall() {
+    const days = S.practiceDays(Object.assign({}, data), today);
+    $("overall").innerHTML = kpi("Days in a row", fmt(days.current), days.today ? "Including today." : "Up to yesterday: play today to keep it going.")
+      + kpi("Best run", fmt(days.best), "The most days in a row with any game.")
+      + kpi("Days practised", fmt(days.count), "Days with a tracker session, a finished bot game, a JDC round or a Doubles round.");
+    // The calendar: 26 weeks to today, a column a week.
+    const perDay = new Map();
+    const add = (x) => { const d = S.dateOf(x); if (d) perDay.set(d, (perDay.get(d) || 0) + 1); };
+    data.sessions.forEach(add); data.botGames.filter((g) => g.result !== "abandoned").forEach(add); data.challengeGames.forEach(add); data.doublesSessions.forEach(add);
+    const end = new Date(); end.setHours(12, 0, 0, 0);
+    const start = new Date(end); start.setDate(start.getDate() - 7 * 26 + 1 - start.getDay());
+    let html = "";
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const n = perDay.get(iso) || 0;
+      html += `<span class="${n ? "l" + Math.min(3, n) : ""}" title="${iso}: ${n} game${n === 1 ? "" : "s"}"></span>`;
+    }
+    $("cal").innerHTML = html;
+    const recs = S.records(data);
+    $("records").innerHTML = recs.length ? recs.map((r) => `<li><span><b>${esc(r.game)}: ${esc(r.what)}</b><span class="def">${esc(r.def)}</span></span><span><b>${esc(r.value)}</b><span class="def">${esc(r.date || "")}</span></span></li>`).join("") : '<li class="muted">Your bests show here after your first games.</li>';
+    const ms = S.milestones(data, today);
+    $("milestones").innerHTML = ms.length ? ms.map((m) => `<li><span>${esc(m.what)}</span><span class="muted">${esc(m.date || "")}</span></li>`).join("") : '<li class="muted">None yet: 1,000 tracker darts is the first.</li>';
+  }
+
+  // ---- each game ---------------------------------------------------------------------------------------
+  function hideButton(id) { const h = data.hidden.has(id); return `<button type="button" class="secondary" data-hide="${esc(id)}" aria-pressed="${h}">${h ? "Show in stats" : "Hide from stats"}</button>`; }
+  function recentTable(list, cols) {
+    const rows = list.slice().sort((a, b) => String(S.dateOf(b) || "").localeCompare(String(S.dateOf(a) || ""))).slice(0, 15);
+    if (!rows.length) return "";
+    return `<h3>Recent</h3><p class="muted small">Hide a game from your stats (a test, a game played for someone else): it stays saved, it just doesn't count.</p><div class="table-wrap"><table><thead><tr>${cols.map((c) => `<th class="${c.num ? "num" : ""}">${esc(c.h)}</th>`).join("")}<th></th></tr></thead><tbody>${rows.map((g) => `<tr class="${data.hidden.has(g.id) ? "hiddenrow" : ""}">${cols.map((c) => `<td class="${c.num ? "num" : ""}">${c.v(g)}</td>`).join("")}<td class="num">${hideButton(g.id)}</td></tr>`).join("")}</tbody></table></div>`;
+  }
+
+  function trackerPanel() {
+    const st = S.trackerStats(data.sessions, { hidden: data.hidden, range, today });
+    let html = `<div class="kpis">`
+      + kpi("Sessions", fmt(st.sessions), `In this range. ${st.partial ? st.partial + " saved part way through don't count." : "Sessions saved part way through don't count."}`)
+      + kpi("Average", fmt(st.avg, 1), "Session total: S/D/T are 1/2/3 marks, the outer bull 1 and the bullseye 2.")
+      + kpi("Best", st.best ? fmt(st.best.total) : "-", st.best ? `On ${st.best.date}, of all time.` : "")
+      + kpi("Hit rate", pc(st.hitRate), "Darts that landed in the number thrown at.")
+      + kpi("Marks per dart", fmt(st.marksPerDart, 2), "Marks scored divided by darts thrown (3 at each number).")
+      + kpi("S / D / T", `${fmt(st.split.S)} / ${fmt(st.split.D)} / ${fmt(st.split.T)}`, "Hits in each ring (the bull's outer ring counts as S, the bullseye as D).")
+      + `</div>`;
+    if (st.byDart) html += `<p class="small">Hit rate on dart 1, 2 and 3 at a number: <b>${st.byDart.map((d) => pc(d.rate)).join(" / ")}</b> <span class="muted">(sessions that kept every dart, since Nov 13, 2026)</span></p>`;
+    html += `<h3>Session totals</h3>` + lineChart(st.series, { label: "Session totals", what: "each session", window: 7 });
+    html += `<h3>Each number</h3><p class="muted small">Hit rate: darts in the number, in this range. Last 10 and lifetime are your last 10 sessions and all of them; the arrow is last 10 against lifetime. Best: the most marks with one number's three darts.</p>`;
+    html += `<div class="table-wrap"><table><thead><tr><th>Number</th><th class="num">Hit rate</th><th class="num">Last 10</th><th class="num">Lifetime</th><th class="num">Trend</th><th class="num">Best</th></tr></thead><tbody>`
+      + st.numbers.map((n) => `<tr><td><b>${n.t === "BULL" ? "Bull" : n.t}</b></td><td class="num">${pc(n.rate)}</td><td class="num">${pc(n.last10)}</td><td class="num">${pc(n.life)}</td><td class="num ${n.trend > 0.01 ? "up" : n.trend < -0.01 ? "down" : ""}">${n.trend == null ? "-" : (n.trend > 0.01 ? "▲ " : n.trend < -0.01 ? "▼ " : "") + Math.round(n.trend * 100) + "%"}</td><td class="num">${n.best ? n.best.score : "-"}</td></tr>`).join("")
+      + `</tbody></table></div>`;
+    // Where the darts at one number land.
+    const inRange = data.sessions.filter((s) => S.inRange(S.dateOf(s), range, today));
+    const land = S.landing(inRange, heatNum, { hidden: data.hidden });
+    html += `<h3>Where your darts land</h3><div class="heat"><div>${window.BoardMode ? BoardMode.boardSvg(heatNum === "BULL" ? [{ n: "BULL", beds: "BI" }] : [{ n: Number(heatNum), beds: "", tint: true }], land.points.map((p, i) => ({ index: i, x: p.x, y: p.y, kind: p.hit ? "hit" : "miss" })), { small: true }) : ""}</div>`
+      + `<div><label class="small muted" for="heatNum">Number</label><br><select id="heatNum">${TE.TARGETS.map((t) => `<option value="${t}"${t === heatNum ? " selected" : ""}>${t === "BULL" ? "Bull" : t}</option>`).join("")}</select>`
+      + `<p>${land.n ? `${land.n} darts with a position. ${esc(land.drift || "No clear drift to one side.")}` : "No darts with a position at this number in this range (dots are kept when you tap the board or the cameras enter the darts)."}</p>`
+      + (Object.keys(land.missTo).length ? `<p class="small muted">Misses went into: ${Object.entries(land.missTo).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k === "off" ? "off the board" : k === "bull" ? "the bull" : "the " + k} ${v}`).join(", ")}.</p>` : "")
+      + `<p class="small muted">Green: hits. Red: misses (sessions that kept every dart).</p></div></div>`;
+    html += recentTable(data.sessions, [{ h: "Date", v: (s) => esc(S.dateOf(s)) }, { h: "Total", num: true, v: (s) => fmt(Number(s.total)) + (s.complete === false ? ' <span class="muted">partial</span>' : "") }]);
+    return html;
+  }
+
+  function botPanel() {
+    const st = S.botStats(data.botGames, { hidden: data.hidden, range, today });
+    let html = `<div class="kpis">`
+      + kpi("Games", fmt(st.games), `Finished (won or lost) in this range. ${st.abandoned} unfinished never count (the test taps of Sep 27 were all unfinished).`)
+      + kpi("Won", pc(st.winRate), `${st.won} of ${st.games}.`)
+      + kpi("3-dart average", fmt(st.avg, 1), "Points times 3 over darts, x01 games; a bust counts as 3 darts.")
+      + kpi("First 9", fmt(st.first9, 1), "The average over each game's first three visits.")
+      + kpi("Checkout", st.checkout.darts ? `${pc(st.checkout.rate)}` : "-", `Darts that won a game, out of darts thrown with a finish on (${st.checkout.hits} of ${st.checkout.darts}).`)
+      + kpi("Highest finish", st.highFinish ? fmt(st.highFinish) : "-", "The visit that won a game.")
+      + kpi("60+ / 100+ / 140+ / 180", `${st.tons.s60} / ${st.tons.s100} / ${st.tons.s140} / ${st.tons.s180}`, "Visits in each band.")
+      + `</div>`;
+    if (st.rebuilt) html += `<p class="muted small">${st.rebuilt} older game${st.rebuilt === 1 ? "" : "s"} had ${st.rebuilt === 1 ? "its" : "their"} visits rebuilt from the darts' positions; ${st.games - st.withVisits} with darts typed as totals can't be, so they count in the games and wins only.</p>`;
+    html += `<h3>Average per game</h3>` + lineChart(st.series, { label: "Average per game", what: "each game's 3-dart average", window: 10, digits: 1 });
+    const table = (rows, head) => `<div class="table-wrap"><table><thead><tr><th>${head}</th><th class="num">Played</th><th class="num">Won</th><th class="num">Your average</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(r.label)}</td><td class="num">${r.played}</td><td class="num">${pc(r.rate)}</td><td class="num">${fmt(r.avg, 1)}</td></tr>`).join("")}</tbody></table></div>`;
+    html += `<div class="two"><div><h3>By level</h3>${table(st.byLevel, "Bot")}</div><div><h3>By format</h3>${table(st.byFormat, "Game")}</div></div>`;
+    html += recentTable(data.botGames, [{ h: "Date", v: (g) => esc(S.dateOf(g)) }, { h: "Result", v: (g) => esc(g.result) }, { h: "Average", num: true, v: (g) => fmt(Number(g.playerAvg), 1) }]);
+    return html;
+  }
+
+  function jdcPanel() {
+    const st = S.jdcStats(data.challengeGames, { hidden: data.hidden, range, today });
+    const partMax = { part1: 1050, part2: 1050, part3: 1230 };
+    let html = `<div class="kpis">`
+      + kpi("Rounds", fmt(st.rounds), "In this range.")
+      + kpi("Best", fmt(st.best), `Out of ${fmt(CE.MAX_SCORE)}.`)
+      + kpi("Average", fmt(st.avg), "All rounds in this range.")
+      + kpi("Last 10", fmt(st.last10), "Your last 10 rounds in this range.")
+      + st.parts.map((p, i) => kpi(CE.PART_NAMES[i + 1], fmt(p.last10), `Last 10 rounds' average, of ${fmt(partMax[p.key])}.`)).join("")
+      + `</div>`;
+    html += `<h3>Score per round</h3>` + lineChart(st.series, { label: "Score per round", what: "each round", window: 5 });
+    html += `<h3>Each number</h3><p class="muted small">Points: the average at that number per round (a Shanghai adds 100). Marks per dart: 1 a single, 2 a double, 3 a treble.</p><div class="table-wrap"><table><thead><tr><th>Number</th><th class="num">Points</th><th class="num">Marks per dart</th><th class="num">Shanghais</th></tr></thead><tbody>`
+      + st.numbers.map((n) => `<tr><td>${n.target} <span class="muted small">part ${n.part}</span></td><td class="num">${fmt(n.avgPoints, 1)}</td><td class="num">${fmt(n.marksPerDart, 2)}</td><td class="num">${n.shanghais}</td></tr>`).join("") + `</tbody></table></div>`;
+    html += `<h3>Doubles</h3><p class="muted small">Hit rate of each double's one dart; red below 25%. The bull counts the bullseye only.</p>`
+      + `<div class="bars">${st.doubles.map((d) => `<div class="${d.rate != null && d.rate < 0.25 ? "low" : ""}" style="height:${d.rate == null ? 0 : Math.max(2, d.rate * 100)}%" title="${d.label}: ${d.rate == null ? "no darts" : pc(d.rate)}"></div>`).join("")}</div><div class="barlabels">${st.doubles.map((d) => `<div>${d.target === CE.BULL ? "B" : d.target}</div>`).join("")}</div>`;
+    html += recentTable(data.challengeGames, [{ h: "Date", v: (g) => esc(S.dateOf(g)) }, { h: "Score", num: true, v: (g) => fmt(g.total) }]);
+    return html;
+  }
+
+  function doublesPanel() {
+    const st = S.doublesStats(data.doublesSessions, { hidden: data.hidden, range, today });
+    let html = `<div class="kpis">` + kpi("Rounds", fmt(st.sessions), "Doubles rounds in this range.")
+      + kpi("Weakest", st.weakest.slice(0, 3).map((d) => d.label).join(", ") || "-", "The lowest hit rate per dart.") + `</div>`;
+    html += `<h3>Minutes per round</h3>` + lineChart(st.series, { label: "Minutes per round", what: "each round's time", window: 5, digits: 1 });
+    html += `<h3>Each double</h3><p class="muted small">Hit rate per dart: a double done on its 2nd dart is 1 hit in 2 darts; one never done is 0 in every dart thrown at it.</p>`
+      + `<div class="bars">${st.doubles.map((d) => `<div class="${d.rate != null && d.rate < 0.15 ? "low" : ""}" style="height:${d.rate == null ? 0 : Math.max(2, Math.min(100, d.rate * 200))}%" title="${d.label}: ${d.rate == null ? "no darts" : pc(d.rate) + " of " + d.darts + " darts"}"></div>`).join("")}</div><div class="barlabels">${st.doubles.map((d) => `<div>${d.key === "DBULL" ? "B" : d.key.slice(1)}</div>`).join("")}</div>`;
+    const dl = S.doublesLanding(data.doublesSessions, dblKey, { hidden: data.hidden, range, today });
+    const share = (x) => (dl.darts ? Math.round((x / dl.darts) * 100) + "%" : "-");
+    const lit = dblKey === "DBULL" ? [{ n: "BULL", beds: "I" }] : [{ n: Number(dblKey.slice(1)), beds: "D", tint: true }];
+    html += `<h3>Where your darts at a double go</h3><div class="heat"><div>${window.BoardMode ? BoardMode.boardSvg(lit, dl.points.map((p, i) => ({ index: i, x: p.x, y: p.y, kind: p.hit ? "hit" : "miss" })), { small: true }) : ""}</div>`
+      + `<div><label class="small muted" for="dblKey">Double</label><br><select id="dblKey">${S.DKEYS.map((k) => `<option value="${k}"${k === dblKey ? " selected" : ""}>${k === "DBULL" ? "Bull" : k}</option>`).join("")}</select>`
+      + (dl.darts ? `<p>${dl.darts} camera darts: <b>${share(dl.hit)}</b> in, ${share(dl.inside)} inside the wire, ${share(dl.outside)} outside it, ${share(dl.nextDoor)} next door, ${share(dl.other)} elsewhere.</p>` : "<p>No camera darts at this double in this range (Doubles keeps the darts the cameras see).</p>")
+      + `</div></div>`;
+    html += recentTable(data.doublesSessions, [{ h: "Date", v: (s) => esc(S.dateOf(s)) }, { h: "Darts", num: true, v: (s) => fmt(s.totalDarts) }]);
+    return html;
+  }
+
+  function render() {
+    renderOverall();
+    document.querySelectorAll("#tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
+    document.querySelectorAll("#ranges button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.range === range)));
+    $("panel").innerHTML = tab === "bot" ? botPanel() : tab === "jdc" ? jdcPanel() : tab === "doubles" ? doublesPanel() : trackerPanel();
+  }
+
+  $("tabs").addEventListener("click", (e) => { const b = e.target.closest("[data-tab]"); if (!b) return; tab = b.dataset.tab; store.set("dt_statsTab", tab); render(); });
+  $("ranges").addEventListener("click", (e) => { const b = e.target.closest("[data-range]"); if (!b) return; range = b.dataset.range; store.set("dt_statsRange", range); render(); });
+  $("panel").addEventListener("change", (e) => {
+    if (e.target.id === "heatNum") { heatNum = e.target.value; render(); }
+    if (e.target.id === "dblKey") { dblKey = e.target.value; render(); }
+  });
+  // Hide or show a game in your stats: statsHidden/{uid}.ids. Nothing is deleted.
+  $("panel").addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-hide]");
+    if (!b || !hiddenRef) return;
+    const id = b.dataset.hide, hide = !data.hidden.has(id);
+    b.disabled = true;
+    try {
+      await hiddenRef.set({ ids: hide ? firebase.firestore.FieldValue.arrayUnion(id) : firebase.firestore.FieldValue.arrayRemove(id), updatedAt: Date.now() }, { merge: true });
+    } catch (err) { $("loadNote").textContent = "Couldn't change that: " + (err.message || err); b.disabled = false; }
+  });
+
+  let unsubs = [];
+  function load(uid) {
+    unsubs.forEach((u) => u()); unsubs = [];
+    let pending = 4;
+    const done = () => { pending -= 1; if (pending <= 0) $("loadNote").textContent = "Partial tracker sessions, unfinished bot games and games you hide never count. Nothing here changes a saved game."; render(); };
+    const follow = (coll, key) => unsubs.push(db.collection(coll).where("uid", "==", uid).onSnapshot((snap) => {
+      data[key] = snap.docs.map((d) => Object.assign({ id: d.id }, d.data()));
+      done();
+    }, (err) => { $("loadNote").textContent = `Couldn't load ${coll}: ${err.message}`; }));
+    follow("sessions", "sessions"); follow("botGames", "botGames"); follow("challengeGames", "challengeGames"); follow("doublesSessions", "doublesSessions");
+    hiddenRef = db.collection("statsHidden").doc(uid);
+    unsubs.push(hiddenRef.onSnapshot((snap) => { data.hidden = S.hiddenOf(snap.exists ? snap.data() : null); render(); }, () => {}));
+  }
+
+  $("signInBtn").addEventListener("click", () => auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()));
+  auth.onAuthStateChanged((u) => {
+    user = u;
+    $("authScreen").classList.toggle("hidden", !!u);
+    $("app").classList.toggle("hidden", !u);
+    if (!u) { unsubs.forEach((x) => x()); unsubs = []; return; }
+    load(u.uid);
+  });
+})();
+</script>
+</body>
+</html>

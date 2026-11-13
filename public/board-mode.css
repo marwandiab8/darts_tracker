@@ -2,6 +2,23 @@
    Portrait: target on top, board + dart slots side by side, the strip of targets, buttons.
    Landscape (a wide screen): board on the left, target + slots + buttons on the right.
    Phone: one column that scrolls. Uses the page's tokens (--bg, --text, --muted, --accent). */
+:root {
+  --bm-panel: #111723;
+  --bm-line: rgba(148, 163, 184, .2);
+  --bm-hit: #22c55e;
+  --bm-hit-ink: #86efac;
+  --bm-hit-soft: rgba(34, 197, 94, .16);
+  --bm-miss: #f87171;
+  --bm-miss-ink: #fca5a5;
+  --bm-miss-soft: rgba(248, 113, 113, .09);
+  --bm-seg-a: #1b2230;
+  --bm-seg-b: #131925;
+  --bm-ring-a: #2b3446;
+  --bm-ring-b: #212a3a;
+  --bm-surround: #0f141e;
+  --bm-bull: #3a465e;
+  --bm-num: #64748b;
+}
 .bm {
   --bm-panel: #111723;
   --bm-line: rgba(148, 163, 184, .2);

@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Cameras - Darts Tracker</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="nav.css?v=1">
 <style>
   :root {
     --bg: #0b0f17; --muted: #94a3b8; --text: #e5e7eb; --accent: #f59e0b; --bot: #38bdf8;
@@ -75,9 +77,10 @@
 </head>
 <body>
 <div class="shell"><div class="wrap">
+  <nav class="dt-nav" data-page="cameras"></nav>
   <header>
     <h1>Cameras</h1>
-    <div class="links"><a class="back" href="station.html">Camera station</a><a class="back" href="practice.html">Play the bot</a><a class="back" href="doubles.html">Doubles</a><a class="back" href="index.html">Tracker</a></div>
+    <div class="links"><a class="back" href="station.html">Camera station</a></div>
   </header>
 
   <section class="card">
@@ -990,5 +993,6 @@
   slots.forEach((slot) => slot.video.addEventListener("loadeddata", () => { if (slot.i === active && !slot.still) takeStill(); }));
 })();
 </script>
+<script src="nav.js?v=1"></script>
 </body>
 </html>
