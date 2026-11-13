@@ -131,6 +131,24 @@ const { check, failed } = H.checker();
     check((await said()).length === 1, "nothing from before the reload is said again");
     check((await ipad.evaluate(() => window.__wake)) > 0, "Board mode keeps the iPad's screen on");
 
+    // D3 went in on dart 1 of the visit: the board says to pull the darts out, a dart thrown anyway
+    // doesn't count, and after the take-out D4 gets a full 3 darts (Nov 12: it used to get fewer).
+    b = await ipad.evaluate(() => ({ label: document.querySelector("#boardMode [data-ref=label]").textContent, count: document.querySelector("#boardMode [data-ref=count]").textContent }));
+    check(/Pull your darts out/.test(b.label) && b.count === "Next visit", `after a hit on dart 1 the board says to pull the darts out: "${b.label}" / "${b.count}"`);
+    await throwAt(4, "S", "S4");
+    st = await state();
+    b = await boardView();
+    check(st.activeSession.doubles.D4.attempts === 0 && b.slots[1] === "S4|Not counted: D3 went in", "a dart after the hit doesn't count: " + b.slots[1]);
+    await station.send({ type: "takeout", darts: 2 }); await H.sleep(1300);
+    await throwAt(4, "S", "S4"); await throwAt(4, "O", "MISS");
+    st = await state();
+    b = await boardView();
+    check(st.activeSession.doubles.D4.attempts === 0 && b.target === "D4", "two misses at D4 and it's still D4 (3 darts there): " + b.target);
+    await throwAt(4, "S", "S4");
+    st = await state();
+    check(st.activeSession.doubles.D4.attempts === 1 && (await boardView()).target === "D5", "the 3rd miss at D4 moves on to D5");
+    await station.send({ type: "takeout", darts: 3 }); await H.sleep(1000);
+
     // Finish with the computer's buttons: every open double hit on dart 1 (D2 comes back at the end).
     for (let k = 0; k < 20; k += 1) {
       const t = (await page(computer)).target;

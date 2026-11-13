@@ -224,15 +224,68 @@ test("camera: darts pulled out before 3 were seen count the unseen ones as misse
   assert.equal(u.activeSession.cam.seen, 0);
 });
 
-test("camera: an unseen dart after a miss completes goes to the next double", () => {
+test("camera: after a hit on dart 2, darts out with the 3rd unthrown: nothing more counts, D2 starts fresh", () => {
   const u = fresh();
   cam(u, single(1));
-  cam(u, dbl(1)); // D1 on dart 2; this visit's 3rd dart wasn't seen
+  cam(u, dbl(1)); // D1 on dart 2; the 3rd dart isn't thrown
   const r = E.cameraTakeout(u.activeSession, { seq: ++seq, darts: 2 });
   E.applyChange(u, u.activeSession, r, T0 + 3000);
   assert.equal(r.visits, undefined);
-  assert.deepEqual(u.activeSession.cam.darts, ["MISS"]);
-  assert.equal(u.activeSession.cam.at, "D2");
+  assert.equal(r.unseen, 0);
+  assert.equal(d(u, "D2").attempts, 0);
+  assert.deepEqual(u.activeSession.cam.darts, []);
+  assert.equal(u.activeSession.cam.over, null);
+});
+
+// Nov 12: the game's visits 5 and 6. D7 went in on dart 2 and the 3rd dart (thrown at D8) was
+// counted as D8's dart 1, so D8 only had 2 darts the next visit. Each visit is one try now.
+test("camera: a hit on dart 1 or 2 ends the visit's try; its other darts don't count, and the next double gets 3", () => {
+  const u = fresh();
+  for (let i = 0; i < 6; i += 1) log(u, E.planResult(u.activeSession, "hit1")); // at D7
+  const a = cam(u, single(16));
+  const b = cam(u, dbl(7));
+  assert.equal(b.effect.kind, "hit");
+  assert.equal(d(u, "D7").hitDart, 2);
+  assert.equal(u.activeSession.cam.over, "D7");
+  const c = cam(u, outside(8)); // the 3rd dart: not counted
+  assert.equal(c.effect.kind, "spare");
+  assert.equal(c.visits, undefined);
+  assert.equal(d(u, "D8").attempts, 0);
+  assert.equal(cur(u), "D8");
+  E.applyChange(u, u.activeSession, E.cameraTakeout(u.activeSession, { seq: ++seq, darts: 3 }), T0 + 3000);
+  // Next visit: three darts at D8, a miss only after the 3rd.
+  cam(u, single(8));
+  assert.equal(cur(u), "D8");
+  cam(u, outside(8));
+  assert.equal(cur(u), "D8");
+  assert.equal(d(u, "D8").attempts, 0);
+  cam(u, single(8));
+  assert.equal(d(u, "D8").attempts, 1);
+  assert.equal(cur(u), "D9");
+  assert.ok(a);
+});
+
+test("camera: a hit on dart 1, the take-out missed: the 4th dart starts the next visit", () => {
+  const u = fresh();
+  cam(u, dbl(1));
+  cam(u, single(2)); // spare
+  cam(u, single(2)); // spare
+  assert.equal(d(u, "D2").attempts, 0);
+  const r = cam(u, dbl(2)); // no take-out was seen: a new visit, dart 1 at D2
+  assert.equal(r.effect.kind, "hit");
+  assert.equal(r.effect.n, 1);
+  assert.equal(d(u, "D2").hitDart, 1);
+});
+
+test("camera: darts out after 2 misses at a double: the unseen 3rd is a miss there", () => {
+  const u = fresh();
+  cam(u, single(1)); cam(u, outside(1));
+  const r = E.cameraTakeout(u.activeSession, { seq: ++seq, darts: 2 });
+  assert.equal(r.unseen, 1);
+  E.applyChange(u, u.activeSession, r, T0 + 3000);
+  assert.equal(d(u, "D1").attempts, 1);
+  assert.equal(cur(u), "D2");
+  assert.equal(d(u, "D2").attempts, 0);
 });
 
 test("numberAt and doubleOf read darts the way the board is laid out", () => {
@@ -282,11 +335,15 @@ test("board: camera darts say what they counted as, and make up the visit on the
   assert.deepEqual(a.change.effect, { kind: "miss", key: "D1", n: 1 });
   const b = bm(u, dbl(1));
   assert.deepEqual(b.change.effect, { kind: "hit", key: "D1", n: 2 });
-  bm(u, single(2));
+  bm(u, single(2)); // after the hit: not counted
   assert.equal(visit(u).darts.length, 3);
-  assert.deepEqual(visit(u).darts.map((x) => x.e.kind), ["miss", "hit", "miss"]);
+  assert.deepEqual(visit(u).darts.map((x) => x.e.kind), ["miss", "hit", "spare"]);
   assert.equal(u.activeSession.throws.length, 3);
-  assert.deepEqual(u.activeSession.throws.map((t) => t.k), ["D1", "D1", "D2"]);
+  assert.deepEqual(u.activeSession.throws.map((t) => t.k), ["D1", "D1", null]);
+  assert.equal(d(u, "D2").attempts, 0);
+  const v = E.boardView(u.activeSession);
+  assert.equal(v.darts[2].sub, "Not counted: D1 went in");
+  assert.equal(v.pullOut, false); // the visit's 3 darts are in: no more to pull out early
   // A 4th dart without a take-out starts the next visit; so does a dart after a take-out.
   bm(u, single(2));
   assert.equal(visit(u).darts.length, 1);
@@ -349,17 +406,38 @@ test("board: fixing a hit to a miss, and removing a dart that wasn't one", () =>
 
 test("board: a fixed visit that was pulled out keeps its unseen misses", () => {
   const u = fresh();
-  bm(u, dbl(1)); // D1 on dart 1, now at D2
-  bm(u, single(2));
-  bmOut(u, 2); // 1 unseen: a miss at D2? no: 2 seen, 1 unseen
+  bm(u, single(1));
+  bm(u, single(1));
+  bmOut(u, 2); // the 3rd dart wasn't seen: D1 missed
   assert.equal(visit(u).out.unseen, 1);
-  // The unseen dart was the 3rd at D2 (single 2 was the 1st... after the D1 hit, darts at D2: S2, unseen).
-  assert.equal(u.activeSession.cam.darts.length, 2);
-  fixWith(u, 1, "D2"); // the S2 was really D2: hit on dart 1 at D2; the unseen dart is then dart 1 at D3
-  assert.equal(d(u, "D2").completed, true);
-  assert.equal(d(u, "D2").hitDart, 1);
-  assert.equal(cur(u), "D3");
-  assert.equal(u.activeSession.cam.darts.length, 1);
+  assert.equal(d(u, "D1").attempts, 1);
+  assert.equal(cur(u), "D2");
+  fixWith(u, 1, "D1"); // the 2nd was really in D1: a hit on dart 2, and the unseen dart doesn't count
+  assert.equal(d(u, "D1").completed, true);
+  assert.equal(d(u, "D1").hitDart, 2);
+  assert.equal(d(u, "D1").attempts, 1);
+  assert.equal(visit(u).out.unseen, 0); // the try ended with the hit: the unseen dart doesn't count now
+  assert.equal(cur(u), "D2");
+  assert.equal(d(u, "D2").attempts, 0);
+});
+
+test("board: after a hit on dart 1 the board says to pull the darts out, and a spare dart can only be removed", () => {
+  const u = fresh();
+  bm(u, dbl(1));
+  const v = E.boardView(u.activeSession);
+  assert.equal(v.target, "D2");
+  assert.equal(v.pullOut, true);
+  assert.equal(v.visitDone, true);
+  assert.equal(v.dartNo, 1);
+  bm(u, single(2));
+  const w = E.boardView(u.activeSession);
+  assert.equal(w.darts[1].kind, "spare");
+  bmOut(u, 2);
+  const x = E.boardView(u.activeSession);
+  assert.equal(x.pullOut, false);
+  assert.equal(x.dartNo, 1);
+  bm(u, single(2));
+  assert.equal(E.boardView(u.activeSession).dartNo, 2);
 });
 
 test("board: a tap on the buttons, Undo or a new visit ends the old visit's fixes", () => {

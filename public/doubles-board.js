@@ -97,7 +97,7 @@
     darts.forEach((d) => {
       if (!Number.isFinite(d.x) || !Number.isFinite(d.y)) return;
       const x = Math.max(-1.2, Math.min(1.2, d.x)), y = Math.max(-1.2, Math.min(1.2, d.y));
-      const col = d.kind === "hit" ? "var(--bm-hit)" : d.kind === "stay" ? "var(--accent)" : "var(--bm-miss)";
+      const col = d.kind === "hit" ? "var(--bm-hit)" : d.kind === "stay" ? "var(--accent)" : d.kind === "spare" ? "var(--bm-num)" : "var(--bm-miss)";
       s += `<g class="bm-dart" data-i="${d.index}" role="button" tabindex="0" aria-label="Dart ${d.index + 1}: ${esc(d.read)}. Tap to fix.">`;
       s += `<circle cx="${x}" cy="${y}" r=".11" fill="transparent"/><circle cx="${x}" cy="${y}" r=".055" fill="${col}" stroke="var(--bg)" stroke-width=".018"/>`;
       s += `<text x="${x + 0.085}" y="${y - 0.075}" font-size=".09" font-weight="900" fill="#fff" stroke="var(--bg)" stroke-width=".025" paint-order="stroke">${d.index + 1}</text></g>`;
@@ -107,6 +107,7 @@
 
   // ---- fixing a dart: what it could have been ----
   function fixOptions(E, d, fallbackKey) {
+    if (d.kind === "spare") return [{ id: "remove", text: "Not a dart: remove it" }];
     const key = d.key || fallbackKey;
     const opts = [];
     if (key === "DBULL") {
@@ -145,7 +146,9 @@
       if (!d) return;
       fixing = { index: i, seq: d.s };
       ref.sheetTitle.textContent = `Dart ${i + 1}`;
-      ref.sheetSub.textContent = `The cameras read it as ${d.read === "Outside" ? "outside the wire" : d.read}${d.key ? `, thrown at ${d.key}` : ""}. What was it?`;
+      ref.sheetSub.textContent = d.kind === "spare"
+        ? `The cameras read it as ${d.read === "Outside" ? "outside the wire" : d.read}. It doesn't count: ${d.key} went in earlier this visit. To change that, tap the dart that went in.`
+        : `The cameras read it as ${d.read === "Outside" ? "outside the wire" : d.read}${d.key ? `, thrown at ${d.key}` : ""}. What was it?`;
       ref.opts.innerHTML = fixOptions(E, d, v.target).map((o) =>
         `<button type="button" class="bm-opt${o.hit ? " h" : ""}${o.cur ? " cur" : ""}" data-fix="${o.id}">${esc(o.text)}${o.cur ? " <span>(what the cameras saw)</span>" : ""}</button>`).join("");
       show(ref.sheet, true);
@@ -239,10 +242,11 @@
         const s = JSON.stringify([v, m.paused, m.camOn, m.note, m.noteWarn]);
         if (s === sig) return;
         sig = s;
-        ref.label.textContent = m.paused ? "Paused" : "Throwing at";
+        ref.label.textContent = m.paused ? "Paused" : v.pullOut ? "Pull your darts out, then" : "Throwing at";
+        el.classList.toggle("pullout", !!v.pullOut && !m.paused);
         ref.target.textContent = v.finished ? "Done" : big(v.target);
         ref.target.classList.toggle("long", v.target === "DBULL");
-        ref.count.innerHTML = v.finished ? "" : `Dart ${v.dartNo} <span>of 3</span>`;
+        ref.count.innerHTML = v.finished ? "" : v.pullOut ? "Next visit" : `Dart ${v.dartNo} <span>of 3</span>`;
         ref.next.innerHTML = v.next.length ? "<b>Next</b>" + v.next.map((k) => `<span>${esc(big(k))}</span>`).join("") : "";
         ref.board.innerHTML = boardSvg(v.target, v.darts);
         ref.slots.innerHTML = slotsHtml(v, m);

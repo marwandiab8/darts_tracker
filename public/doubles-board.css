@@ -91,6 +91,10 @@ body.bm-open { overflow: hidden; }
 .bm-slot.wait .r { color: var(--accent); }
 .bm-slot.wait .n { background: var(--accent); color: #1a1102; }
 .bm-slot.empty { border-style: dashed; }
+.bm .bm-slot.spare { border-style: dashed; opacity: .7; }
+.bm-slot.spare .r { color: var(--muted); }
+.bm-slot.spare .n { background: rgba(255, 255, 255, .1); color: var(--muted); }
+.bm.pullout .bm-label { color: var(--bm-hit-ink); }
 .bm-slot.empty .r { color: #475569; }
 .bm-note { font-size: 19px; line-height: 1.35; min-height: 2.7em; overflow-wrap: anywhere; }
 .bm-note.warn { color: var(--bm-miss-ink); }

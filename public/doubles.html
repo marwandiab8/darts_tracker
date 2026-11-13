@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
 <meta name="description" content="Finish every double, D1 to the bull, against the clock. The cameras can enter the darts.">
 <title>Doubles - Darts Tracker</title>
-<link rel="stylesheet" href="doubles-board.css?v=1">
+<link rel="stylesheet" href="doubles-board.css?v=2">
 <style>
   :root {
     --bg: #0b0f17; --muted: #94a3b8; --text: #e5e7eb; --accent: #f59e0b; --blue: #38bdf8;
@@ -108,7 +108,7 @@
         <li>A missed double stays open. After the bull, play goes back round to the earliest open double until all 21 are done.</li>
         <li>The clock counts active time only: pause it for breaks.</li>
         <li>Kept throwing at one double because it felt close? Log it under <strong>Stayed on this double</strong>. Missed a run of doubles, then hit one? Use <strong>Hit a later double</strong>.</li>
-        <li><strong>With the cameras on</strong>, just throw. A dart in the double is a hit on that dart, and three darts without one are a miss. If you stay on a double you just missed, the next darts in that number count for it, and a hit there is logged as "stayed, hit on dart 4" (or 5, 6...). Darts pulled out before the cameras saw all 3 count the unseen ones as misses.</li>
+        <li><strong>With the cameras on</strong>, just throw: each visit is one try at the double you're on. A dart in it is a hit on that dart; pull the visit's other darts out (they don't count), and the next double starts with 3 darts. Three darts without a hit are a miss. If you stay on a double you just missed, the next darts in that number count for it, and a hit there is logged as "stayed, hit on dart 4" (or 5, 6...). Darts pulled out before the try was over count the ones the cameras didn't see as misses.</li>
         <li><strong>Board mode</strong> is a full-screen scoreboard to read from the oche. A wrong read: tap the dart, on the board or its box, and pick what it was. Undo goes back up to 10 steps.</li>
       </ul>
     </details>
@@ -230,8 +230,8 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
-<script src="doubles-engine.js?v=2"></script>
-<script src="doubles-board.js?v=1"></script>
+<script src="doubles-engine.js?v=3"></script>
+<script src="doubles-board.js?v=2"></script>
 <script src="board-vision.js?v=9"></script>
 <script src="board-camera.js?v=11"></script>
 <script>

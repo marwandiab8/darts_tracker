@@ -19,14 +19,16 @@
 //   lifetime      = { doubles: { D1: { attempts, hits, hits1, hits2, hits3 }, ... } }
 //
 // The cameras (board-camera.js) give each dart where it landed. cameraDart() turns darts into the same
-// visits the buttons log:
-//   - a dart in the current double is a hit on that dart (the darts counted since it became current);
+// visits the buttons log. Each visit at the board (up to 3 darts, then pull them out) is one try at the
+// double you're on, as with the buttons:
+//   - a dart in the current double is a hit on that dart of the visit; the visit's other darts don't
+//     count (pull them out), and the next visit starts the next double on dart 1;
 //   - three darts without one are a miss, and play moves on, as if Miss had been tapped;
 //   - after a miss, a dart in that same number (or its double) means you stayed on it: a hit there is
 //     logged as "stayed, hit on dart N" (the misses just logged are taken back and redone as the stay),
 //     and every 3 more darts there without a hit is another missed visit with 3 extra darts;
 //   - a dart anywhere else is a miss at the current double;
-//   - darts pulled out before 3 were seen: the ones not seen count as misses.
+//   - darts pulled out before the try was over: the ones the cameras didn't see count as misses there.
 (function (root, factory) {
   if (typeof module === "object" && module.exports) module.exports = factory();
   else root.DoublesEngine = factory();
@@ -306,11 +308,12 @@
 
   // ---- The cameras ---------------------------------------------------------------------------------
   // sess.cam = { seq, at, darts: [labels at the current double, not yet decided], seen: darts seen
-  //              since the last take-out, stay: { key, darts, visits } after a miss, or null }
+  //              since the last take-out, over: the double hit earlier in this visit (its other darts
+  //              don't count) or null, stay: { key, darts, visits } after a miss, or null }
   const SEG_ORDER = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5];
   const BULL_OUT = 0.12; // outer bull radius on the app board (BoardVision.APP: the double ring ends at 1)
 
-  function freshCam(seq) { return { seq: seq || 0, at: null, darts: [], seen: 0, stay: null }; }
+  function freshCam(seq) { return { seq: seq || 0, at: null, darts: [], seen: 0, stay: null, over: null }; }
 
   // The number (or "BULL") a dart is in, by where it is, even off the board: a dart just outside the
   // D7 wire is in the 7. x, y on the app board, double ring outer edge at radius 1.
@@ -346,8 +349,12 @@
     const cur = currentKey(sess);
     if (!cur) return { cam, message: "All doubles are done.", effect: { kind: "ignored" } };
     if (sess.timer && sess.timer.isPaused) return { cam, message: `Camera saw ${describe(dart.label)}, but the session is paused.`, effect: { kind: "ignored" } };
+    // A 4th dart without a take-out: the take-out wasn't seen, so this dart starts the next visit.
+    if ((cam.seen || 0) >= 3) { cam.seen = 0; cam.over = null; }
+    cam.seen = (cam.seen || 0) + 1;
+    // The double went in earlier in this visit: the visit's other darts don't count.
+    if (cam.over) return { cam, message: `Camera: ${describe(dart.label)}, not counted: ${cam.over} went in earlier this visit. Pull your darts out.`, effect: { kind: "spare", key: cam.over } };
     if (cam.at !== cur) { cam.at = cur; cam.darts = []; }
-    cam.seen = Math.min(3, (cam.seen || 0) + 1);
 
     const hitKey = doubleOf(dart.label);
     const num = numberAt(dart.x, dart.y) || (hitKey ? numberOfKey(hitKey) : null);
@@ -359,7 +366,8 @@
       cam.darts = [];
       cam.at = null;
       cam.stay = null;
-      return { cam, visits: hitVisits(cur, n), message: `Camera: ${cur} hit on dart ${n}.`, effect: { kind: "hit", key: cur, n } };
+      cam.over = cam.seen < 3 ? cur : null;
+      return { cam, visits: hitVisits(cur, n), message: `Camera: ${cur} hit on dart ${n}.${cam.over ? " Pull your darts out." : ""}`, effect: { kind: "hit", key: cur, n } };
     }
 
     // Still at the double just missed: in its double is a stay hit, and in its number another stay dart.
@@ -370,6 +378,7 @@
           cam.darts = [];
           cam.at = null;
           cam.stay = null;
+          cam.over = cam.seen < 3 ? stay.key : null;
           return { cam, takeBack: { key: stay.key, visits: stay.visits }, visits: hitVisits(stay.key, total), message: `Camera: you stayed on ${stay.key} and hit it on dart ${total}.`, effect: { kind: "stayhit", key: stay.key, n: total } };
         }
         // Another dart at the stayed-on double: the darts so far at the current one were at it too.
@@ -397,20 +406,23 @@
     return { cam, message: `Camera: ${describe(dart.label)} (dart ${cam.darts.length} at ${cur}).`, effect: { kind: "miss", key: cur, n: cam.darts.length } };
   }
 
-  // Darts pulled out. Darts the cameras didn't see in that visit (a bounce-out, one hidden behind
-  // another) are misses at the current double, so the count of darts stays right.
+  // Darts pulled out: the next visit starts. When the try at the current double wasn't over (no hit,
+  // fewer than 3 darts there), the darts the cameras didn't see (a bounce-out, one hidden behind
+  // another) are misses there, so it's a 3-dart miss as if they'd been seen.
   function cameraTakeout(sess, e) {
     if (!sess || !e) return null;
     const cam = Object.assign(freshCam(), clone(sess.cam) || {});
     if (e.seq && e.seq <= (cam.seq || 0)) return null;
     if (e.seq) cam.seq = e.seq;
-    const seen = cam.seen || 0;
+    const seen = cam.seen || 0, over = cam.over;
     cam.seen = 0;
+    cam.over = null;
     const cur = currentKey(sess);
-    if (!cur || seen === 0 || seen >= 3 || (sess.timer && sess.timer.isPaused)) return { cam, message: "Darts out." };
-    // Play the unseen darts on a copy, so a missed visit they complete moves the copy on to the next
-    // double before the next unseen dart. A dart with no position never counts for a stay.
-    const unseen = 3 - seen;
+    const atCur = cam.at === cur ? (cam.darts || []).length : 0;
+    if (!cur || over || seen === 0 || atCur === 0 || atCur >= 3 || (sess.timer && sess.timer.isPaused)) return { cam, message: "Darts out.", unseen: 0 };
+    // Play the unseen darts on a copy (they finish the try at this double). A dart with no position
+    // never counts for a stay.
+    const unseen = 3 - atCur;
     const s = clone(sess);
     const scratch = { lifetime: defaultLifetime() };
     s.cam = cam;
@@ -422,7 +434,7 @@
       else s.cam = r.cam;
       if (!currentKey(s)) break;
     }
-    const out = { cam: Object.assign(s.cam, { seen: 0 }), message: `Darts out: ${unseen} dart${unseen === 1 ? "" : "s"} the cameras didn't see counted as missed.` };
+    const out = { cam: Object.assign(s.cam, { seen: 0, over: null }), unseen, message: `Darts out: ${unseen} dart${unseen === 1 ? "" : "s"} the cameras didn't see counted as missed.` };
     if (visits.length) out.visits = visits;
     return out;
   }
@@ -482,7 +494,7 @@
       const x = round4(dart.x), y = round4(dart.y), label = dart.label || "MISS";
       visit.darts.push({ s: dart.seq || 0, l: label, x, y, e: r.effect });
       r.cam.visit = visit;
-      addThrow(sess, { s: dart.seq || 0, k: r.effect.key, l: label, x, y, t: now });
+      addThrow(sess, { s: dart.seq || 0, k: r.effect.kind === "spare" ? null : r.effect.key, l: label, x, y, t: now });
     }
     const rec = applyChange(u, sess, r, now);
     return { change: r, record: (r.visits && r.visits.length) || r.takeBack ? rec : null };
@@ -490,12 +502,9 @@
 
   // Darts pulled out: cameraTakeout(), and the visit ends (it can still be fixed until the next dart).
   function recordTakeout(u, sess, e, now) {
-    const seen = (sess && sess.cam && sess.cam.seen) || 0;
-    const cur = sess ? currentKey(sess) : null;
     const r = cameraTakeout(sess, e);
     if (!r) return null;
-    const unseen = cur && seen > 0 && seen < 3 && !(sess.timer && sess.timer.isPaused) ? 3 - seen : 0;
-    if (r.cam.visit && !r.cam.visit.out) r.cam.visit.out = { darts: (e && e.darts) || 0, unseen };
+    if (r.cam.visit && !r.cam.visit.out) r.cam.visit.out = { darts: (e && e.darts) || 0, unseen: r.unseen || 0 };
     const rec = applyChange(u, sess, r, now);
     return { change: r, record: r.visits && r.visits.length ? rec : null };
   }
@@ -552,16 +561,21 @@
       d.e = r.effect;
       apply(r);
     }
-    if (v.out) apply(cameraTakeout(sess, { seq: 0, darts: v.out.darts }));
+    let out = v.out || null;
+    if (out) {
+      const r = cameraTakeout(sess, { seq: 0, darts: out.darts });
+      out = Object.assign({}, out, { unseen: r.unseen || 0 });
+      apply(r);
+    }
     sess.cam.seq = Math.max(sess.cam.seq || 0, seqNow);
-    sess.cam.visit = { n: v.n, cp: v.cp, darts, out: v.out || null };
+    sess.cam.visit = { n: v.n, cp: v.cp, darts, out };
     // The throw log follows.
     if (Array.isArray(sess.throws)) {
       if (fix.remove && seq) sess.throws = sess.throws.filter((t) => t.s !== seq);
       for (const d of darts) {
         if (!d.s) continue;
         const t = sess.throws.find((x) => x.s === d.s);
-        if (t) Object.assign(t, { l: d.l, x: d.x, y: d.y, k: (d.e && d.e.key) || t.k }, d.f ? { f: 1 } : {});
+        if (t) Object.assign(t, { l: d.l, x: d.x, y: d.y, k: d.e && d.e.kind === "spare" ? null : (d.e && d.e.key) || t.k }, d.f ? { f: 1 } : {});
       }
     }
     const record = diffRecord(u, before, lifeBefore, sess, now);
@@ -656,6 +670,7 @@
     if (e.kind === "hit") return { read, sub: `Hit on dart ${e.n}`, kind: "hit" };
     if (e.kind === "stayhit") return { read, sub: `Stayed, hit on dart ${e.n}`, kind: "hit" };
     if (e.kind === "stay") return { read, sub: `Still on ${key}: ${e.n} darts`, kind: "stay" };
+    if (e.kind === "spare") return { read, sub: `Not counted: ${key} went in`, kind: "spare" };
     let sub = `A miss at ${key}`;
     if (d.l === "MISS" && where === num && off) sub = `Just past the ${key} wire`;
     else if (d.l === "MISS" && off) sub = "Off the board";
@@ -674,7 +689,7 @@
     const v = cam.visit || null;
     const darts = v ? v.darts.map((d, i) => Object.assign({ index: i, s: d.s || 0, label: d.l, x: d.x, y: d.y, key: d.e && d.e.key, fixed: !!d.f }, dartWords(d))) : [];
     const unseen = v && v.out ? v.out.unseen || 0 : 0;
-    const atCur = cam.at === cur ? (cam.darts || []).length : 0;
+    const atCur = cam.at === cur && !cam.over && (cam.seen || 0) < 3 ? (cam.darts || []).length : 0;
     const curIdx = cur ? indexOf(cur) : -1;
     const cells = TARGETS.map((t, i) => {
       const d = sess.doubles[t.key] || defaultDouble();
@@ -693,7 +708,9 @@
       dartNo: Math.min(3, atCur + 1),
       darts,
       unseen,
-      visitDone: !!(v && (v.out || v.darts.length >= 3)),
+      visitDone: !!(v && (v.out || v.darts.length >= 3 || cam.over)),
+      // A hit before the visit's 3rd dart: the rest don't count; the next double starts next visit.
+      pullOut: !!(cam.over && (cam.seen || 0) < 3),
       cells,
       done,
       note: back ? `${back} comes back after the bull` : "",
