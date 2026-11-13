@@ -339,6 +339,14 @@ test("the result email names the winner, the game and each player's numbers", ()
   assert.match(mail.html, /<h2[^>]*>Alex won!<\/h2>/);
 });
 
+test("bug 7: when the other player threw first, each visit still goes under its own player's name", () => {
+  const mail = _test.buildVersusEmail(versusGame({ first: "bot", log: [{ w: "o", t: "45" }, { w: "p", t: "60" }, { w: "o", t: "100" }, { w: "p", t: "180" }, { w: "o", t: "26" }] }));
+  assert.match(mail.text, /1\. Alex 60 · Sam 45/);
+  assert.match(mail.text, /2\. Alex 180 · Sam 100/);
+  assert.match(mail.text, /3\. Alex - · Sam 26/);
+  assert.match(mail.html, /<td[^>]*>1<\/td><td[^>]*>60<\/td><td[^>]*>45<\/td>/);
+});
+
 test("the result email works for a lost game, a straight-out game and cricket", () => {
   assert.equal(_test.buildVersusEmail(versusGame({ result: "lost" })).subject, "Darts: Sam beat Alex at 501");
   assert.equal(_test.buildVersusEmail(versusGame({ doubleOut: false, startScore: 301 })).subject, "Darts: Alex beat Sam at 301 straight out");

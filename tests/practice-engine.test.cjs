@@ -201,6 +201,57 @@ test("checkout routes", () => {
   }
 });
 
+test("bug 5: checkout routes are the standard ones: good doubles, singles to set up, the bull only when needed", () => {
+  const labels = (remaining, darts = 3) => (E.checkoutRoute(remaining, darts, true) || []).map((d) => d.label).join(" ");
+  const standard = {
+    41: "S9 D16", 53: "S13 D20", 60: "S20 D20", 61: "T15 D8", 116: "T20 S16 D20",   // the ones that were wrong
+    32: "D16", 40: "D20", 50: "S18 D16", 64: "T16 D8", 70: "T18 D8", 76: "T20 D8", 80: "T16 D16", 81: "T19 D12",
+    90: "T18 D18", 100: "T20 D20", 120: "T20 S20 D20", 130: "T20 T18 D8", 136: "T20 T20 D8", 141: "T20 T19 D12",
+    160: "T20 T20 D20", 161: "T20 T17 DB", 164: "T20 T18 DB", 167: "T20 T19 DB", 170: "T20 T20 DB",
+  };
+  for (const [n, route] of Object.entries(standard)) assert.equal(labels(Number(n)), route, String(n));
+  // Fewer darts in hand: the best route for those.
+  assert.equal(labels(110, 2), "T20 DB", "two darts at 110: the bull is needed");
+  assert.equal(labels(61, 2), "T15 D8");
+  assert.equal(labels(50, 1), "DB");
+  // Never a double to set up a finish, and the bull as a finish only when nothing else does it as quickly.
+  for (let n = 2; n <= 170; n += 1) {
+    const route = E.checkoutRoute(n, 3, true) || [];
+    route.slice(0, -1).forEach((d) => assert.ok(d.ring !== "D", `${n}: ${route.map((x) => x.label).join(" ")}`));
+  }
+  // A typed finish may have taken the fewest darts possible, not the suggested route's count.
+  assert.equal(E.fewestDarts(50, true), 1);
+  assert.equal(E.fewestDarts(41, true), 2);
+  assert.equal(E.fewestDarts(170, true), 3);
+  assert.equal(E.fewestDarts(169, true), null);
+  const g = E.createGame({ kind: "x01", startScore: 201 });
+  g.remaining.player = 50; g.visitStart = 50;
+  assert.equal(E.enterVisit(g, 50, 1).event, "win", "50 typed as one dart (the bull)");
+});
+
+test("set-up shots: with no finish in hand, what to throw and what it leaves", () => {
+  const S = (n, d) => { const s = E.setupShot(n, d, true); return s ? s.darts.map((x) => x.label).join(" ") + " leaves " + s.leaves : null; };
+  assert.equal(S(53, 1), "S13 leaves 40");
+  assert.equal(S(45, 1), "S13 leaves 32");
+  assert.equal(S(99, 2), "T20 S7 leaves 32");
+  assert.equal(S(169, 3), "T20 T20 S17 leaves 32", "169 has no finish: score, and leave D16");
+  assert.equal(S(100, 2), null, "a finish in hand: no set-up");
+  assert.equal(S(400, 3), null, "nowhere near a finish");
+  // Whatever it says (within reach of a finish) leaves one: never 1, never a bogey number.
+  for (let n = 2; n <= 170; n += 1) for (let d = 1; d <= 3; d += 1) {
+    const s = E.setupShot(n, d, true);
+    if (s && s.leaves <= 170) assert.ok(E.checkoutRoute(s.leaves, 3, true), `${n}/${d} leaves ${s.leaves}`);
+  }
+});
+
+test("the bot plays the standard routes: one dart at 61 is not T7", () => {
+  const game = E.createGame({ kind: "x01", startScore: 501, first: "bot" });
+  game.remaining.bot = 61; game.visitStart = 61;
+  assert.deepEqual(E.botAim(game), { target: "15", ring: "T" });
+  game.remaining.bot = 41; game.visitStart = 41;
+  assert.deepEqual(E.botAim(game), { target: "9", ring: "S" });
+});
+
 // --- cricket -----------------------------------------------------------------------------------
 
 test("cricket marks: single, double and triple, and other numbers do nothing", () => {
@@ -881,3 +932,114 @@ test("a race to 11 genuinely needs 11 wins, not a two-ahead margin", () => {
   assert.equal(series.wins.player, 11);
 });
 
+
+// --- Phase 1 fixes: busts in the average, and camera darts in the order they were thrown -----------
+
+const missAt = () => ({ x: 0, y: -1.06 });
+
+test("bug 6: a bust counts as three darts in the average, however it was entered", () => {
+  const averages = ["board", "total", "darts"].map((how) => {
+    const game = E.createGame({ kind: "x01", startScore: 201 });
+    E.throwDart(game, at("T20")); E.throwDart(game, at("T20")); E.throwDart(game, at("T20"));
+    E.endVisit(game); E.throwDart(game, at("S1")); E.throwDart(game, at("S1")); E.throwDart(game, at("S1")); E.endVisit(game);
+    // 21 left: a T20 busts on the first dart on the board; a typed total or typed darts bust too.
+    if (how === "board") E.throwDart(game, at("T20"));
+    else if (how === "total") E.enterVisit(game, 60, 3);
+    else E.enterDarts(game, [60]);
+    assert.ok(game.visitBust, how);
+    E.endVisit(game);
+    return E.summarize(game).player.avg;
+  });
+  assert.deepEqual(averages, [90, 90, 90], "180 in two visits and a bust: 90 whichever way the bust went in");
+});
+
+test("bug 1: once the bot's checkout visit is closed, its average counts the checkout (101 in 5 darts is 60.6)", () => {
+  const game = E.createGame({ kind: "x01", startScore: 201, first: "bot" });
+  game.remaining.bot = 101; game.visitStart = 101;
+  E.throwDart(game, at("T20")); E.throwDart(game, at("S1")); E.throwDart(game, at("S1")); E.endVisit(game);   // 62, 39 left
+  E.throwDart(game, at("S1")); E.throwDart(game, at("S1")); E.throwDart(game, at("S1")); E.endVisit(game);   // you: 3
+  E.throwDart(game, at("S19")); E.throwDart(game, at("D10"));
+  assert.equal(game.winner, "bot");
+  assert.equal(E.summarize(game).bot.avg, 62, "until its visit is closed only the finished one counts (the old saved average was 62 x 3 / 5 = 37.2)");
+  E.endVisit(game);
+  assert.equal(E.summarize(game).bot.avg, 60.6);
+});
+
+test("bug 4: a dart the cameras couldn't read keeps its place: S20 (unread) then D10 on 40 is a checkout", () => {
+  const game = E.createGame({ kind: "x01", startScore: 201 });
+  game.remaining.player = 40; game.visitStart = 40;
+  const hold = E.cleanHold(null);
+  assert.equal(E.cameraEvent(game, hold, { k: "u", seq: 1 }, true, missAt)[0].t, "wait");
+  assert.equal(E.cameraEvent(game, hold, { k: "d", seq: 2, ...at("D10") }, true, missAt)[0].t, "held", "D10 waits behind the unread dart");
+  assert.equal(game.visitDarts.length, 0);
+  E.throwDart(game, at("S20"));                       // tapped in where it landed
+  const out = E.tappedIn(game, hold, missAt);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].t, "dart");
+  assert.equal(game.winner, "player", "S20 then D10: checked out, not bust");
+  assert.deepEqual(hold, { wait: 0, queue: [] });
+});
+
+test("an unread dart never tapped in is a miss at the pull-out, before the darts held behind it", () => {
+  const game = E.createGame({ kind: "x01", startScore: 501 });
+  const hold = E.cleanHold(null);
+  E.cameraEvent(game, hold, { k: "d", seq: 1, ...at("T20") }, true, missAt);
+  E.cameraEvent(game, hold, { k: "u", seq: 2 }, true, missAt);
+  E.cameraEvent(game, hold, { k: "d", seq: 3, ...at("S5") }, true, missAt);
+  const out = E.cameraEvent(game, hold, { k: "o", seq: 4 }, true, missAt);
+  assert.deepEqual(out.map((o) => o.t + (o.why ? ":" + o.why : "")), ["miss:unread", "dart"]);
+  assert.deepEqual(game.visitDarts, ["T20", "MISS", "S5"]);
+  assert.ok(game.visitDone);
+});
+
+test("bug 3: darts the cameras see while the bot is still throwing go into your next visit, in order", () => {
+  const game = E.createGame({ kind: "x01", startScore: 501, first: "bot" });
+  const hold = E.cleanHold(null);
+  // The bot's visit, while you are already throwing.
+  E.throwDart(game, at("S20"));
+  assert.equal(E.cameraEvent(game, hold, { k: "d", seq: 1, ...at("T19") }, false, missAt)[0].t, "queued");
+  E.throwDart(game, at("S20"));
+  assert.equal(E.cameraEvent(game, hold, { k: "d", seq: 2, ...at("S19") }, false, missAt)[0].t, "queued");
+  E.throwDart(game, at("S20"));
+  E.endVisit(game);
+  // Your turn: both go in, and the pull-out (one bounced out) fills the third as a miss.
+  const out = E.releaseHold(game, hold, missAt);
+  assert.deepEqual(out.map((o) => o.t), ["dart", "dart"]);
+  assert.deepEqual(game.visitDarts, ["T19", "S19"]);
+  const pulled = E.cameraEvent(game, hold, { k: "o", seq: 3 }, true, missAt);
+  assert.deepEqual(pulled.map((o) => o.t), ["miss"]);
+  assert.equal(game.remaining.player, 501 - 76);
+});
+
+test("a take-out while the bot throws, with nothing kept, is your last visit's pull-out: nothing happens", () => {
+  const game = E.createGame({ kind: "x01", startScore: 501, first: "bot" });
+  const hold = E.cleanHold(null);
+  assert.equal(E.cameraEvent(game, hold, { k: "o", seq: 1 }, false, missAt)[0].t, "none");
+  assert.deepEqual(hold.queue, []);
+});
+
+test("darts after the visit is over (a bust, a checkout, three darts) are not counted", () => {
+  const game = E.createGame({ kind: "x01", startScore: 201 });
+  game.remaining.player = 32; game.visitStart = 32;
+  const hold = E.cleanHold(null);
+  E.cameraEvent(game, hold, { k: "d", seq: 1, ...at("D16") }, true, missAt);
+  assert.equal(game.winner, "player");
+  assert.equal(E.cameraEvent(game, hold, { k: "d", seq: 2, ...at("S20") }, true, missAt)[0].t, "late");
+  assert.equal(E.cameraEvent(game, hold, { k: "o", seq: 3 }, true, missAt)[0].t, "none");
+  assert.equal(game.darts.player.length, 1);
+});
+
+test("bug 2: your winning dart can be undone before the game is finished", () => {
+  const game = E.createGame({ kind: "x01", startScore: 201 });
+  game.remaining.player = 32; game.visitStart = 32;
+  E.throwDart(game, at("D16"));
+  assert.equal(game.winner, "player");
+  assert.ok(E.undoDart(game));
+  assert.equal(game.winner, null);
+  assert.equal(game.remaining.player, 32);
+  assert.equal(game.visitDone, false);
+});
+
+test("cleanHold keeps only well-formed events", () => {
+  assert.deepEqual(E.cleanHold({ wait: 9, queue: [{ k: "d", x: 0, y: 0 }, { k: "d" }, { k: "x" }, { k: "o" }] }), { wait: 3, queue: [{ k: "d", x: 0, y: 0 }, { k: "o" }] });
+});

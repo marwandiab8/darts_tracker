@@ -106,7 +106,7 @@
   })();
 
   // The doubles a player would rather be left on, best first.
-  const DOUBLE_PREFERENCE = [20, 16, 10, 8, 18, 12, 4, 2, 14, 6, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19];
+  const DOUBLE_PREFERENCE = [16, 20, 8, 10, 12, 18, 4, 14, 6, 2, 19, 17, 15, 13, 11, 9, 7, 5, 3, 1];
 
   function finishingDarts(needed, doubleOut) {
     const matches = DART_OPTIONS.filter((dart) => dart.points === needed && (!doubleOut || dart.ring === "D"));
@@ -118,26 +118,117 @@
     return matches.sort((a, b) => order(a) - order(b));
   }
 
-  // The shortest way to reach exactly zero from `remaining` with at most `dartsLeft` darts, or null.
-  function checkoutRoute(remaining, dartsLeft, doubleOut) {
+  // --- checkout routes -------------------------------------------------------------------------------
+  // The route to suggest (and that the bot plays), chosen the way the standard checkout charts are:
+  //   - fewest darts first; a finish on the bull counts as a dart more, so it is used only when it is
+  //     needed (170, 167, 164, 161, or 50 with one dart) and 50 with three darts is S18 D16;
+  //   - then the easiest darts: the double to finish on (D16 and D20 best, then D8, D10, D12...; odd
+  //     doubles and D1 last), and singles rather than trebles (or the outer bull) to set it up.
+  // So 41 is S9 D16 (not T13 D1), 53 S13 D20, 60 S20 D20, 61 T15 D8, 116 T20 S16 D20. With one or two
+  // darts left it is the best route for those darts; with none possible, setupShot says what to leave.
+  const FINISH_COST = { 16: 0, 20: 0.2, 8: 0.3, 10: 1.5, 12: 1.5, 18: 2, 4: 2.5, 14: 3, 6: 3, 2: 4, 1: 8 };
+  function finishCost(dart, doubleOut) {
+    if (!doubleOut) return dart.target === "BULL" ? 2 : dart.ring === "S" ? 0 : dart.ring === "D" ? 0.5 : 1;
+    if (dart.target === "BULL") return 4;
+    const n = Number(dart.target);
+    return n in FINISH_COST ? FINISH_COST[n] : 6;
+  }
+  // Setting up: a single is easiest; a treble on a big number (the ones practised) easier than a small
+  // one; the outer bull harder; a double, never, unless nothing else works (a miss of it changes everything).
+  const setupCost = (dart) => (dart.target === "BULL" ? (dart.ring === "D" ? 3 : 2) : dart.ring === "S" ? 0 : dart.ring === "T" ? 1 + (20 - Number(dart.target)) * 0.03 : 4);
+  const routeCache = new Map();
+
+  function bestRoute(remaining, dartsLeft, doubleOut) {
     const minimum = doubleOut ? 2 : 1;
-    if (!Number.isInteger(remaining) || remaining < minimum || dartsLeft < 1) return null;
-    const search = (left, count) => {
-      const finishing = finishingDarts(left, doubleOut);
-      if (count === 1) return finishing.length ? [finishing[0]] : null;
-      for (const dart of DART_OPTIONS) {
-        const after = left - dart.points;
-        if (after < minimum) continue;
-        const rest = search(after, count - 1);
-        if (rest) return [dart, ...rest];
-      }
-      return null;
+    if (!Number.isInteger(remaining) || remaining < minimum || remaining > 180 || dartsLeft < 1) return null;
+    const darts = Math.min(3, dartsLeft);
+    const key = remaining + "|" + darts + "|" + (doubleOut ? 1 : 0);
+    if (routeCache.has(key)) return routeCache.get(key);
+    const finishers = DART_OPTIONS.filter((d) => !doubleOut || d.ring === "D");
+    let best = null;
+    const consider = (route) => {
+      const last = route[route.length - 1];
+      const eff = route.length + (doubleOut && last.label === "DB" ? 1 : 0);
+      const cost = route.slice(0, -1).reduce((c, d) => c + setupCost(d), 0) + finishCost(last, doubleOut);
+      if (!best || eff < best.eff || (eff === best.eff && cost < best.cost - 1e-9)) best = { route, eff, cost };
     };
-    for (let count = 1; count <= dartsLeft; count += 1) {
-      const route = search(remaining, count);
-      if (route) return route;
+    for (const f of finishers) if (f.points === remaining) consider([f]);
+    if (darts >= 2) {
+      for (const a of DART_OPTIONS) {
+        const left = remaining - a.points;
+        if (left < minimum) continue;
+        for (const f of finishers) if (f.points === left) consider([a, f]);
+      }
+    }
+    if (darts >= 3) {
+      for (const a of DART_OPTIONS) {
+        const l1 = remaining - a.points;
+        if (l1 < minimum) continue;
+        for (const b of DART_OPTIONS) {
+          const l2 = l1 - b.points;
+          if (l2 < minimum) continue;
+          for (const f of finishers) if (f.points === l2) consider([a, b, f]);
+        }
+      }
+    }
+    routeCache.set(key, best);
+    return best;
+  }
+
+  // The route to finish from `remaining` with at most `dartsLeft` darts, or null.
+  function checkoutRoute(remaining, dartsLeft, doubleOut) {
+    const best = bestRoute(remaining, dartsLeft, doubleOut);
+    return best ? best.route.slice() : null;
+  }
+
+  // The fewest darts that can finish from `remaining` (a typed finish can't have taken fewer), or null.
+  function fewestDarts(remaining, doubleOut) {
+    for (let n = 1; n <= 3; n += 1) {
+      const minimum = doubleOut ? 2 : 1;
+      if (!Number.isInteger(remaining) || remaining < minimum) return null;
+      const finishers = DART_OPTIONS.filter((d) => !doubleOut || d.ring === "D");
+      const can = (left, k) => (k === 1 ? finishers.some((f) => f.points === left) : DART_OPTIONS.some((d) => left - d.points >= minimum && can(left - d.points, k - 1)));
+      if (can(remaining, n)) return n;
     }
     return null;
+  }
+
+  // How good a score is to be left on for the next visit (lower is better): a one-dart finish on a
+  // good double best, then two darts, then three; a number with no finish (169, 168, 166, 165, 163,
+  // 162, 159, or anything over 170) worst.
+  function leaveQuality(left, doubleOut) {
+    const best = bestRoute(left, 3, doubleOut);
+    if (best) return best.eff + best.cost / 10;
+    return left > 170 ? 6 + (left - 170) / 100 : 5;
+  }
+
+  // No finish with the darts left: the darts to throw, and what they leave for the next visit (on 99
+  // with one dart, S19 leaves 80; on 169 with three, T20 T20 S9 leaves 40), as { darts, leaves, dart:
+  // the first of them }. null when there is a finish (see checkoutRoute).
+  const SETUP_DARTS = DART_OPTIONS.filter((d) => d.ring !== "D");
+  const planCache = new Map();
+  function plan(remaining, k, doubleOut) {
+    if (k === 0) return { score: leaveQuality(remaining, doubleOut), darts: [], leaves: remaining };
+    const key = remaining + "|" + k + "|" + (doubleOut ? 1 : 0);
+    if (planCache.has(key)) return planCache.get(key);
+    const minimum = doubleOut ? 2 : 1;
+    let best = null;
+    for (const dart of SETUP_DARTS) {
+      const left = remaining - dart.points;
+      if (left < minimum) continue;
+      const next = plan(left, k - 1, doubleOut);
+      const score = next.score + setupCost(dart) * 0.3;
+      if (!best || score < best.score - 1e-9) best = { score, darts: [dart, ...next.darts], leaves: next.leaves };
+    }
+    const out = best || { score: Infinity, darts: [], leaves: remaining };
+    planCache.set(key, out);
+    return out;
+  }
+  function setupShot(remaining, dartsLeft, doubleOut) {
+    const minimum = doubleOut ? 2 : 1;
+    if (!Number.isInteger(remaining) || remaining < minimum || remaining > 230 || dartsLeft < 1 || checkoutRoute(remaining, dartsLeft, doubleOut)) return null;
+    const best = plan(remaining, Math.min(3, dartsLeft), doubleOut);
+    return best.darts.length ? { dart: best.darts[0], darts: best.darts, leaves: best.leaves } : null;
   }
 
   // --- games -----------------------------------------------------------------------------------------
@@ -296,12 +387,12 @@
     const who = game.turn;
     const left = game.remaining[who];
     const after = left - score;
-    const route = after === 0 ? checkoutRoute(left, 3, game.doubleOut) : null;
-    const bust = after < 0 || (game.doubleOut && after === 1) || (after === 0 && !route);
+    const fewest = after === 0 ? fewestDarts(left, game.doubleOut) : null;
+    const bust = after < 0 || (game.doubleOut && after === 1) || (after === 0 && !fewest);
     let count = 3;
-    if (after === 0 && route) {
+    if (after === 0 && fewest) {
       count = Number(dartsUsed);
-      if (!Number.isInteger(count) || count < route.length || count > 3) throw new Error("A finish from " + left + " takes " + route.length + " to 3 darts.");
+      if (!Number.isInteger(count) || count < fewest || count > 3) throw new Error("A finish from " + left + " takes " + fewest + " to 3 darts.");
     }
     game.undo.push(snapshot(game));
     game.visitInput = { t: "v", score, n: count };
@@ -583,6 +674,12 @@
   }
   const lastPlayerVisit = (game) => lastVisitOf(game, "player");
 
+  // A bust uses up the visit: it counts as three darts in the average however it was entered (on
+  // the board it stops on the dart that bust, a typed total has no darts of its own, darts typed one
+  // by one stop where you stopped). Only finished visits count, so the average doesn't dip while a
+  // visit is half thrown; a game's last visit (the checkout) is finished before it is saved.
+  const visitDartsForAverage = (visit) => (visit.bust ? 3 : Array.isArray(visit.darts) ? visit.darts.length : 0);
+
   function summarize(game) {
     const result = {};
     for (const who of ["player", "bot"]) {
@@ -590,9 +687,10 @@
       const mine = game.visits.filter((visit) => visit.who === who);
       if (game.kind === "x01") {
         const scored = mine.reduce((sum, visit) => sum + visit.scored, 0);
+        const used = mine.reduce((sum, visit) => sum + visitDartsForAverage(visit), 0);
         result[who] = {
           darts,
-          avg: darts ? Math.round(((scored * 3) / darts) * 100) / 100 : 0,
+          avg: used ? Math.round(((scored * 3) / used) * 100) / 100 : 0,
           score: game.remaining[who],
           best: mine.reduce((best, visit) => Math.max(best, visit.scored), 0),
         };
@@ -608,6 +706,79 @@
     return result;
   }
 
+  // --- camera darts in a game against the bot ------------------------------------------------------------
+  // `hold` is kept with the game (the same on every device): { wait, queue }.
+  //   wait   darts of your visit the cameras saw but couldn't read. The darts after them are held
+  //          until you tap those in (or the darts are pulled out), so every dart goes in in the order
+  //          it was thrown: on 40, S20 unread then D10 read must be S20 then D10 (a checkout), not D10
+  //          then S20 (a bust). The station's dart number (e.index) can't do this: it counts only the
+  //          darts it could read.
+  //   queue  camera events that came while it wasn't your turn yet (the bot still throwing, its
+  //          visit not closed), or that are held behind an unread dart: put in, in order, when it is
+  //          your turn (releaseHold) or when the unread darts are tapped in (tappedIn).
+  // An event: { k: "d", x, y, seq, label } a dart read; { k: "u", seq } a dart seen but not read;
+  // { k: "o", seq } the darts pulled out. Each call returns what happened, in order:
+  //   { t: "dart", result, ev }   a dart went in (result as throwDart)
+  //   { t: "miss", result, ev, why }  a miss put in: "unread" (never tapped) or "unseen" (at a take-out)
+  //   { t: "queued", ev } kept for your turn; { t: "held", ev } kept behind an unread dart
+  //   { t: "wait", ev }   an unread dart: tap where it landed
+  //   { t: "late", ev }   after your visit was over (3 darts, a bust or a checkout): not counted
+  //   { t: "none", ev }   nothing to do (a take-out of a visit already over)
+  function cleanHold(hold) {
+    const wait = Math.max(0, Math.min(3, Math.round(Number(hold && hold.wait) || 0)));
+    const queue = (Array.isArray(hold && hold.queue) ? hold.queue : []).filter((q) => q && (q.k === "d" ? Number.isFinite(q.x) && Number.isFinite(q.y) : q.k === "u" || q.k === "o")).slice(-12);
+    return { wait, queue };
+  }
+
+  function cameraEvent(game, hold, ev, mine, missAt) {
+    if (!mine) {
+      // A take-out while the bot throws is the pull-out of your last visit, unless darts are kept.
+      if (ev.k === "o" && !hold.queue.length) return [{ t: "none", ev }];
+      hold.queue.push(ev);
+      return [{ t: "queued", ev }];
+    }
+    const over = !!game.winner || game.visitDone;
+    if (ev.k === "d") {
+      if (over) return [{ t: "late", ev }];
+      if (hold.wait) { hold.queue.push(ev); return [{ t: "held", ev }]; }
+      return [{ t: "dart", result: throwDart(game, { x: ev.x, y: ev.y }), ev }];
+    }
+    if (ev.k === "u") {
+      if (over) return [{ t: "late", ev }];
+      if (hold.wait && hold.queue.length) { hold.queue.push(ev); return [{ t: "held", ev }]; }
+      if (game.visitDarts.length + hold.wait >= 3) return [{ t: "late", ev }];
+      hold.wait += 1;
+      return [{ t: "wait", ev }];
+    }
+    // The darts are pulled out: unread darts never tapped in are misses, then the darts held behind
+    // them go in, then the darts the cameras didn't see at all are misses.
+    if (game.winner || (!game.visitDarts.length && !hold.wait && !hold.queue.length)) { hold.wait = 0; return [{ t: "none", ev }]; }
+    const out = [];
+    const miss = (why) => out.push({ t: "miss", result: throwDart(game, missAt()), ev, why });
+    while (hold.wait > 0) { hold.wait -= 1; if (!game.visitDone && !game.winner) miss("unread"); }
+    const queued = hold.queue.splice(0);
+    for (const q of queued) out.push(...cameraEvent(game, hold, q, true, missAt));
+    hold.wait = 0;
+    while (!game.visitDone && !game.winner && game.visitDarts.length > 0 && game.visitDarts.length < 3) miss("unseen");
+    return out;
+  }
+
+  // Your turn has come (the bot's visit is over): what the cameras saw meanwhile goes in, in order.
+  function releaseHold(game, hold, missAt) {
+    const queued = hold.queue.splice(0);
+    const out = [];
+    for (const q of queued) out.push(...cameraEvent(game, hold, q, true, missAt));
+    return out;
+  }
+
+  // A dart you tapped in (or "Missed the board"): it fills the first unread dart's place, and once
+  // none are left the darts held behind them go in.
+  function tappedIn(game, hold, missAt) {
+    if (!hold.wait) return [];
+    hold.wait -= 1;
+    return hold.wait ? [] : releaseHold(game, hold, missAt);
+  }
+
   // --- what a bot aims at ----------------------------------------------------------------------------
 
   const CHASE = ["T20", "T19", "T18", "T17", "T16", "T15", "S20", "S19", "S18", "S17", "S16", "S15", "S14", "S13", "S12", "S11", "S10", "S9", "S8", "S7", "S6", "S5", "S4", "S3", "S2", "S1", "SB"];
@@ -619,7 +790,12 @@
     const route = checkoutRoute(remaining, dartsLeft, game.doubleOut);
     if (route) return { target: route[0].target, ring: route[0].ring };
 
-    // No way out this visit: score, but leave something that can be finished next time.
+    // No way out this visit, close to a finish: the dart that leaves the best one for next time.
+    if (remaining <= 230) {
+      const setup = setupShot(remaining, dartsLeft, game.doubleOut);
+      if (setup) return { target: setup.dart.target, ring: setup.dart.ring };
+    }
+    // Further out: score, but leave something that can be finished next time.
     const minimum = game.doubleOut ? 2 : 1;
     let best = null;
     for (const label of CHASE) {
@@ -717,6 +893,8 @@
     botThrow,
     botAim,
     checkoutRoute,
+    fewestDarts,
+    setupShot,
     createGame,
     SERIES_TARGETS,
     createSeries,
@@ -740,6 +918,10 @@
     lastVisitOf,
     lastPlayerVisit,
     summarize,
+    cleanHold,
+    cameraEvent,
+    releaseHold,
+    tappedIn,
     heatGrid,
     heatStats,
     cleanDarts,

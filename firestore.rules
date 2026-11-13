@@ -15,10 +15,12 @@ service cloud.firestore {
 
     // A session exactly as the app's Save button writes it. Anyone with a Google account can
     // sign in, so new sessions are checked for shape and range: a session scores at most
-    // 3 darts on each of 21 targets, so 200 is a safe ceiling.
+    // 3 darts on each of 21 targets, so 200 is a safe ceiling. complete: false marks one saved part
+    // way through (kept out of averages and bests); older sessions have no such field.
     function validNewSession(data) {
-      return data.keys().hasOnly(['uid', 'timestamp', 'mode', 'entry', 'total', 'positions', 'durationSec'])
+      return data.keys().hasOnly(['uid', 'timestamp', 'mode', 'entry', 'total', 'positions', 'durationSec', 'complete'])
         && optionalNumber(data, 'durationSec', 0, 86400)
+        && (!data.keys().hasAny(['complete']) || data.complete is bool)
         && data.keys().hasAll(['uid', 'timestamp', 'mode', 'entry', 'total'])
         && validPositions(data)
         && data.uid == request.auth.uid

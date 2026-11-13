@@ -58,6 +58,13 @@
   .track div.cur { border-color: var(--accent); }
   .track div.sh b { color: var(--accent); }
   .flash { min-height: 22px; font-weight: 800; color: var(--accent); margin-top: 10px; }
+  /* All 57 darts in: saved after a few seconds, or now; Undo first to change the last dart. */
+  .done-panel { margin: 4px 0 12px; padding: 14px; border-radius: 14px; border: 1px solid var(--accent); background: rgba(245,158,11,.08); }
+  .done-panel[hidden] { display: none !important; }
+  .done-panel p { margin: 0 0 10px; font-size: 16px; }
+  .done-panel button { min-height: 64px; font-size: 20px; width: 100%; }
+  .sync-note { font-size: 13px; color: var(--muted); margin: 0 0 8px; }
+  .sync-note:empty { display: none; }
 
   /* Results and progress */
   .stats { display: grid; gap: 10px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
@@ -141,6 +148,11 @@
           <div class="pace" id="pace"></div>
         </div>
       </div>
+      <div class="sync-note" id="syncNote"></div>
+      <div class="done-panel" id="donePanel" hidden>
+        <p id="doneText"></p>
+        <button type="button" id="saveNowBtn">Save the round</button>
+      </div>
       <div class="visit" id="visitSlots"></div>
       <div class="keys" id="keys"></div>
       <div class="flash" id="flash"></div>
@@ -188,7 +200,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
-<script src="challenge-engine.js?v=1"></script>
+<script src="challenge-engine.js?v=2"></script>
 <script src="practice-timer.js?v=2"></script>
 <script>
 (function () {
@@ -220,7 +232,13 @@
 
   let user = null;
   let games = [];
-  let round = null; // { darts: [], startedAt: ms, timer }
+  let historyLoaded = false, gamesUnsub = null;
+  // { id, darts: [], startedAt: ms, timer }: the id is the saved round's id, so it can only ever be saved once.
+  let round = null;
+  const newRoundId = () => "jdc" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+  // All 57 darts in: saved after this long (Undo first to change the last dart), or with Save now.
+  const SAVE_AFTER_MS = 10000, SAVE_TIMEOUT_MS = 15000;
+  let doneTimer = null, doneAt = 0, doneTick = null;
   // The round's timer (practice-timer.js): Pause/Resume above the round, and it pauses itself after
   // 3 minutes with no throws. Its time is the round's length.
   const T = window.PracticeTimer;
@@ -239,7 +257,9 @@
 
   function startRound(resume) {
     const now = Date.now();
+    cancelDone();
     round = resume || { darts: [], startedAt: now };
+    if (!round.id) round.id = newRoundId();
     // A resumed round's time away counts like any break; a round saved before the timer starts one now.
     round.timer = T.restore(round.timer, now) || T.start(now);
     store.set(ROUND_KEY, round);
@@ -248,14 +268,15 @@
     renderPlay();
   }
 
-  function bestRunning() {
+  function bestRound() {
     const best = games.reduce((a, g) => (!a || g.total > a.total ? g : a), null);
-    return best && Array.isArray(best.darts) ? C.runningTotals(best.darts) : null;
+    return best && Array.isArray(best.darts) ? best.darts : null;
   }
 
   function renderPlay() {
     const pos = C.position(round.darts);
-    if (!pos) return finishRound();
+    if (!pos) return renderDone();
+    hideDone();
     const { step, dartInStep, index } = pos;
     const s = C.summarize(round.darts);
     $("partLabel").textContent = `Part ${step.part} of 3 · ${C.PART_NAMES[step.part]}`;
@@ -263,16 +284,14 @@
     $("dartLabel").textContent = step.kind === "double" ? `Dart ${round.darts.length + 1} of ${C.TOTAL_DARTS} · one dart` : `Dart ${dartInStep + 1} of 3 · dart ${round.darts.length + 1} of ${C.TOTAL_DARTS}`;
     $("runningScore").textContent = fmt(s.total);
 
-    // Against your best round at the same point.
-    const best = bestRunning();
-    const doneSteps = C.runningTotals(round.darts).length;
+    // Against your best round at the same point: at the end of each visit, the same visits on both sides.
+    const p = C.pace(round.darts, bestRound());
     const pace = $("pace");
     pace.className = "pace";
-    if (best && doneSteps) {
-      const diff = s.total - best[doneSteps - 1];
-      pace.textContent = diff === 0 ? "level with your best" : `${diff > 0 ? "+" : ""}${fmt(diff)} vs your best`;
-      pace.classList.add(diff >= 0 ? "up" : "down");
-    } else pace.textContent = "";
+    if (p) {
+      pace.textContent = p.diff === 0 ? "level with your best" : `${p.diff > 0 ? "+" : ""}${fmt(p.diff)} vs your best`;
+      pace.classList.add(p.diff >= 0 ? "up" : "down");
+    } else pace.textContent = historyLoaded ? "" : "Loading your rounds…";
 
     // This visit's darts so far.
     const visit = C.stepsOf(round.darts)[index].darts;
@@ -290,6 +309,10 @@
       : [0, 1, 2, 3].map((v) => `<button type="button" class="${v ? "" : "miss"}" data-v="${v}">${v ? `${RING[v]} ${step.target}` : "Miss"}${v ? `<small>+${step.target * v}</small>` : ""}</button>`).join("");
 
     $("undoBtn").disabled = !round.darts.length;
+    renderTrack(index);
+  }
+
+  function renderTrack(index) {
     $("track").innerHTML = C.stepsOf(round.darts).map((x, i) => {
       const cls = [i === index ? "cur" : "", C.isShanghai(x.step, x.darts) ? "sh" : ""].join(" ");
       const label = x.step.kind === "double" ? C.doubleLabel(x.step.target) : `S${x.step.target}`;
@@ -319,6 +342,7 @@
 
   function undo() {
     if (!round || !round.darts.length) return;
+    cancelDone();
     round.darts = round.darts.slice(0, -1);
     T.activity(round.timer, Date.now());
     store.set(ROUND_KEY, round);
@@ -327,24 +351,107 @@
     renderPlay();
   }
 
-  async function saveRecord(rec) {
+  // ---- all 57 darts in -----------------------------------------------------------------------
+  // The round isn't saved the moment the last dart goes in: there are a few seconds to Undo a
+  // mis-tapped last dart (or Save now). Closing the page meanwhile keeps the round on this device,
+  // offered for saving when the page opens again.
+  function renderDone() {
+    const s = C.summarize(round.darts);
+    $("partLabel").textContent = "All 57 darts in";
+    $("targetLabel").textContent = "Round complete";
+    $("dartLabel").textContent = "";
+    $("runningScore").textContent = fmt(s.total);
+    $("pace").textContent = "";
+    $("visitSlots").innerHTML = "";
+    $("keys").innerHTML = "";
+    $("undoBtn").disabled = false;
+    renderTrack(-1);
+    $("donePanel").hidden = false;
+    if (!doneTimer) {
+      doneAt = Date.now() + SAVE_AFTER_MS;
+      doneTimer = setTimeout(() => { doneTimer = null; finishRound(); }, SAVE_AFTER_MS);
+      clearInterval(doneTick);
+      doneTick = setInterval(showDoneText, 500);
+    }
+    showDoneText();
+  }
+  function showDoneText() {
+    if (!round) return;
+    const left = Math.max(0, Math.ceil((doneAt - Date.now()) / 1000));
+    $("doneText").textContent = `${fmt(C.summarize(round.darts).total)} out of ${fmt(C.MAX_SCORE)}. Saving in ${left} s. Undo to change the last dart.`;
+  }
+  function hideDone() { $("donePanel").hidden = true; }
+  function cancelDone() {
+    if (doneTimer) clearTimeout(doneTimer);
+    clearInterval(doneTick);
+    doneTimer = null; doneTick = null;
+    hideDone();
+  }
+
+  // ---- saving --------------------------------------------------------------------------------
+  // Each round saves as challengeGames/{its id}, so a retry can never save it twice. It is kept on
+  // this device (a list, so a second round not saved never replaces the first) from the moment it is
+  // finished until the save is confirmed: offline, or with the page closed before then, it's saved
+  // the next time the page opens or the connection comes back.
+  function unsavedList() {
+    const raw = store.get(UNSAVED_KEY);
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw.filter((u) => u && u.rec && u.rec.uid);
+    return raw.uid ? [{ id: null, rec: raw }] : []; // a page from before kept one record
+  }
+  function keepUnsaved(id, rec) {
+    store.set(UNSAVED_KEY, unsavedList().filter((u) => !(id && u.id === id)).concat([{ id, rec }]).slice(-20));
+  }
+  function dropUnsaved(id, rec) {
+    const left = unsavedList().filter((u) => (id ? u.id !== id : !(u.rec.timestamp === rec.timestamp && u.rec.total === rec.total)));
+    store.set(UNSAVED_KEY, left.length ? left : null);
+  }
+
+  async function saveRecord(rec, id) {
+    const ref = id ? db.collection(COLL).doc(id) : db.collection(COLL).doc();
+    keepUnsaved(id || ref.id, rec);
     try {
-      const ref = await db.collection(COLL).add(rec);
-      games.push({ id: ref.id, ...rec });
-      store.set(UNSAVED_KEY, null);
+      const write = ref.set(rec).catch(async (error) => {
+        // Already there (a saved round can't be changed, so a second save is refused): that's fine.
+        const there = await ref.get().catch(() => null);
+        if (!(there && there.exists)) throw error;
+      });
+      await Promise.race([write, new Promise((_, reject) => setTimeout(() => reject(new Error("save-timeout")), SAVE_TIMEOUT_MS))]);
+      dropUnsaved(id || ref.id, rec);
+      if (!games.some((g) => g.id === ref.id)) games.push({ id: ref.id, ...rec });
       return true;
     } catch (err) {
-      console.error(err);
-      store.set(UNSAVED_KEY, rec);
+      if (err && err.message !== "save-timeout") console.error(err);
       return false;
     }
   }
 
+  // Rounds kept on this device that aren't saved yet: saved now. (Ones a page from before kept, with no
+  // id, are skipped if a round with the same time and score is already there.)
+  let retrying = false;
+  async function retryUnsaved() {
+    if (!user || retrying) return;
+    retrying = true;
+    try {
+      for (const u of unsavedList()) {
+        if (u.rec.uid !== user.uid) continue;
+        if (!u.id && games.some((g) => g.timestamp === u.rec.timestamp && g.total === u.rec.total)) { dropUnsaved(null, u.rec); continue; }
+        await saveRecord(u.rec, u.id || null);
+      }
+    } finally { retrying = false; }
+    renderProgress();
+  }
+  window.addEventListener("online", () => retryUnsaved());
+
   async function finishRound() {
+    if (!round) return;
+    cancelDone();
     const prevBest = games.length ? Math.max(...games.map((g) => g.total)) : null;
     const prevAvg = C.progress(games).avgLast10;
     // Saved at the time the round began, with the time the timer counted.
     const rec = C.record(user.uid, round.darts, { timestamp: stamp(new Date(round.timer.startedAt)), durationSec: T.seconds(round.timer, Date.now()) });
+    const id = round.id || newRoundId();
+    keepUnsaved(id, rec); // kept before anything else: closing the page now loses nothing
     round = null;
     timerView.refresh();
     store.set(ROUND_KEY, null);
@@ -360,16 +467,19 @@
       ["Number hit", `${fmt(s.hitRate * 100)}%`, "Shanghai darts on the number"],
       ["Time", rec.durationSec != null ? `${Math.floor(rec.durationSec / 60)}:${String(rec.durationSec % 60).padStart(2, "0")}` : "-", ""],
     ].map(([k, v, d]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div><div class="d muted">${d}</div></div>`).join("");
-    let note = prevBest == null ? "Your first round - this is the score to beat." : rec.total > prevBest ? `New personal best! Up ${fmt(rec.total - prevBest)} on your old best of ${fmt(prevBest)}.` : `Your best is ${fmt(prevBest)}.`;
-    if (prevAvg != null) note += ` Your recent average was ${fmt(prevAvg)}.`;
+    let note = !historyLoaded ? "Your earlier rounds haven't loaded, so there's nothing to compare with yet."
+      : prevBest == null ? "Your first round - this is the score to beat." : rec.total > prevBest ? `New personal best! Up ${fmt(rec.total - prevBest)} on your old best of ${fmt(prevBest)}.` : `Your best is ${fmt(prevBest)}.`;
+    if (historyLoaded && prevAvg != null) note += ` Your recent average was ${fmt(prevAvg)}.`;
     $("resultNote").textContent = note + " Saving…";
-    const ok = await saveRecord(rec);
-    $("resultNote").textContent = note + (ok ? " Saved." : " Couldn't save it right now - it's kept on this device and saved next time you open the page.");
+    const ok = await saveRecord(rec, id);
+    $("resultNote").textContent = note + (ok ? " Saved." : " Not saved yet (you may be offline): it's kept on this device and saved as soon as it can be.");
     renderProgress();
   }
 
   function quit() {
     if (!round) return;
+    if (!C.position(round.darts)) { finishRound(); return; } // all 57 in: that's a finished round, saved
+    cancelDone();
     if (round.darts.length && !confirm("Quit this round? Unfinished rounds aren't saved.")) return;
     round = null;
     store.set(ROUND_KEY, null);
@@ -460,21 +570,36 @@
 
   function refreshStart() {
     const saved = store.get(ROUND_KEY);
-    const has = saved && Array.isArray(saved.darts) && saved.darts.length && C.position(saved.darts);
+    const has = saved && Array.isArray(saved.darts) && saved.darts.length > 0;
+    const finished = has && !C.position(saved.darts);
     $("resumeBtn").classList.toggle("hidden", !has);
     $("discardBtn").classList.toggle("hidden", !has);
     $("resumeText").classList.toggle("hidden", !has);
-    if (has) $("resumeText").textContent = `You have a round in progress: ${saved.darts.length} of ${C.TOTAL_DARTS} darts, ${fmt(C.summarize(saved.darts).total)} so far.`;
+    $("resumeBtn").textContent = finished ? "Save the finished round" : "Resume round";
+    if (finished) $("resumeText").textContent = `You finished a round that wasn't saved: ${fmt(C.summarize(saved.darts).total)} out of ${fmt(C.MAX_SCORE)}.`;
+    else if (has) $("resumeText").textContent = `You have a round in progress: ${saved.darts.length} of ${C.TOTAL_DARTS} darts, ${fmt(C.summarize(saved.darts).total)} so far.`;
     $("startBtn").textContent = has ? "Start a new round" : "Start a round";
   }
 
-  async function load() {
-    const snap = await db.collection(COLL).where("uid", "==", user.uid).get();
-    games = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-    // A round that finished while offline is saved now.
-    const unsaved = store.get(UNSAVED_KEY);
-    if (unsaved && unsaved.uid === user.uid && !games.some((g) => g.timestamp === unsaved.timestamp && g.total === unsaved.total)) await saveRecord(unsaved);
-    renderProgress();
+  // Your rounds, kept up to date (a round finished on another device shows here too). If they can't
+  // be read, the page says so instead of acting as if there were none.
+  function load() {
+    if (gamesUnsub) gamesUnsub();
+    historyLoaded = false;
+    gamesUnsub = db.collection(COLL).where("uid", "==", user.uid).onSnapshot((snap) => {
+      if (snap.metadata && snap.metadata.fromCache && !snap.docs.length && !historyLoaded) return; // nothing known yet
+      games = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const first = !historyLoaded;
+      historyLoaded = true;
+      $("noGames").textContent = "No rounds yet. Your scores, averages and weakest doubles show here after your first round.";
+      renderProgress();
+      if (round && C.position(round.darts)) renderPlay();
+      if (first) retryUnsaved(); // rounds finished while offline are saved now
+    }, (err) => {
+      console.error(err);
+      $("noGames").classList.remove("hidden");
+      $("noGames").textContent = `Couldn't load your rounds: ${err.message}. Reload the page to try again.`;
+    });
   }
 
   // ---- wiring ------------------------------------------------------------------------------
@@ -489,7 +614,31 @@
     if (store.get(ROUND_KEY) && !confirm("Start over? The round in progress will be discarded.")) return;
     startRound(null);
   });
-  $("resumeBtn").addEventListener("click", () => startRound(store.get(ROUND_KEY)));
+  $("resumeBtn").addEventListener("click", () => {
+    const saved = store.get(ROUND_KEY);
+    startRound(saved);
+    if (saved && Array.isArray(saved.darts) && !C.position(saved.darts)) finishRound(); // a finished round: saved now
+  });
+  $("saveNowBtn").addEventListener("click", () => finishRound());
+  // The same round open in another tab: the latest change there shows here, so neither tab writes
+  // over the other's darts. (Across devices: a later phase keeps the round in your account.)
+  window.addEventListener("storage", (e) => {
+    if (e.key !== ROUND_KEY) return;
+    const other = store.get(ROUND_KEY);
+    if (round && other && other.id === round.id) {
+      cancelDone();
+      round = other;
+      round.timer = T.restore(round.timer, Date.now()) || T.start(Date.now());
+      $("syncNote").textContent = "Updated from this round in another tab.";
+      renderPlay();
+    } else if (round && !other) {
+      cancelDone();
+      round = null;
+      showCard("start");
+      refreshStart();
+      $("syncNote").textContent = "";
+    } else if (!round) refreshStart();
+  });
   $("discardBtn").addEventListener("click", () => { store.set(ROUND_KEY, null); refreshStart(); });
   $("againBtn").addEventListener("click", () => startRound(null));
   $("history").addEventListener("click", (e) => {
@@ -512,7 +661,7 @@
     if (!u) return;
     $("userName").textContent = u.displayName || u.email || "";
     refreshStart();
-    load().catch((err) => { console.error(err); $("noGames").textContent = `Couldn't load your rounds: ${err.message}`; });
+    load();
   });
 })();
 </script>

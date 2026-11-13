@@ -71,3 +71,16 @@ test("progress: best, averages, and which doubles let you down", () => {
   assert.deepEqual(p.weakest.map((d) => d.label), ["D11", "D12", "D13"]);
   assert.equal(C.progress([]).best, null);
 });
+
+test("bug 3: pace compares whole visits only, never the darts of the visit you are in", () => {
+
+  // Your best: 10 scored 30 (three singles), 11 scored 33.
+  const best = [1, 1, 1, 1, 1, 1];
+  // Now: 10 scored 30 too, then one treble at 11 (33 so far in the visit).
+  const now = [1, 1, 1, 3];
+  const p = C.pace(now, best);
+  assert.deepEqual(p, { diff: 0, steps: 1, total: 30, other: 30 }, "level after 10: the 11 visit isn't finished");
+  assert.equal(C.pace([1, 1], best), null, "nothing to compare before the first visit is done");
+  assert.equal(C.pace(now, null), null);
+  assert.equal(C.pace([1, 1, 1, 3, 3, 3], best).diff, 99 - 33);
+});

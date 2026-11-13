@@ -105,6 +105,18 @@
     return stepsOf(darts).filter((s) => s.done).map((s) => (sum += s.score));
   }
 
+  // How you stand against another round (your best) at the same point: compared at the end of each
+  // visit only, both totals through the same completed visits, so the darts of the visit you are in
+  // don't count against the other round's total from before that number. Returns { diff, steps,
+  // total, other } or null before the first visit is done (or with nothing to compare).
+  function pace(darts, otherDarts) {
+    if (!Array.isArray(otherDarts)) return null;
+    const mine = runningTotals(darts), theirs = runningTotals(otherDarts);
+    const steps = Math.min(mine.length, theirs.length);
+    if (!steps) return null;
+    return { diff: mine[steps - 1] - theirs[steps - 1], steps, total: mine[steps - 1], other: theirs[steps - 1] };
+  }
+
   const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 
   // Progress over saved games (each { timestamp, total, part1, part2, part3, darts }), oldest first.
@@ -160,6 +172,6 @@
   return {
     STEPS, TOTAL_DARTS, MAX_SCORE, SHANGHAI_BONUS, DOUBLE_POINTS, BULL, PART_NAMES,
     stepScore, stepMax, isShanghai, stepLabel, doubleLabel, stepsOf, position, addDart, validDart,
-    summarize, runningTotals, progress, record,
+    summarize, runningTotals, pace, progress, record,
   };
 });

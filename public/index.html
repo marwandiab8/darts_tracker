@@ -48,12 +48,7 @@
   
   .pattern-input { width: 180px !important; height: 64px !important; font-size: clamp(22px, 3.8vw, 34px) !important; font-weight: 900 !important; text-transform: uppercase; letter-spacing: 4px; text-align: center; line-height: 1; padding: 10px 12px !important; border-radius: 14px; margin: 0 auto; display: block; box-sizing: border-box; }
 .row-score { font-size: clamp(30px, 5.0vw, 58px) !important; font-weight: 900 !important; display: block; text-align: center; }
-    th, td { padding-top: 14px; padding-bottom: 14px; }
-  }
-.row-score { font-size: clamp(26px, 5.4vw, 48px) !important; }
-  }
-    th, td { padding-top: 14px; padding-bottom: 14px; }
-  }
+  th, td { padding-top: 14px; padding-bottom: 14px; }
 .dt-box { background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 12px; padding: 10px; text-align: center; flex: 1; }
   .chart-container { position: relative; height: 180px; width: 100%; margin: 10px 0; }
 
@@ -385,6 +380,17 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
   .cam-note a { color: var(--accent); font-weight: 700; }
   #userName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   @media (max-width: 1024px) { .dt-grid-main { grid-template-columns: minmax(0, 1fr); } }
+  /* Saving: what Save did, and the choice for a session not finished (never a dialog). */
+  .save-panel[hidden], .save-note:empty { display: none !important; }
+  .save-panel { margin: -6px 0 14px; padding: 12px; border-radius: 14px; border: 1px solid rgba(245,158,11,.55); background: rgba(245,158,11,.08); }
+  .save-panel p { margin: 0 0 10px; font-size: 15px; line-height: 1.35; }
+  .save-panel .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+  .save-panel .btns button { flex: 1 1 140px; padding: 12px; }
+  .save-note { margin: -6px 0 14px; font-size: 14px; font-weight: 700; color: var(--good); }
+  .save-note.warn { color: var(--accent); }
+  .loaded-note { margin: -6px 0 14px; font-size: 13px; color: var(--muted); }
+  .loaded-note:empty { display: none; }
+  .tag-partial { font-size: 11px; font-weight: 800; padding: 2px 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); margin-left: 6px; }
   @media (max-width: 560px) {
     .dt-header-actions { width: 100%; }
     /* Tables kept a 400px minimum, which pushed the stats and history tables (overflow: visible)
@@ -445,6 +451,16 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
           <div style="display:flex; gap:10px; margin-bottom:15px;">
             <button id="saveBtn" class="primary">Save Session</button>
           </div>
+          <div id="savePanel" class="save-panel" hidden>
+            <p id="savePanelText"></p>
+            <div class="btns">
+              <button type="button" data-save="partial">Save as partial</button>
+              <button type="button" class="secondary" data-save="full">Count the rest as misses</button>
+              <button type="button" class="secondary" data-save="cancel">Keep playing</button>
+            </div>
+          </div>
+          <div id="saveNote" class="save-note" aria-live="polite"></div>
+          <div id="loadedNote" class="loaded-note"></div>
 
           <!-- NEXT TARGET BANNER -->
     <div id="nextTargetBanner" class="next-target-banner" style="display:none;">
@@ -538,6 +554,7 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="practice-timer.js?v=2"></script>
 <script src="live-sync.js?v=1"></script>
+<script src="tracker-engine.js?v=1"></script>
 <script src="board-vision.js?v=9"></script>
 <script src="board-camera.js?v=11"></script>
 
@@ -554,8 +571,9 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
 
   if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
   const auth = firebase.auth(), db = firebase.firestore();
-  const TARGETS = [...Array.from({length:20}, (_,i)=>String(20-i)), "BULL"];
-  const SCORE_VALS = {"-":0,"S":1,"D":2,"T":3,"B":1}; // Added B for Bullseye flexibility
+  // The game's rules: tracker-engine.js (tested in tests/tracker-engine.test.cjs).
+  const E = window.TrackerEngine;
+  const TARGETS = E.TARGETS;
 
   // The practice timer (practice-timer.js): it starts with the session's first dart, Pause/Resume next to
   // the total, and it pauses itself after 3 minutes with no throws. A session is saved with its time,
@@ -584,17 +602,8 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
   let entryMode = "both";
 function normMode(m) { return (m === "single") ? "single" : "standard"; }
 
-  function rowScoreForMode(arr, mode) {
-    const m = normMode(mode);
-    const a = arr || ["-","-","-"];
-    if (m === "single") return a.reduce((acc, v) => acc + (v && v !== "-" ? 1 : 0), 0);
-    return a.reduce((acc, v) => acc + (SCORE_VALS[v] || 0), 0);
-  }
-
-  function entryToHitsValue(arr) {
-    const a = arr || ["-","-","-"];
-    return a.reduce((acc, v) => acc + (v && v !== "-" ? 1 : 0), 0);
-  }
+  function rowScoreForMode(arr, mode) { return E.rowScore(arr, mode); }
+  function entryToHitsValue(arr) { return E.hitsOf(arr); }
 
   function applyScoreModeUI(mode, opts={}) {
     scoreMode = normMode(mode);
@@ -628,38 +637,15 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
   // canvas size and on any device. Positions run parallel to the entry: currentPos[target][slot]
   // is the dart's position, or null for a dart that was typed in (no position) or an empty slot.
   let currentPos = {};
-
-  function cleanPositions(positions, entry) {
-    const clean = {};
-    if (!positions || typeof positions !== "object") return clean;
-    TARGETS.forEach(t => {
-      const slots = Array.isArray(positions[t]) ? positions[t].slice(0, 3) : [];
-      const darts = (entry && Array.isArray(entry[t])) ? entry[t] : [];
-      const row = [0, 1, 2].map(i => {
-        const p = slots[i];
-        if (!p || typeof p !== "object") return null;
-        const x = Number(p.x), y = Number(p.y);
-        if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-        if (Math.hypot(x, y) > 1.0001) return null;         // outside the board
-        if (!darts[i] || darts[i] === "-") return null;     // no dart in this slot any more
-        return { x: Math.round(x * 1000) / 1000, y: Math.round(y * 1000) / 1000 };
-      });
-      if (row.some(Boolean)) clean[t] = row;
-    });
-    return clean;
-  }
+  const cleanPositions = E.cleanPositions;
 
   function persistDraft() {
-    localStorage.setItem("dt_draft", JSON.stringify(currentEntry));
-    localStorage.setItem("dt_draftPos", JSON.stringify(cleanPositions(currentPos, currentEntry)));
-    localStorage.setItem("dt_draftThrown", JSON.stringify(cleanThrown(currentThrown)));
-  }
-
-  // When a slot is retyped, its old position no longer describes that dart, so it is dropped.
-  // Slots that keep the same value keep their position.
-  function realignPositions(target, before, after) {
-    const old = currentPos[target] || [null, null, null];
-    currentPos[target] = after.map((value, i) => (value !== "-" && value === (before || [])[i]) ? (old[i] || null) : null);
+    try {
+      localStorage.setItem("dt_draft", JSON.stringify(currentEntry));
+      localStorage.setItem("dt_draftPos", JSON.stringify(cleanPositions(currentPos, currentEntry)));
+      localStorage.setItem("dt_draftThrown", JSON.stringify(cleanThrown(currentThrown)));
+      localStorage.setItem("dt_draftMeta", JSON.stringify({ sid: sessionId, loaded: loadedSession, camVisit }));
+    } catch (_) { /* private mode */ }
   }
 
   function positionsForSave() {
@@ -679,13 +665,16 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
   // slot is a hit or "-"), so the darts thrown at each number are counted here; a typed row counts
   // as its hits.
   let currentThrown = (() => { try { return JSON.parse(localStorage.getItem("dt_draftThrown") || "{}") || {}; } catch (_) { return {}; } })();
-  function dartsThrownAt(t) { return Math.min(3, Math.max(Number(currentThrown[t]) || 0, entryToHitsValue(currentEntry[t]))); }
-  function aimTarget() { return TARGETS.find(t => dartsThrownAt(t) < 3) || null; }
-  function cleanThrown(thrown) {
-    const clean = {};
-    TARGETS.forEach(t => { const n = Math.round(Number((thrown || {})[t]) || 0); if (n > 0) clean[t] = Math.min(3, n); });
-    return clean;
-  }
+  // The cameras' visit in progress, this session's id (Save writes sessions/{id}, so it can never
+  // save twice), and the saved session loaded to look at or correct (Save updates it). See tracker-engine.js.
+  const __meta = (() => { try { return JSON.parse(localStorage.getItem("dt_draftMeta") || "{}") || {}; } catch (_) { return {}; } })();
+  let camVisit = E.cleanVisit(__meta.camVisit);
+  let sessionId = typeof __meta.sid === "string" ? __meta.sid : null;
+  let loadedSession = __meta.loaded && typeof __meta.loaded.id === "string" ? __meta.loaded : null;
+  const progressNow = () => E.progress({ entry: currentEntry, thrown: currentThrown });
+  function dartsThrownAt(t) { return E.dartsAt({ entry: currentEntry, thrown: currentThrown }, t); }
+  function aimTarget() { return E.aimOf({ entry: currentEntry, thrown: currentThrown }); }
+  const cleanThrown = E.cleanThrown;
 
   // The big "next target" line, and the row in the table.
   function updateNextTarget() {
@@ -709,12 +698,16 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
 
   // ---- The session being entered, the same on every device (live-sync.js) ----
   // liveSessions/{uid} holds it: what is entered, where the darts landed, the darts thrown at each
-  // number, Undo, the last dart's dot, the practice timer, the date and time. Every device signed in
-  // follows each change, and any of them can make one; a change made at the same moment as another
-  // device's doesn't get in, and that device takes the other's. A camera dart carries the station's
-  // count (seq), so it goes in once however many devices saw it (trackerCamSeq), and a camera dart put
-  // in here whose version didn't get in goes in again on top of the one that did.
-  // (It used to be liveDrafts/{uid}, written over by whichever device wrote last.)
+  // number, Undo, the last dart's dot, the practice timer, the date and time, the game mode, the
+  // cameras' visit, the session's id. Every device signed in follows each change, and any of them can
+  // make one. (It used to be liveDrafts/{uid}, written over by whichever device wrote last.)
+  //
+  // Every change made here is an "op" (a tap, a camera event, a typed row, Undo, Clear, Load, the
+  // mode, the timer, the date), applied at once and kept until the version carrying it is in. When
+  // another device's version got in first, the ops it doesn't have are applied again on top of it
+  // and written again, so a tap or an Undo is never lost. Nothing is written before the shared
+  // session has arrived: a change made meanwhile goes on top of it, never in place of it. A camera
+  // event carries the station's count (seq), so it goes in once however many devices saw it.
   const deviceId = (localStorage.getItem("dt_deviceId") || (crypto.randomUUID ? crypto.randomUUID() : ("dev_" + Math.random().toString(16).slice(2))));
   localStorage.setItem("dt_deviceId", deviceId);
   const LS = window.LiveSync;
@@ -722,14 +715,11 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
   let liveSession = null;
   let draftWriteTimer = null;
   let trackerCamSeq = Number(localStorage.getItem("dt_draftCamSeq")) || 0;
-  let trackerCamPending = [];
+  let pendingOps = []; // { op, vid: the version that carries it (null: not written yet), refused, tries }
   function saveCamSeq() { try { localStorage.setItem("dt_draftCamSeq", String(trackerCamSeq)); } catch (_) { /* private mode */ } }
 
   function deepClone(obj) { return JSON.parse(JSON.stringify(obj || {})); }
-
-  function entryEquals(a,b) {
-    return JSON.stringify(a||{}) === JSON.stringify(b||{});
-  }
+  const newSid = () => "t" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
 
   function entryToInputValue(arr) {
     return (arr || ["-","-","-"]).join("").replace(/-/g, "");
@@ -746,7 +736,9 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
       if (input.classList.contains("hits-input")) {
         const a = (entry[target] || ["-","-","-"]);
         const hits = a.filter(v => v && v !== "-").length;
-        if (String(input.value) !== String(hits)) input.value = hits;
+        // A row with no darts thrown at it yet stays empty (0 would mean three misses).
+        const shown = (hits || dartsThrownAt(target) >= 3) ? String(hits) : "";
+        if (String(input.value) !== shown) input.value = shown;
       } else {
         const val = entryToInputValue(entry[target]);
         if (input.value !== val) input.value = val;
@@ -766,29 +758,97 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
       v: 1, mode: scoreMode, entry: currentEntry, positions: cleanPositions(currentPos, currentEntry), thrown: cleanThrown(currentThrown),
       undo: JSON.parse(JSON.stringify(tapStack.slice(-30))), last: lastTap || null, timer: sessionTimer || null, camSeq: trackerCamSeq,
       fixes: JSON.parse(JSON.stringify(camFixes)),
+      camVisit: camVisit || null, sid: sessionId || null, loaded: loadedSession || null,
       total: parseInt(document.getElementById("sessionTotal").textContent || "0", 10),
       sessionDate: document.getElementById("sessionDate").value || "",
       sessionTime: document.getElementById("sessionTime").value || ""
     };
   }
 
+  // ---- The session as the engine sees it, and back ----
+  function game() {
+    return E.normalize({ entry: currentEntry, positions: currentPos, thrown: currentThrown, undo: tapStack, last: lastTap,
+      camSeq: trackerCamSeq, camVisit, sid: sessionId, loaded: loadedSession });
+  }
+  function setGame(g) {
+    currentEntry = g.entry; currentPos = g.positions; currentThrown = g.thrown; tapStack = g.undo; lastTap = g.last;
+    if (g.camSeq !== trackerCamSeq) { trackerCamSeq = g.camSeq; saveCamSeq(); }
+    camVisit = g.camVisit; sessionId = g.sid; loadedSession = g.loaded;
+  }
+  const DART_OPS = { tap: 1, cam: 1, row: 1, undo: 1 };
+
+  // One change, applied to the session here (again, when `replay`: on top of another device's
+  // version). Returns what the engine said (the dart, the step undone...).
+  function applyOp(op, replay) {
+    const g = game();
+    let out = null;
+    switch (op.k) {
+      case "tap": E.ensureSid(g, newSid); out = E.addDart(g, op.hit); break;
+      case "cam": E.ensureSid(g, newSid); out = E.cameraDart(g, op.hit, op.cam); break;
+      case "unread": out = E.cameraUnreadable(g, { seq: op.seq }); break;
+      case "out": out = E.cameraTakeout(g, { seq: op.seq }); break;
+      case "row": E.ensureSid(g, newSid); out = E.typeRow(g, op.target, op.arr, op.filled); break;
+      case "undo": out = E.undo(g); break;
+      case "sid": if (!g.sid && !g.loaded) g.sid = op.sid; out = g.sid; break;
+      case "clear": E.clear(g); break;
+      case "load": E.load(g, op.saved); break;
+    }
+    setGame(g);
+    if (DART_OPS[op.k] && out) practiceActivity();
+    if (op.k === "clear" || op.k === "load") { sessionTimer = null; saveSessionTimer(); camFixes = []; }
+    if (op.k === "load") {
+      if (op.saved.mode && normMode(op.saved.mode) !== scoreMode) applyScoreModeUI(op.saved.mode);
+      if (loadedSession) {
+        document.getElementById("sessionDate").value = loadedSession.date || "";
+        document.getElementById("sessionTime").value = loadedSession.time || "";
+      }
+    }
+    if (op.k === "mode" && normMode(op.mode) !== scoreMode) applyScoreModeUI(op.mode);
+    if (op.k === "timer") { sessionTimer = op.timer ? deepClone(op.timer) : null; saveSessionTimer(); }
+    if (op.k === "when" && replay) {
+      if (op.date) document.getElementById("sessionDate").value = op.date;
+      if (op.time) document.getElementById("sessionTime").value = op.time;
+    }
+    return out;
+  }
+
+  function afterChange() {
+    persistDraft();
+    updateUIFromEntry(currentEntry, { skipFocused: true });
+    drawBoard();
+    showLoadedNote();
+    scheduleDraftWrite();
+  }
+
+  // A change made on this device: applied now, shared with the others, kept until it's in.
+  function runOp(op) {
+    const out = applyOp(op, false);
+    pendingOps.push({ op, vid: null, refused: false, tries: 0 });
+    if (pendingOps.length > 80) pendingOps = pendingOps.slice(-80);
+    afterChange();
+    return out;
+  }
+
   function scheduleDraftWrite() {
     if (!auth.currentUser || !liveSession) return;
     if (draftWriteTimer) clearTimeout(draftWriteTimer);
-    draftWriteTimer = setTimeout(() => {
-      draftWriteTimer = null;
-      if (!liveSession) return;
-      setSyncText("Syncing...");
-      liveSession.write("play", draftState());
-    }, 80);
+    draftWriteTimer = setTimeout(writeDraftNow, 80);
+  }
+  function writeDraftNow() {
+    draftWriteTimer = null;
+    // Not before the shared session has arrived: written then, on top of it (see the first onRemote).
+    if (!liveSession || !liveSession.loaded) return;
+    const v = liveSession.write("play", draftState());
+    if (!v) return;
+    pendingOps.forEach(p => { if (!p.vid || p.refused) { p.vid = v.vid; p.refused = false; } });
+    setSyncText("Syncing...");
   }
 
-  // A camera dart put in here: kept until its version is in, in case it has to go in again.
-  function noteTrackerCamera(e) {
-    if (!e.seq) return;
-    trackerCamSeq = e.seq; saveCamSeq();
-    if (!e.seenAt) e.seenAt = Date.now();
-    trackerCamPending = trackerCamPending.concat([e]).slice(-20);
+  // This device's changes that the session as it is now doesn't have: applied again on top of it.
+  function replayPending(onlyRefused) {
+    const again = pendingOps.filter(p => p.refused || (!onlyRefused && !p.vid));
+    again.forEach(p => applyOp(p.op, true));
+    return again.length;
   }
 
   // The session as another device left it (or the latest version, when this device's change didn't get in).
@@ -805,19 +865,22 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
     if (data.timer !== undefined) { sessionTimer = data.timer || null; saveSessionTimer(); }
     if (data.camSeq !== undefined) { trackerCamSeq = Number(data.camSeq) || 0; saveCamSeq(); }
     if (data.fixes !== undefined) camFixes = Array.isArray(data.fixes) ? data.fixes.slice(-6) : [];
-    persistDraft();
-    updateUIFromEntry(currentEntry, { skipFocused: true });
-    drawBoard();
+    // Written by a page from before these were shared: none.
+    camVisit = E.cleanVisit(data.camVisit);
+    sessionId = typeof data.sid === "string" && data.sid ? data.sid : null;
+    loadedSession = data.loaded && typeof data.loaded.id === "string" ? data.loaded : null;
     // Keep date/time in sync (also skip if user is actively editing those fields)
     const dEl = document.getElementById("sessionDate");
     const tEl = document.getElementById("sessionTime");
     if (document.activeElement !== dEl && data.sessionDate && dEl.value !== data.sessionDate) dEl.value = data.sessionDate;
     if (document.activeElement !== tEl && data.sessionTime && tEl.value !== data.sessionTime) tEl.value = data.sessionTime;
+    const again = replayPending(false);
+    persistDraft();
+    updateUIFromEntry(currentEntry, { skipFocused: true });
+    drawBoard();
+    showLoadedNote();
     setSyncText("Connected", true);
-    // Camera darts put in here that the version that got in doesn't have go in again, on top of it.
-    const redo = trackerCamPending.filter(e => e.seq > trackerCamSeq && Date.now() - e.seenAt < 15000 && (e.tries = (e.tries || 0) + 1) <= 2);
-    trackerCamPending = [];
-    redo.forEach(e => onTrackerCamera(e));
+    if (again) scheduleDraftWrite();
   }
 
   function startLiveDraft(uid) {
@@ -827,14 +890,27 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
     liveSession = LS.createLiveDoc({
       ref: db.collection("liveSessions").doc(uid), uid,
       onRemote: (v) => {
-        if (first) { first = false; if (!v) { migrateDraft(uid); return; } }
+        if (first) {
+          first = false;
+          // No shared session yet: this device's own entry stays, and its changes go up now.
+          if (!v) { migrateDraft(uid); if (pendingOps.length) scheduleDraftWrite(); return; }
+        }
         adoptDraft(v);
       },
-      onSaved: (v) => { trackerCamPending = trackerCamPending.filter(e => e.seq > v.cam); setSyncText("Connected", true); },
+      onSaved: (v) => {
+        pendingOps = pendingOps.filter(p => p.vid !== v.vid);
+        setSyncText("Connected", true);
+      },
       onRefused: (v, error) => {
-        if (error && error.code === "permission-denied") return; // another device's change got in first: its version follows
-        console.error("Live session write failed", error);
-        setSyncText("Offline", false);
+        // Another device's change got in first (the rules only take a version made from the latest):
+        // this one's ops go again on top of that one, once it is here.
+        pendingOps.forEach(p => { if (p.vid === v.vid) { p.refused = true; p.tries += 1; } });
+        pendingOps = pendingOps.filter(p => p.tries <= 4);
+        if (!(error && error.code === "permission-denied")) {
+          console.error("Live session write failed", error);
+          setSyncText("Offline", false);
+        }
+        if (liveSession && liveSession.latest && liveSession.latest.vid !== v.vid && replayPending(true)) afterChange();
       },
       onError: (error) => { console.error("Live session listener error", error); setSyncText("Offline", false); }
     });
@@ -845,6 +921,7 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
     if (draftWriteTimer) { clearTimeout(draftWriteTimer); draftWriteTimer = null; }
     if (liveSession) liveSession.stop();
     liveSession = null;
+    pendingOps = [];
   }
 
   // The first time after the move to liveSessions: the session as the older shared draft has it, if
@@ -858,6 +935,15 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
     } catch (_) { /* nothing to bring over */ }
   }
 
+  // Under Save: which saved session is open, when one was loaded (Save updates it).
+  function showLoadedNote() {
+    const el = document.getElementById("loadedNote");
+    if (!el) return;
+    el.textContent = loadedSession
+      ? `Looking at the session from ${loadedSession.timestamp || loadedSession.date}. Save updates it; Clear starts a new one.`
+      : "";
+  }
+
 
   function initTable() {
     const tbody = document.getElementById("entryBody");
@@ -868,7 +954,7 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
       tr.setAttribute('data-target', t);
 
       const inputHTML = (scoreMode === "single")
-        ? `<input type="number" min="0" max="3" step="1" class="hits-input" value="${entryToHitsValue(currentEntry[t])}">`
+        ? `<input type="number" min="0" max="3" step="1" class="hits-input" value="${(entryToHitsValue(currentEntry[t]) || dartsThrownAt(t) >= 3) ? entryToHitsValue(currentEntry[t]) : ""}">`
         : `<input type="text" maxlength="3" class="pattern-input" value="${entryToInputValue(currentEntry[t])}" placeholder="---">`;
 
       tr.innerHTML = `
@@ -887,12 +973,13 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
   ["sessionDate","sessionTime"].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
-    el.addEventListener("input", () => {
-      if (auth.currentUser) scheduleDraftWrite();
-    });
-    el.addEventListener("change", () => {
-      if (auth.currentUser) scheduleDraftWrite();
-    });
+    // The date and time typed here: shared like any other change.
+    const changed = () => {
+      if (!auth.currentUser) return;
+      runOp({ k: "when", date: document.getElementById("sessionDate").value || "", time: document.getElementById("sessionTime").value || "" });
+    };
+    el.addEventListener("input", changed);
+    el.addEventListener("change", changed);
   });
 
 document.getElementById("mainEntryTable").addEventListener("input", (e) => {
@@ -911,27 +998,22 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
 
       e.target.value = val;
 
-      // Pad to 3 chars for storage
+      // Pad to 3 chars for storage. A row with anything typed in it has had its three darts, so the
+      // board's next darts go to the next number (an emptied row is open again).
       let arr = val.split("");
       while(arr.length < 3) arr.push("-");
-      realignPositions(target, currentEntry[target], arr);
-      currentEntry[target] = arr;
+      runOp({ k: "row", target, arr, filled: val.length > 0 });
     }
 
     if (e.target.classList.contains("hits-input")) {
-      let n = parseInt(e.target.value || "0", 10);
+      const raw = String(e.target.value || "").trim();
+      let n = parseInt(raw || "0", 10);
       if (Number.isNaN(n)) n = 0;
       n = Math.max(0, Math.min(3, n));
-      e.target.value = String(n);
+      if (raw !== "") e.target.value = String(n);
       const arr = Array(n).fill("S").concat(Array(3-n).fill("-"));
-      realignPositions(target, currentEntry[target], arr);
-      currentEntry[target] = arr;
+      runOp({ k: "row", target, arr, filled: raw !== "" });
     }
-
-    refreshCalculations();
-    persistDraft();
-    scheduleDraftWrite();
-    practiceActivity();
   });
 
   function refreshCalculations() {
@@ -950,28 +1032,14 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
     updateNextTarget();
   }
 
-  function resetCurrentSession(opts = {}) {
-    const resetDateTime = !!opts.resetDateTime;
-    sessionTimer = null; // a cleared or saved session's time is done
-    saveSessionTimer();
-    TARGETS.forEach(t => { currentEntry[t] = ["-","-","-"]; });
-    currentPos = {};
-    currentThrown = {};
-    camFixes = [];
+  // A new session (after Save, or Clear): everything entered goes, with its timer, its id and any
+  // loaded session, and the date and time are now again.
+  function resetCurrentSession() {
     setBoardNote("");
-    tapStack = [];
-    lastTap = null;
-    persistDraft();
-
-    if (resetDateTime) {
-      __userTouchedDate = false;
-      __userTouchedTime = false;
-      syncDateTime(true);
-    }
-
-    updateUIFromEntry(currentEntry);
-    scheduleDraftWrite();
-    drawBoard();
+    runOp({ k: "clear" });
+    __userTouchedDate = false;
+    __userTouchedTime = false;
+    syncDateTime(true);
   }
 
   let sessionsUnsub = null;
@@ -1006,14 +1074,18 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
     // Filter sessions by selected scoring mode
     sessions = sessionsAll.filter(s => normMode(s.mode || "standard") === scoreMode);
 
+    // Sessions saved part way through (complete: false) count as sessions, but not in the averages,
+    // the best or the chart.
+    const full = sessions.filter(E.countsInStats);
+    const totalOf = (s) => (typeof s.total === "number") ? s.total : (parseInt(s.total || "0", 10) || 0);
     document.getElementById("kpiSessions").textContent = sessions.length;
-    document.getElementById("kpiBest").textContent = sessions.length ? Math.max(...sessions.map(s=> (typeof s.total==="number")?s.total:parseInt(s.total||"0",10))) : "—";
+    document.getElementById("kpiBest").textContent = full.length ? Math.max(...full.map(totalOf)) : "—";
 
     // Heat table (avg per target)
     const hBody = document.getElementById("heatBody");
     hBody.innerHTML = "";
     TARGETS.forEach(t => {
-      const scs = sessions.map(s => rowScoreForMode(s.entry && s.entry[t] ? s.entry[t] : ["-","-","-"], scoreMode));
+      const scs = full.map(s => rowScoreForMode(s.entry && s.entry[t] ? s.entry[t] : ["-","-","-"], scoreMode));
       const avg = scs.length ? (scs.reduce((a,b)=>a+b,0) / scs.length) : 0;
       hBody.innerHTML += `<tr><td>${t}</td><td>${avg.toFixed(1)}</td></tr>`;
     });
@@ -1022,10 +1094,10 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
     const hist = document.getElementById("historyBody");
     hist.innerHTML = "";
     [...sessions].reverse().forEach(s => {
-      const d = (s.timestamp || "").split(" ")[0] || "";
-      const total = (typeof s.total === "number") ? s.total : parseInt(s.total || "0", 10);
+      const d = E.dateOf(s.timestamp) || "";
+      const total = totalOf(s);
       hist.innerHTML += `<tr>
-        <td>${d}${(s.positions && Object.keys(s.positions).length) ? ' <span title="Dart positions saved. Load it to see them on the board." aria-label="Dart positions saved">&#9679;</span>' : ""}</td>
+        <td>${d}${(s.positions && Object.keys(s.positions).length) ? ' <span title="Dart positions saved. Load it to see them on the board." aria-label="Dart positions saved">&#9679;</span>' : ""}${E.countsInStats(s) ? "" : '<span class="tag-partial" title="Saved part way through: not in the averages or the best">partial</span>'}</td>
         <td>${total}</td>
         <td style="display:flex; gap:8px; justify-content:center; align-items:center;">
           <button class="dt-mini-btn" data-act="load" data-id="${s.id}">Load</button>
@@ -1034,16 +1106,18 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
       </tr>`;
     });
 
-    renderChart();
+    renderChart(full);
     renderPracticeHeatMap();
   }
 
-  function renderChart() {
+  function renderChart(list) {
     const ctx = document.getElementById("overallChart");
     if(overallChart) overallChart.destroy();
+    if (!window.Chart) return;
+    const shown = (list || []).filter(s => E.dateOf(s.timestamp));
     overallChart = new Chart(ctx, {
       type: 'line',
-      data: { labels: sessions.map(s=>s.timestamp.split(' ')[0]), datasets: [{ label: 'Score', data: sessions.map(s=>s.total), borderColor: '#f59e0b', tension: 0.3 }] },
+      data: { labels: shown.map(s => E.dateOf(s.timestamp)), datasets: [{ label: 'Score', data: shown.map(s => (typeof s.total === "number") ? s.total : (parseInt(s.total || "0", 10) || 0)), borderColor: '#f59e0b', tension: 0.3 }] },
       options: {
         responsive: true,
         maintainAspectRatio: false,
@@ -1084,25 +1158,7 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
   
   
   // ==================== PRACTICE HEATMAP ====================
-  function sessionDateStr(s){
-    const ts = s && s.timestamp;
-    if (!ts) return null;
-
-    if (typeof ts === "string"){
-      if (ts.includes(" ")) return ts.split(" ")[0];
-      if (/^\d{4}-\d{2}-\d{2}$/.test(ts)) return ts;
-      if (/^\d+$/.test(ts)) return new Date(Number(ts)).toISOString().slice(0,10);
-      return null;
-    }
-    if (typeof ts === "number") return new Date(ts).toISOString().slice(0,10);
-    if (typeof ts === "object"){
-      try{
-        if (typeof ts.toDate === "function") return ts.toDate().toISOString().slice(0,10);
-        if ("seconds" in ts) return new Date(ts.seconds * 1000).toISOString().slice(0,10);
-      }catch(e){}
-    }
-    return null;
-  }
+  function sessionDateStr(s){ return E.dateOf(s && s.timestamp); }
 
   function buildPracticeDayIndex(list){
     const map = new Map();
@@ -1513,6 +1569,9 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
   }
 
   let camCheckWarning = "";
+  // A camera event, put in as a change (see the cameras' rules in tracker-engine.js): a dart goes to
+  // the number its visit began at; a take-out ends the visit (its darts not seen are misses there); a
+  // dart they couldn't read waits for a tap.
   function onTrackerCamera(e) {
     if (e.type === "check") camCheckWarning = e.warning || "";
     else if (e.type === "status") setCamNote(e.text);
@@ -1521,33 +1580,54 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
     else if (e.type === "ready") setCamNote("Camera on: watching the board.");
     else if (e.type === "takeout") {
       if (e.seq && e.seq <= trackerCamSeq) return; // already in: another device watching the cameras put it in
-      // Darts pulled out part way through a number: the cameras missed some (a bounce-out, a dart they
-      // couldn't see), and those count as misses, so the next darts go to the next number.
-      const aim = aimTarget(), n = aim ? dartsThrownAt(aim) : 0;
-      if (aim && n > 0 && n < 3) {
-        noteTrackerCamera(e);
-        tapStack.push({ target: aim, prev: (currentEntry[aim] || ["-","-","-"]).slice(), prevPos: (currentPos[aim] || [null, null, null]).slice(), prevThrown: currentThrown[aim], prevLast: lastTap });
-        currentThrown[aim] = 3;
-        persistDraft(); updateUIFromEntry(currentEntry); scheduleDraftWrite(); drawBoard();
-        setCamNote(`Darts out with ${3 - n} not seen at ${aim === "BULL" ? "the bull" : aim}: counted as ${3 - n === 1 ? "a miss" : "misses"}. Undo if that's wrong.`);
-      } else setCamNote("Camera on: watching the board.");
+      const out = runOp({ k: "out", seq: e.seq || 0 });
+      const f = out && out.filled;
+      if (f) setCamNote(`Darts out with ${f.unseen} not seen at ${E.nameOf(f.target)}: counted as ${f.unseen === 1 ? "a miss" : "misses"}. Undo if that's wrong.`);
+      else setCamNote("Camera on: watching the board.");
     }
-    else if (e.type === "unreadable") setCamNote("The cameras saw something but couldn't read it. Tap the board for that dart.", true);
+    else if (e.type === "unreadable") {
+      if (e.seq && e.seq <= trackerCamSeq) return;
+      const out = runOp({ k: "unread", seq: e.seq || 0 });
+      const at = out && out.visit ? E.nameOf(out.visit.aim) : "this number";
+      setCamNote(`${closedNote(out)}The cameras saw a dart at ${at} but couldn't read it. Tap the board where it landed; if you don't, it counts as a miss when you pull your darts out.`, true);
+    }
     else if (e.type === "dart") {
       if (e.seq && e.seq <= trackerCamSeq) return; // already in: another device watching the cameras put it in
-      noteTrackerCamera(e);
       const x = Math.round(e.app.x * 10000) / 10000, y = Math.round(e.app.y * 10000) / 10000;
       const hit = BoardVision.classify(x, y, BoardVision.APP);
-      const done = applyBoardHit(hit.target ? { target: hit.target, ring: hit.ring, x, y } : null, { cam: { seq: e.seq || 0, label: hit.label, x, y } });
-      if (!done) return;
-      const aimName = done.aim === "BULL" ? "the bull" : done.aim;
+      const out = runOp({ k: "cam", hit: hit.target ? { target: hit.target, ring: hit.ring, x, y } : null, cam: { seq: e.seq || 0, label: hit.label, x, y } });
+      if (!out) return;
       const said = !hit.target ? "off the board" : hit.label;
-      setCamNote(`Camera: ${said}${done.counts ? "" : ` (a miss for ${aimName})`}` + (e.uncertain ? ". It wasn't sure: if it's wrong, Undo and tap where it landed." : "."), e.uncertain);
+      if (out.full) {
+        tapFeedback("FULL");
+        setBoardNote("All 21 numbers have their three darts. Save the session, or Undo.");
+        return;
+      }
+      if (out.spare) {
+        setCamNote(`${closedNote(out)}Camera: ${said}, not counted: ${E.nameOf(out.spare.aim)} already has its three darts. Pull your darts out.`, true);
+        return;
+      }
+      const done = out.dart;
+      boardFeedback(done, hit.target ? { target: hit.target } : null);
+      camFixes = []; // throwing again: darts taken back earlier aren't being corrected
+      noteKeptCamDarts();
+      const aimName = E.nameOf(done.aim);
+      setCamNote(`${closedNote(out)}Camera: ${said}${done.counts ? "" : ` (a miss for ${aimName})`}` + (e.uncertain ? ". It wasn't sure: if it's wrong, Undo and tap where it landed." : "."), e.uncertain);
     }
   }
+  // A visit that ended when the next one began (its pull-out never seen): what was filled in.
+  function closedNote(out) {
+    const c = out && out.closed;
+    return c ? `${c.unseen} dart${c.unseen === 1 ? "" : "s"} at ${E.nameOf(c.target)} not seen: counted as ${c.unseen === 1 ? "a miss" : "misses"}. ` : "";
+  }
+  // Remembered on this device: ticked, the cameras come back on after a reload.
+  const CAMERA_KEY = "dt_trackerCamera";
   (function bindCameraToggle(){
     const toggle = document.getElementById("cameraToggle");
-    if (toggle) toggle.addEventListener("change", () => setTrackerCamera(!!toggle.checked));
+    if (toggle) toggle.addEventListener("change", () => {
+      try { localStorage.setItem(CAMERA_KEY, toggle.checked ? "1" : "0"); } catch (_) { /* private mode */ }
+      setTrackerCamera(!!toggle.checked);
+    });
   })();
 
   // Wire up UI toggles (persisted)
@@ -1649,7 +1729,7 @@ function applyEntryModeUI(){
         const y = (ev.clientY - rect.top) * (c.height / rect.height);
 
         const hit = scoreFromPoint(c, x, y);
-        applyBoardHit(hit || null, { tap: true }); // outside the board: a miss for the number being thrown at
+        applyBoardHit(hit || null); // outside the board: a miss for the number being thrown at
       };
 
       c.addEventListener("pointerdown", handlePoint);
@@ -1659,19 +1739,10 @@ function applyEntryModeUI(){
       if (undoBtn && !undoBtn.dataset.bound){
         undoBtn.dataset.bound = "1";
         undoBtn.addEventListener("click", ()=>{
-          const last = tapStack.pop();
-          if (!last) return;
-          if (last.cam) camFixes = camFixes.concat([Object.assign({ aim: last.target }, last.cam)]).slice(-6);
-          currentEntry[last.target] = last.prev.slice();
-          currentPos[last.target] = last.prevPos.slice();
-          if (last.prevThrown === undefined) delete currentThrown[last.target];
-          else currentThrown[last.target] = last.prevThrown;
-          practiceActivity();
-          persistDraft();
-          updateUIFromEntry(currentEntry);
-          scheduleDraftWrite();
-          lastTap = last.prevLast || null;
-          drawBoard();
+          if (!tapStack.length) return;
+          const last = runOp({ k: "undo" });
+          // A camera dart taken back: the tap that follows may be the correction (see learnFromTap).
+          if (last && last.cam) { camFixes = camFixes.concat([Object.assign({ aim: last.target }, last.cam)]).slice(-6); scheduleDraftWrite(); }
         });
       }
 
@@ -1888,56 +1959,30 @@ function scoreFromPoint(canvas, x, y){
   }
 
 
-// A dart entered on the board ({target, ring, x, y}, or null for off the board), for the number
-// being thrown at (see aimTarget): a hit in that number fills its next slot; anything else is a
-// miss that uses up one of its three darts. Returns { aim, counts }, or null when all are done.
-function applyBoardHit(hit, from){
-    const aim = aimTarget();
-    if (!aim) {
+// A dart tapped on the board ({target, ring, x, y}, or null for off the board), for the number
+// being thrown at (see tracker-engine.js): a hit in that number fills its next slot; anything else
+// is a miss that uses up one of its three darts. Returns { aim, counts }, or null when all are done.
+function applyBoardHit(hit){
+    if (!aimTarget()) {
       tapFeedback("FULL");
       setBoardNote("All 21 numbers have their three darts. Save the session, or Undo.");
       return null;
     }
-    if (!currentEntry[aim]) currentEntry[aim] = ["-","-","-"];
-    const prev = currentEntry[aim].slice();
-    const prevPos = (currentPos[aim] || [null, null, null]).slice();
-    const prevThrown = currentThrown[aim];
-    const thrownBefore = dartsThrownAt(aim);
-    const counts = !!(hit && hit.target === aim);
-
-    if (counts) {
-      // Fewer than three darts thrown at it, so it has an empty slot.
-      const arr = prev.slice();
-      const ix = arr.indexOf("-");
-      arr[ix] = hit.ring; // the ring letter (S/D/T)
-      currentEntry[aim] = arr;
-      // ...and where it landed, in the same slot
-      const slots = prevPos.slice();
-      slots[ix] = { x: hit.x, y: hit.y };
-      currentPos[aim] = slots;
-    }
-    currentThrown[aim] = thrownBefore + 1;
-
-    const aimName = aim === "BULL" ? "the bull" : aim;
-    if (counts) setBoardNote("");
-    else if (hit) setBoardNote(`That landed in ${hit.target === "BULL" ? "the bull" : hit.target}, not ${aimName}: a miss.`);
-    else setBoardNote(`Off the board: a miss for ${aimName}.`);
-    tapFeedback(counts ? hit.ring : "MISS", aim);
-
-    const entry = { target: aim, prev, prevPos, prevThrown, prevLast: lastTap };
-    if (from && from.cam && from.cam.seq) entry.cam = Object.assign({ counted: counts }, from.cam);
-    tapStack.push(entry);
-    if (from && from.tap) learnFromTap(aim, hit);
-    else if (from && from.cam) camFixes = []; // throwing again: darts taken back earlier aren't being corrected
+    const done = runOp({ k: "tap", hit: hit ? { target: hit.target, ring: hit.ring, x: hit.x, y: hit.y } : null });
+    if (!done) return null;
+    boardFeedback(done, hit);
+    learnFromTap(done.aim, hit);
     noteKeptCamDarts();
-    if (hit) lastTap = { target: hit.target, ring: hit.ring, x: hit.x, y: hit.y }; // the dot shows where it landed
-    practiceActivity();
+    return done;
+  }
 
-    persistDraft();
-    updateUIFromEntry(currentEntry);
-    scheduleDraftWrite();
-    drawBoard();
-    return { aim, counts };
+  // What a dart on the board counted as: the note under the board, the beep, the word.
+  function boardFeedback(done, hit) {
+    const aimName = E.nameOf(done.aim);
+    if (done.counts) setBoardNote("");
+    else if (hit) setBoardNote(`That landed in ${E.nameOf(hit.target)}, not ${aimName}: a miss.`);
+    else setBoardNote(`Off the board: a miss for ${aimName}.`);
+    tapFeedback(done.counts ? done.ring : "MISS", done.aim);
   }
 
   auth.onAuthStateChanged(user => {
@@ -1949,13 +1994,20 @@ function applyBoardHit(hit, from){
       document.getElementById("userName").textContent = shownName;
       document.getElementById("userName").title = shownName; // full text if it is cut short on a narrow screen
       syncDateTime(true);
-      const saved = localStorage.getItem("dt_draft"); if(saved) currentEntry = JSON.parse(saved);
+      try { const saved = localStorage.getItem("dt_draft"); if (saved) currentEntry = JSON.parse(saved) || {}; } catch (_) { currentEntry = {}; }
       try { currentPos = cleanPositions(JSON.parse(localStorage.getItem("dt_draftPos") || "{}"), currentEntry); } catch (_) { currentPos = {}; }
+      if (loadedSession) { document.getElementById("sessionDate").value = loadedSession.date || ""; document.getElementById("sessionTime").value = loadedSession.time || ""; }
       // Do not write the local draft to the cloud here. This device's copy may be older than what
       // another device has typed, and writing it on open would overwrite that device's entry.
       // The live listener applies the cloud draft if another device wrote it; this device only
       // writes when you change something.
       applyScoreModeUI(scoreMode); startSync(user.uid); startLiveDraft(user.uid);
+      showLoadedNote();
+      // The cameras, if they were on here last time.
+      const camToggle = document.getElementById("cameraToggle");
+      let camWanted = false;
+      try { camWanted = localStorage.getItem(CAMERA_KEY) === "1"; } catch (_) { camWanted = false; }
+      if (camToggle && camWanted && !boardCam) { camToggle.checked = true; setTrackerCamera(true); }
     } else {
       stopListeners();
       document.getElementById("appInterface").style.display = "none";
@@ -1980,6 +2032,7 @@ function applyBoardHit(hit, from){
     const dEl = document.getElementById("sessionDate");
     const tEl = document.getElementById("sessionTime");
     if (!dEl || !tEl) return;
+    if (loadedSession) return; // a saved session is open: its own date and time stay
 
     if (force || (!__userTouchedDate && !dEl.value)) dEl.value = todayISO();
     if (force || (!__userTouchedTime && !tEl.value)) tEl.value = nowHM();
@@ -2006,35 +2059,23 @@ function applyBoardHit(hit, from){
     return TARGETS.some(t => (currentEntry[t] || []).some(v => v && v !== "-"));
   }
 
+  // A saved session opened to look at (its dots) or correct (type into a row): Save then updates that
+  // session, under its own date, instead of saving a copy. Clear starts a new session.
   window.loadS = (id) => {
     const s = sessionsAll.find(x => x.id === id) || sessions.find(x => x.id === id);
     if (s) {
-      if (hasUnsavedEntry() && !confirm("Replace the entry you are working on with this saved session? Your current entry has not been saved.")) return;
-      // Load the mode first so inputs match
-      scoreMode = normMode(s.mode || "standard");
-      localStorage.setItem("dt_scoreMode", scoreMode);
-      const sel = document.getElementById("scoreModeSelect");
-      if (sel) sel.value = scoreMode;
-      const hdr = document.getElementById("inputColHeader");
-      if (hdr) hdr.textContent = (scoreMode === "single") ? "Hits (0–3)" : "Input (e.g. SDT)";
-
-      currentEntry = JSON.parse(JSON.stringify(s.entry || {}));
-      currentPos = cleanPositions(s.positions, currentEntry);
-      // A saved session was played in full: board darts don't add to it (type into a row to change one).
-      currentThrown = {};
-      TARGETS.forEach(t => { currentThrown[t] = 3; });
-      tapStack = [];
-      lastTap = null;
+      if (hasUnsavedEntry() && !loadedSession && !confirm("Replace the entry you are working on with this saved session? Your current entry has not been saved.")) return;
+      hideSavePanel();
+      saveNote("");
+      runOp({ k: "load", saved: { id: s.id, timestamp: typeof s.timestamp === "string" ? s.timestamp : "", entry: s.entry || {}, positions: s.positions || null, mode: normMode(s.mode || "standard"), complete: s.complete !== false } });
       initTable();
-      persistDraft();
-      scheduleDraftWrite();
-      drawBoard();
+      updateUIFromEntry(currentEntry);
       const shown = countPositions(currentPos);
       const darts = TARGETS.reduce((n, t) => n + (currentEntry[t] || []).filter(v => v && v !== "-").length, 0);
       setBoardNote(shown
         ? `Dots show where ${shown} dart${shown === 1 ? "" : "s"} landed.`
         : (darts ? "No dart positions were saved for this session, so there are no dots to show." : ""));
-      alert("Loaded!");
+      document.getElementById("saveBtn").scrollIntoView({ block: "center", behavior: "smooth" });
     }
   };
 
@@ -2042,15 +2083,16 @@ function applyBoardHit(hit, from){
   // Delete a saved session (used by Cloud History)
   window.delS = async (id) => {
     const s = sessions.find(x => x.id === id);
-    const d = s && s.timestamp ? s.timestamp.split(' ')[0] : "";
+    const d = (s && E.dateOf(s.timestamp)) || "";
     const total = s && (typeof s.total === "number" ? s.total : parseInt(s.total || "0"));
     const msg = `Delete this session${d ? " ("+d+")" : ""}${(total!=null && !Number.isNaN(total)) ? " score "+total : ""}?`;
     if (!confirm(msg)) return;
     try {
       await db.collection("sessions").doc(id).delete();
-      alert("Deleted.");
+      if (loadedSession && loadedSession.id === id) resetCurrentSession();
+      saveNote(`Deleted the session${d ? " from " + d : ""}.`);
     } catch (err) {
-      alert("Delete failed: " + (err && err.message ? err.message : err));
+      saveNote("Delete failed: " + (err && err.message ? err.message : err), true);
     }
   };
 
@@ -2073,58 +2115,106 @@ document.getElementById("signInBtn").onclick = () => auth.signInWithPopup(new fi
 
   // Entry/Game dropdown listeners
   const __sms = document.getElementById("scoreModeSelect");
-  if (__sms) __sms.addEventListener("change", (e) => applyScoreModeUI(e.target.value));
-  document.getElementById("sessionDate").addEventListener("input", scheduleDraftWrite);
-  document.getElementById("sessionTime").addEventListener("input", scheduleDraftWrite);
+  // The mode is part of the session, so every device switches with it.
+  if (__sms) __sms.addEventListener("change", (e) => runOp({ k: "mode", mode: normMode(e.target.value) }));
   
-  // A retry after a failure or a timeout writes to the same document, so it can never save twice.
-  let pendingSaveRef = null;
+  // ---- Saving ----
+  // A session saves as sessions/{its id} (made with its first dart and shared with the other devices),
+  // so a retry after a timeout, or Save pressed on two devices, can never save it twice, and a new
+  // session (after Clear) never writes over an earlier one. A loaded session is updated in place.
+  // Messages show under Save, never in a dialog (a dialog freezes the iPad, cameras and all).
   const SAVE_TIMEOUT_MS = 15000;
+  let saving = false;
 
-  document.getElementById("saveBtn").onclick = async () => {
+  function saveNote(text, warn) {
+    const el = document.getElementById("saveNote");
+    if (!el) return;
+    el.textContent = text || "";
+    el.classList.toggle("warn", !!warn);
+  }
+  function hideSavePanel() { const p = document.getElementById("savePanel"); if (p) p.hidden = true; }
+
+  document.getElementById("saveBtn").onclick = () => {
+    if (saving) return;
+    saveNote("");
+    const p = progressNow();
+    if (p.empty) { hideSavePanel(); saveNote("Nothing to save yet: no darts entered.", true); return; }
+    if (loadedSession) { saveSession(loadedSession.complete !== false); return; }
+    if (p.complete) { saveSession(true); return; }
+    // Part way through: saved as partial (kept out of the averages and the best), or finished with
+    // the darts not entered counted as misses (a session typed in with its empty rows as misses).
+    const names = p.missing.map(t => t === "BULL" ? "Bull" : t);
+    const list = names.length > 6 ? names.slice(0, 5).join(", ") + ` and ${names.length - 5} more` : names.join(", ");
+    document.getElementById("savePanelText").textContent =
+      `${p.done} of 21 numbers have their three darts (still to go: ${list}). Save it as partial, kept out of your averages and best? Or count the darts not entered as misses?`;
+    document.getElementById("savePanel").hidden = false;
+  };
+  document.getElementById("savePanel").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-save]");
+    if (!b) return;
+    hideSavePanel();
+    if (b.dataset.save === "partial") saveSession(false);
+    else if (b.dataset.save === "full") saveSession(true);
+  });
+
+  async function saveSession(complete) {
     const btn = document.getElementById("saveBtn");
-    if (btn.disabled) return;
-
+    if (saving) return;
     const user = auth.currentUser;
     const date = document.getElementById("sessionDate").value;
     const time = document.getElementById("sessionTime").value;
     const total = parseInt(document.getElementById("sessionTotal").textContent, 10);
-    if (!user) { alert("You are signed out. Sign in again to save."); return; }
-    if (!date) { alert("Choose a date for this session before saving."); return; }
-    if (!Number.isInteger(total)) { alert("The total is not a number yet. Check the entries and try again."); return; }
+    if (!user) { saveNote("You are signed out. Sign in again to save.", true); return; }
+    if (!date) { saveNote("Choose a date for this session before saving.", true); return; }
+    if (!Number.isInteger(total)) { saveNote("The total is not a number yet. Check the entries and try again.", true); return; }
 
+    saving = true;
     btn.disabled = true;
     const label = btn.textContent;
     btn.textContent = "Saving…";
+    const timeout = (write) => Promise.race([write, new Promise((_, reject) => setTimeout(() => reject(new Error("save-timeout")), SAVE_TIMEOUT_MS))]);
     try {
-      const ref = pendingSaveRef || (pendingSaveRef = db.collection("sessions").doc());
-      // Saved with the timer's time, at the time it started (unless you set the date or time yourself).
-      const durationSec = sessionTimer ? T.seconds(sessionTimer, Date.now()) : 0;
-      let stampDate = date, stampTime = time;
-      if (sessionTimer && !__userTouchedDate && !__userTouchedTime) {
-        const began = new Date(sessionTimer.startedAt);
-        stampDate = localYYYYMMDD(began);
-        stampTime = began.toTimeString().slice(0, 5);
-      }
-      const data = { uid: user.uid, timestamp: stampDate + " " + stampTime, mode: scoreMode, entry: currentEntry, total };
-      if (durationSec > 0) data.durationSec = durationSec;
       const positions = positionsForSave();
-      if (positions) data.positions = positions;
-      const write = ref.set(data);
-      await Promise.race([write, new Promise((_, reject) => setTimeout(() => reject(new Error("save-timeout")), SAVE_TIMEOUT_MS))]);
-      pendingSaveRef = null;
-      resetCurrentSession({ resetDateTime: true });
-      alert("Saved!");
+      let shownDate = date;
+      if (loadedSession) {
+        // Corrected: the same session, under its own date unless you changed it.
+        const ref = db.collection("sessions").doc(loadedSession.id);
+        const data = { mode: scoreMode, entry: currentEntry, total, complete: !!complete,
+          positions: positions || firebase.firestore.FieldValue.delete() };
+        if (!(date === loadedSession.date && time === loadedSession.time)) data.timestamp = date + " " + time;
+        else shownDate = loadedSession.date || date;
+        await timeout(ref.update(data));
+      } else {
+        if (!sessionId) runOp({ k: "sid", sid: newSid() });
+        const ref = db.collection("sessions").doc(sessionId);
+        // Saved with the timer's time, at the time it started (unless you set the date or time yourself).
+        const durationSec = sessionTimer ? T.seconds(sessionTimer, Date.now()) : 0;
+        let stampDate = date, stampTime = time;
+        if (sessionTimer && !__userTouchedDate && !__userTouchedTime) {
+          const began = new Date(sessionTimer.startedAt);
+          stampDate = localYYYYMMDD(began);
+          stampTime = began.toTimeString().slice(0, 5);
+        }
+        shownDate = stampDate;
+        const data = { uid: user.uid, timestamp: stampDate + " " + stampTime, mode: scoreMode, entry: currentEntry, total, complete: !!complete };
+        if (durationSec > 0) data.durationSec = durationSec;
+        if (positions) data.positions = positions;
+        await timeout(ref.set(data));
+      }
+      const what = loadedSession ? "Updated" : "Saved";
+      resetCurrentSession();
+      saveNote(`${what}: ${total}${complete ? "" : " (partial)"} on ${shownDate}.`);
     } catch (err) {
       console.error("Save failed", err);
-      alert(err && err.message === "save-timeout"
-        ? "Saving is taking a while, so you may be offline. Your entry is still here. Press Save again to retry; it will not create a duplicate."
-        : "Could not save: " + ((err && err.message) || err) + "\nYour entry is still here. Press Save to try again.");
+      saveNote(err && err.message === "save-timeout"
+        ? "Saving is taking a while, so you may be offline. Your entry is still here. Press Save again to retry: it saves to the same session, never twice."
+        : "Could not save: " + ((err && err.message) || err) + ". Your entry is still here. Press Save to try again.", true);
     } finally {
+      saving = false;
       btn.disabled = false;
       btn.textContent = label;
     }
-  };
+  }
   const __exportBtn = document.getElementById("exportBtn");
   if (__exportBtn) __exportBtn.onclick = () => {
     let csv = "Timestamp,Total\n" + sessions.map(s => `${s.timestamp},${s.total}`).join("\n");
@@ -2133,7 +2223,8 @@ document.getElementById("signInBtn").onclick = () => auth.signInWithPopup(new fi
   };
 
   // The practice timer next to the session total, shown once a session has its first dart.
-  timerView = T.mount(document.getElementById("practiceTimer"), { get: () => sessionTimer, onChange: () => saveSessionTimer(), keepSpace: true });
+  // Pause/Resume is part of the session: every device shows it (and its next change keeps it).
+  timerView = T.mount(document.getElementById("practiceTimer"), { get: () => sessionTimer, onChange: (t) => { saveSessionTimer(); runOp({ k: "timer", timer: deepClone(t) }); }, keepSpace: true });
 
 })();
 </script>

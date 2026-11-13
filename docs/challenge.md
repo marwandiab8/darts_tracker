@@ -12,15 +12,25 @@ checked by `tests/challenge-engine.test.cjs`.
 3. **Shanghai 15-20:** as part 1.
 
 Each dart is entered with a key (Miss / Single / Double / Treble, or Miss / Hit for a double), or 0-3 and Backspace
-on a keyboard. While playing, the score is compared with your best round at the same point. An unfinished round is
-kept in the browser and offered back; only finished rounds are saved.
+on a keyboard. While playing, the score is compared with your best round at the end of each visit (`pace`: the same
+finished visits on both sides, so the visit you're in never counts against the best round's total from before it).
+An unfinished round is kept in the browser and offered back; only finished rounds are saved. The same round open in
+two tabs stays in step (the latest dart in either shows in both).
+
+**After the 57th dart** (since Nov 13, 2026) the round isn't saved at once: it says "Round complete" and saves after
+10 seconds, or at once with "Save the round". Undo (or Backspace) in that time takes the last dart back, so a
+mis-tapped last dart can be fixed. A finished round left on the device (the page closed in those 10 seconds) is
+offered as "Save the finished round" the next time the page opens.
 
 ## What is saved and shown
 
 - `challengeGames/{id}`: `uid, timestamp, total, part1, part2, part3, trebles, shanghais, doublesHit, darts (57 numbers:
   0 miss, 1 single, 2 double, 3 treble), durationSec`. The rules check the shape and that the parts add up to the
-  total; a round is never edited, and only its owner reads or deletes it. A round that can't be saved (offline) is kept
-  on the device and saved the next time the page opens.
+  total; a round is never edited, and only its owner reads or deletes it. Each round saves under its own id (made when
+  it starts), so a retry can never save it twice. From the moment it's finished until the save is confirmed it is kept
+  on the device, in a list (a second round not saved never replaces the first); offline, it's saved as soon as the
+  connection is back or the page next opens. Your rounds are followed live, so one saved on another device shows up
+  without a reload, and if they can't be read the page says so rather than treating the round as your first.
 - Progress: rounds, best, average of the last 10 (and the change on the 10 before), each round on a chart with a
   five-round moving average, each part's average against its maximum, the part with the most to gain, and the hit
   rate on every double with the three weakest named.

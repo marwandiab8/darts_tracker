@@ -402,7 +402,7 @@
      Cache-Control: no-cache (a real, previously-seen failure mode - see docs/bot-practice.md) is
      still forced to fetch the matching engine instead of silently pairing a new page with a stale
      one, which throws inside announce()'s catch-all and looks like "no sound at all". -->
-<script src="practice-engine.js?v=6"></script>
+<script src="practice-engine.js?v=7"></script>
 <script src="practice-timer.js?v=2"></script>
 <script src="live-sync.js?v=1"></script>
 <script src="board-vision.js?v=9"></script>
@@ -448,7 +448,7 @@
   // The bot has just checked out. The game waits here rather than ending, so that a dart of yours the
   // cameras misread (a double that would have won, read as a miss) can still be corrected with "Edit
   // my last visit"; "Finish game" ends it.
-  const botWonWaiting = () => !!game && !versus() && game.winner === "bot" && !reviewing && !editing && !botBusy;
+  const botWonWaiting = () => !!game && !versus() && game.winner === "bot" && !game.visitDone && !reviewing && !editing && !botBusy;
   const turnWord = () => (versus() ? nameOf(game.turn) + "'s turn" : "Your turn");
   const scoreWord = (who) => (versus() ? nameOf(who) + "'s score" : who === "player" ? "Your score" : "Its score");
   const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -494,6 +494,9 @@
   // take-out entered as misses (fill), so that when a visit is over each can be noted as read right
   // or corrected, for the camera station to learn from (noteVisit). Part of the shared game.
   let camDarts = [];
+  // Camera darts waiting to go in (practice-engine.js, cameraEvent): behind a dart the cameras couldn't
+  // read, or thrown while the bot was still throwing. Part of the shared game.
+  let camHold = E.cleanHold(null);
   const newGameId = () => (L ? L.newId() : Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
 
   function el(tag, className, text) {
@@ -981,7 +984,7 @@
   // so a reload comes back to it rather than to the bot's last dart.
   function saveLocal() {
     if (game && !reviewing && (!game.winner || (game.winner === "bot" && !versus())) && !editing) {
-      store.set(GAME_KEY, { game, startedAt, settings, match, series, timer, gameId, rev: live && live.latest ? live.latest.rev : 0, at: Date.now() });
+      store.set(GAME_KEY, { game, startedAt, settings, match, series, timer, gameId, camHold, rev: live && live.latest ? live.latest.rev : 0, at: Date.now() });
     }
   }
 
@@ -993,7 +996,7 @@
 
   const livePhase = () => (!game ? "none" : reviewing ? "over" : "play");
   function liveState() {
-    return { v: 1, gameId, game, editing, startedAt, settings: pickSettings(settings), match, series, timer, camSeq, camDarts, msg: lastMessage, over };
+    return { v: 1, gameId, game, editing, startedAt, settings: pickSettings(settings), match, series, timer, camSeq, camDarts, camHold, msg: lastMessage, over };
   }
   // This change goes to the other devices, and this device does what comes next by itself (drive).
   function pushLive(options) {
@@ -1005,6 +1008,9 @@
 
   // Whether the bot is to throw now (against the bot, its visit not over, nobody correcting a visit).
   const botTurnNow = () => !!game && !versus() && !reviewing && !editing && game.turn === "bot" && !game.winner;
+  // The bot's visit is thrown but not closed yet (its checkout included): it is still the bot's go.
+  const botVisitToClose = () => !!game && !versus() && !reviewing && !editing && game.turn === "bot" && game.visitDone;
+  const botGoing = () => botTurnNow() || botVisitToClose();
   // The bot's next dart lands in the same place whichever device works it out: from the game and how
   // far into it the bot is (see watch, for another device taking over its turn).
   function botSeed() {
@@ -1018,7 +1024,7 @@
   // darts, passing a finished visit over. (A match's next game is started where the game was finished.)
   function drive() {
     if (!game || reviewing || (live && live.latest && live.latest.by !== live.by)) return;
-    if (botTurnNow() && !botLoop) runBot();
+    if (botGoing() && !botLoop) runBot();
     else if (game.visitDone && !game.winner && humanTurn() && !settings.confirm && !keypadActive() && !passTimer) scheduleAutoPass();
   }
 
@@ -1030,7 +1036,7 @@
     let wait = 0, act = null;
     if (reviewing) {
       if (series && !E.seriesDecided(series) && over && over.result !== "abandoned") { wait = NEXT_GAME_DELAY; act = startNextSeriesGame; }
-    } else if (botTurnNow()) { wait = BOT_DELAY + BOT_PAUSE; act = runBot; }
+    } else if (botGoing()) { wait = BOT_DELAY + BOT_PAUSE; act = runBot; }
     else if (game.visitDone && !game.winner && humanTurn() && !settings.confirm && !keypadActive()) { wait = PASS_DELAY_BUST; act = passTurn; }
     if (!act) return;
     const fire = () => {
@@ -1095,6 +1101,7 @@
     timer = s.timer || null;
     camSeq = Number(s.camSeq) || 0;
     camDarts = Array.isArray(s.camDarts) ? s.camDarts.slice(-16) : [];
+    camHold = E.cleanHold(s.camHold);
     lastMessage = typeof s.msg === "string" ? s.msg : "";
     Object.assign(settings, pickSettings(s.settings));
     store.set(SETTINGS_KEY, settings);
@@ -1109,7 +1116,7 @@
     } else {
       reviewing = false;
       if ($("gameCard").classList.contains("hidden") || !$("overCard").hidden) showGame();
-      botBusy = botTurnNow();
+      botBusy = botGoing();
       saveLocal();
       render();
     }
@@ -1180,7 +1187,7 @@
     const target = Number(settings.seriesTarget);
     series = SERIES_TARGETS.includes(target) ? E.createSeries({ target, first: settings.first }) : null;
     game = E.createGame({ kind: settings.kind, startScore: settings.startScore, doubleOut: settings.doubleOut, first: series ? series.nextFirst : settings.first });
-    gameId = newGameId(); over = null; camDarts = [];
+    gameId = newGameId(); over = null; camDarts = []; camHold = E.cleanHold(null);
     startedAt = Date.now(); reviewing = false; lastMessage = ""; pendingRecord = null;
     timer = T.start(startedAt);
     showGame();
@@ -1196,7 +1203,7 @@
     if (!series || E.seriesDecided(series)) return;
     stopDriving(); editing = null;
     game = E.createGame({ kind: settings.kind, startScore: settings.startScore, doubleOut: settings.doubleOut, first: series.nextFirst });
-    gameId = newGameId(); over = null; camDarts = [];
+    gameId = newGameId(); over = null; camDarts = []; camHold = E.cleanHold(null);
     startedAt = Date.now(); reviewing = false; lastMessage = ""; pendingRecord = null;
     timer = T.start(startedAt);
     store.remove(SERIES_KEY);
@@ -1320,6 +1327,7 @@
     }
     stopDriving();
     game = saved.game; gameId = String(saved.gameId || "") || newGameId(); editing = null; over = null;
+    camHold = E.cleanHold(saved.camHold);
     startedAt = Number(saved.startedAt) || Date.now();
     // The time away counts like any break: at most the 3 minutes before the timer paused itself.
     timer = T.restore(saved.timer, Date.now())
@@ -1337,7 +1345,8 @@
     pushLive({ fresh });
     saveLocal();
     render();
-    if (botsTurn) runBot();
+    // (Its checkout thrown but not closed, by a page from before that was done: closed now.)
+    if (botsTurn || botVisitToClose()) runBot();
   }
 
   // Between games in a series (the last game finished cleanly, nothing left to resume there) -
@@ -1369,7 +1378,7 @@
     if (game.kind === "x01") {
       side.append(el("div", "big", String(game.remaining[who])));
       const last = game.visits.filter((v) => v.who === who).slice(-1)[0];
-      side.append(el("div", "small", "Avg " + (s.darts ? s.avg.toFixed(1) : "-") + " · Last " + (last ? (last.bust ? "bust" : last.scored) : "-")));
+      side.append(el("div", "small", "Avg " + (last ? s.avg.toFixed(1) : "-") + " · Last " + (last ? (last.bust ? "bust" : last.scored) : "-")));
     } else {
       side.append(el("div", "big", String(game.points[who])));
       side.append(el("div", "small", "Points · " + (s.darts ? s.avg.toFixed(1) : "-") + " marks/round"));
@@ -1456,14 +1465,17 @@
       line.append(el("strong", "", "Bot's turn"), document.createTextNode(" · " + (botBusy ? "throwing…" : "waiting")));
     }
     box.append(line);
-    const route = game.kind === "x01" && humanTurn() && !game.visitDone && game.remaining[game.turn] <= 170
-      ? E.checkoutRoute(game.remaining[game.turn], 3 - game.visitDarts.length, game.doubleOut) : null;
-    if (route) {
+    // Near a finish: the route for the darts left, or, with no finish possible, what to leave (S19 leaves 80).
+    const rem = game.kind === "x01" ? game.remaining[game.turn] : 0, dartsLeft = 3 - game.visitDarts.length;
+    const near = game.kind === "x01" && humanTurn() && !game.visitDone && rem <= 170;
+    const route = near ? E.checkoutRoute(rem, dartsLeft, game.doubleOut) : null;
+    const setup = near && !route ? E.setupShot(rem, dartsLeft, game.doubleOut) : null;
+    if (route || setup) {
       box.classList.add("has-checkout");
       const co = el("div", "checkout"), head = el("div", "co-head");
-      head.append(el("span", "co-label", "Checkout"));
+      head.append(el("span", "co-label", route ? "Checkout" : "Set up · leaves " + setup.leaves));
       if (note) head.append(el("span", "co-note", note));
-      co.append(head, el("span", "co-route", route.map((d) => short(d.label)).join(" · ")));
+      co.append(head, el("span", "co-route", (route || setup.darts).map((d) => short(d.label)).join(" · ")));
       box.append(co);
     } else if (note) {
       box.append(el("div", noteClass, note));
@@ -1474,7 +1486,8 @@
     const mine = humanTurn() && !reviewing && !game.winner;
     const canThrow = mine && !game.visitDone && !botBusy;
     $("board").classList.toggle("tappable", canThrow);
-    $("undoBtn").disabled = !(humanTurn() && game.undo.length > 0 && !botBusy && !game.winner) ;
+    // Your winning dart can be taken back too, until the game is finished (a misread double).
+    $("undoBtn").disabled = !(humanTurn() && game.undo.length > 0 && !botBusy && !reviewing);
     $("missBtn").disabled = !canThrow;
     const pending = humanTurn() && game.visitDone && !reviewing;
     const botWon = botWonWaiting();
@@ -1675,9 +1688,9 @@
     const buttons = $("kpConfirmButtons"); buttons.textContent = "";
     const add = (label, className, onPress) => { const b = el("button", className, label); b.type = "button"; b.addEventListener("click", onPress); buttons.append(b); };
     if (kpAsking) {
-      const route = E.checkoutRoute(game.remaining[game.turn], 3, game.doubleOut);
+      const fewest = E.fewestDarts(game.remaining[game.turn], game.doubleOut) || 1;
       $("kpConfirmText").textContent = "Checkout from " + game.remaining[game.turn] + "! How many darts did it take?";
-      for (let n = route.length; n <= 3; n++) add(n + (n === 1 ? " dart" : " darts"), "", () => kpFinish(n));
+      for (let n = fewest; n <= 3; n++) add(n + (n === 1 ? " dart" : " darts"), "", () => kpFinish(n));
       add("Back", "secondary", () => { kpAsking = false; renderKeypad(); });
     } else {
       $("kpConfirmText").textContent = game.visitBust ? "Bust! " + scoreWord(game.turn) + " stays " + game.remaining[game.turn] + "." : game.winner ? "Checkout! " + (versus() ? nameOf(game.winner) : "You") + " won the game." : "Scored.";
@@ -1738,10 +1751,13 @@
     return name;
   }
 
+  // A dart tapped on the board (or Missed the board). If the cameras are waiting for a dart they
+  // couldn't read, this is it, and the darts they held behind it go in after it.
   function playerThrow(position) {
     if (!game || reviewing || !humanTurn() || game.visitDone || game.winner || botBusy) return;
     const result = E.throwDart(game, position);
     lastMessage = visitText(result);
+    applyCamera(E.tappedIn(game, camHold, missPosition));
     persistGame();
     if (game.visitDone && !game.winner && !settings.confirm) scheduleAutoPass();
     render();
@@ -1856,6 +1872,11 @@
   let camCheckWarning = "";
   function cameraSays(text, warn) { camText = text; camWarn = !!warn; renderCamera(); }
 
+  // A camera event goes in by the game's camera rules (practice-engine.js, cameraEvent): a dart
+  // during your visit goes in where it landed; a dart the cameras couldn't read holds the darts after
+  // it until you tap it in, so the order stays right; darts while the bot is still throwing wait for
+  // your turn; darts after your visit is over (three darts, a bust, a checkout) don't count; pulling
+  // your darts out ends the visit, with any dart not seen counted as a miss.
   function onCameraEvent(e) {
     if (!game) return;
     if (e.type === "status") return cameraSays(e.text);
@@ -1864,41 +1885,60 @@
     if (e.type === "check") { camCheckWarning = e.warning || ""; return; }
     if (e.type === "ready") return camCheckWarning ? cameraSays("Camera on. " + camCheckWarning, true) : cameraSays("Camera on: watching the board.");
     if (e.type === "blocked") return cameraSays("Camera: something is in front of the board.");
-    if (e.type === "unreadable") return cameraSays("The cameras saw something but couldn't read it. Tap the board for that dart.", true);
-    if (editing && (e.type === "dart" || e.type === "takeout")) return cameraSays("Camera paused while you correct a visit: tap where those darts landed.");
+    if (e.type !== "dart" && e.type !== "takeout" && e.type !== "unreadable") return;
+    if (reviewing) return;
+    if (editing) return cameraSays("Camera paused while you correct a visit: tap where those darts landed.");
+    if (keypadActive()) return;
     // Already in the game: another device watching the cameras put it in.
-    if ((e.type === "dart" || e.type === "takeout") && e.seq && e.seq <= camSeq) return;
-    const myThrow = humanTurn() && !reviewing && !botBusy && !game.winner && !keypadActive();
+    if (e.seq && e.seq <= camSeq) return;
+    // Your visit to throw now; or, against the bot, the bot still going (its darts kept for your turn).
+    const mine = humanTurn() && !botBusy && !botGoing();
+    if (!mine && !botGoing() && !botBusy) return cameraSays(e.type === "dart" ? "Camera saw " + describe(e.label) + ", but the game is over." : "Camera on: watching the board.");
+    let ev;
     if (e.type === "dart") {
-      if (!myThrow) return cameraSays("Camera saw " + describe(e.label) + ", but it isn't your turn to throw.", true);
-      if (game.visitDone) return cameraSays("Camera saw " + describe(e.label) + ", but this visit's darts are all in. Undo one first if one was wrong.", true);
-      noteCamera(e);
-      noteActivity();
       const at = { x: Math.round(e.app.x * 10000) / 10000, y: Math.round(e.app.y * 10000) / 10000 };
-      rememberCamDart({ seq: e.seq, label: E.classify(at.x, at.y).label, x: Math.round(at.x * 1000) / 1000, y: Math.round(at.y * 1000) / 1000 });
-      playerThrow(at);
-      return cameraSays(e.uncertain ? "Camera: " + describe(e.label) + "? It wasn't sure. If it's wrong, Undo and tap where it landed." : "Camera: " + describe(e.label) + ".", e.uncertain);
+      ev = { k: "d", x: at.x, y: at.y, seq: e.seq || 0, label: E.classify(at.x, at.y).label, unsure: !!e.uncertain };
+    } else ev = { k: e.type === "takeout" ? "o" : "u", seq: e.seq || 0 };
+    noteCamera(e);
+    if (mine) noteActivity();
+    const out = E.cameraEvent(game, camHold, ev, mine, missPosition);
+    if (out.length === 1 && out[0].t === "none") { persistGame(); return cameraSays("Camera on: watching the board."); }
+    applyCamera(out);
+    persistGame();
+    if (game.visitDone && !game.winner && humanTurn()) {
+      if (settings.confirm && ev.k === "o" && !passTimer) passTurn();
+      else if (!settings.confirm && !passTimer) scheduleAutoPass();
     }
-    if (e.type === "takeout") {
-      if (!myThrow || !game.visitDarts.length) return cameraSays("Camera on: watching the board.");
-      noteCamera(e);
-      noteActivity();
-      let missed = 0;
-      while (!game.visitDone && game.visitDarts.length < 3) {
-        const p = missPosition();
-        rememberCamDart({ seq: e.seq, label: "MISS", x: p.x, y: p.y, fill: true });
-        playerThrow(p);
-        missed += 1;
-      }
-      if (game.visitDone && !game.winner && settings.confirm && !passTimer) passTurn();
-      return cameraSays(missed ? "Darts out. " + (missed === 1 ? "One dart the cameras didn't see counts as a miss." : missed + " darts the cameras didn't see count as misses.") : "Darts out.");
+    render();
+  }
+
+  // What camera events did (from cameraEvent, releaseHold or tappedIn): the darts noted for the
+  // camera station to learn from, and the line under the board saying what each counted as.
+  function applyCamera(out) {
+    if (!out || !out.length) return;
+    const said = [];
+    let warn = false;
+    for (const o of out) {
+      if (o.t === "dart" || o.t === "miss") {
+        const v = game.visits.length, i = game.visitDarts.length - 1;
+        const label = o.t === "dart" ? o.ev.label : "MISS";
+        const pts = game.darts[game.turn][game.darts[game.turn].length - 1];
+        rememberCamDart({ seq: o.ev.seq, label, x: pts.x, y: pts.y, fill: o.t === "miss", v, i });
+        lastMessage = visitText(o.result);
+        if (o.t === "dart") { said.push(describe(label) + (o.ev.unsure ? "? It wasn't sure: if it's wrong, Undo and tap where it landed" : "")); if (o.ev.unsure) warn = true; }
+        else said.push(o.why === "unread" ? "the dart it couldn't read, never tapped in: a miss" : "a dart it didn't see: a miss");
+      } else if (o.t === "queued") said.push(o.ev.k === "d" ? describe(o.ev.label) + ", for your turn once the bot is done" : o.ev.k === "u" ? "a dart it couldn't read, for your turn" : "darts out, for your turn");
+      else if (o.t === "held") { said.push((o.ev.k === "d" ? describe(o.ev.label) : "another dart it couldn't read") + ", held until you tap in the dart it couldn't read"); warn = true; }
+      else if (o.t === "wait") { said.push("a dart it couldn't read: tap where it landed (or Missed the board)"); warn = true; }
+      else if (o.t === "late") { said.push(o.ev.k === "d" ? describe(o.ev.label) + ", not counted: this visit is over" : "a dart after this visit was over, not counted"); warn = true; }
     }
+    if (said.length) cameraSays("Camera: " + said.join("; ") + ".", warn);
   }
 
   // --- teaching the cameras ------------------------------------------------------------------------
   function rememberCamDart(info) {
     if (!info.seq) return;
-    const v = game.visits.length, i = game.visitDarts.length; // where it is about to go
+    const v = info.v, i = info.i; // where it went
     camDarts = camDarts.filter((c) => c.gameId === gameId && c.v >= v - 4)
       .concat([{ seq: info.seq, gameId, v, i, label: info.label, x: info.x, y: info.y, fill: !!info.fill }]).slice(-16);
   }
@@ -2002,17 +2042,21 @@
     render();
     const step = () => {
       if (token !== botToken || !game) return;
-      if (!botTurnNow()) { botBusy = false; botLoop = false; render(); return; }
-      if (game.visitDone) {
+      // Its visit is thrown (a checkout too): closed after a pause, so it's in the Rounds table, its
+      // average and the saved game, and "Game shot" is called for it.
+      if (botVisitToClose()) {
         setTimeout(() => {
-          if (token !== botToken || !game || !botTurnNow()) return;
+          if (token !== botToken || !game || !botVisitToClose()) return;
           announce(E.endVisit(game));
           botBusy = false; botLoop = false;
           lastMessage = "";
+          // Your turn: darts the cameras saw while the bot was throwing go in now, in order.
+          if (!game.winner && humanTurn()) applyCamera(E.releaseHold(game, camHold, missPosition));
           persistGame(); render(); // a checkout waits (see botWonWaiting)
         }, BOT_PAUSE);
         return;
       }
+      if (!botTurnNow()) { botBusy = false; botLoop = false; render(); return; }
       const result = E.throwDart(game, E.botThrow(E.botAim(game), settings.rank, E.mulberry32(botSeed())));
       lastMessage = "Bot: " + visitText(result);
       persistGame(); render();
@@ -2251,6 +2295,10 @@
     // Board entry: Enter hands over a finished visit that is waiting for it.
     if (game && !keypadActive() && !reviewing && event.key === "Enter" && event.target === document.body && humanTurn() && game.visitDone) {
       event.preventDefault(); passTurn(); return;
+    }
+    // The bot checked out and nothing needs correcting: Enter finishes, like the button.
+    if (game && !reviewing && event.key === "Enter" && event.target === document.body && botWonWaiting()) {
+      event.preventDefault(); finishGame("lost"); return;
     }
     if (!keypadActive()) return;
     const target = event.target, onKeypad = target === document.body || (target.closest && target.closest("#keypad"));

@@ -527,7 +527,16 @@ function versusSummary(game) {
       if (Number.isFinite(value)) best[entry.first ? 0 : 1] = Math.max(best[entry.first ? 0 : 1], value);
     }
   }
-  return { kind, gameName, names, result, winner, loser, rows, log, best, timestamp: cleanString(game.timestamp, 20), durationSec: cleanNumber(game.durationSec, 0, 86400, 0), rounds: cleanNumber(game.rounds, 0, 1000, 0) };
+  // Round by round, each visit under its own player's name: a round is one visit each, whoever threw
+  // first in it (the first player alternates from game to game, so the log can start with either).
+  const visitRounds = [];
+  for (const entry of log) {
+    const side = entry.first ? 0 : 1;
+    let round = visitRounds[visitRounds.length - 1];
+    if (!round || round[side]) { round = [null, null]; visitRounds.push(round); }
+    round[side] = entry;
+  }
+  return { kind, gameName, names, result, winner, loser, rows, log, visitRounds, best, timestamp: cleanString(game.timestamp, 20), durationSec: cleanNumber(game.durationSec, 0, 86400, 0), rounds: cleanNumber(game.rounds, 0, 1000, 0) };
 }
 
 function buildVersusEmail(game, appUrl = "") {
@@ -544,14 +553,11 @@ function buildVersusEmail(game, appUrl = "") {
   info.rows.forEach((row, index) => {
     lines.push(`${row.name}: ${averageName.toLowerCase()} ${row.average}, ${row.darts} darts, ${scoreName.toLowerCase()} ${row.score}${info.kind === "x01" && info.best[index] ? `, best visit ${info.best[index]}` : ""}`);
   });
-  if (info.log.length) {
+  if (info.visitRounds.length) {
     lines.push("", "Visit by visit:");
-    let round = 0;
-    for (let i = 0; i < info.log.length; i += 2) {
-      round += 1;
-      const pair = [info.log[i], info.log[i + 1]];
-      lines.push(`${round}. ${info.names[0]} ${pair[0] ? pair[0].text : "-"} · ${info.names[1]} ${pair[1] ? pair[1].text : "-"}`);
-    }
+    info.visitRounds.forEach((pair, index) => {
+      lines.push(`${index + 1}. ${info.names[0]} ${pair[0] ? pair[0].text : "-"} · ${info.names[1]} ${pair[1] ? pair[1].text : "-"}`);
+    });
   }
   if (appUrl) lines.push("", `Play again: ${appUrl}/practice.html`);
   const text = lines.join("\n");
@@ -559,10 +565,7 @@ function buildVersusEmail(game, appUrl = "") {
   const cell = (value, extra = "") => `<td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;${extra}">${escapeHtml(value)}</td>`;
   const head = (value) => `<th style="padding:6px 10px;text-align:left;color:#6b7280;font-size:12px;border-bottom:2px solid #e5e7eb">${escapeHtml(value)}</th>`;
   const stats = info.rows.map((row, index) => `<tr>${cell(row.name, "font-weight:700")}${cell(row.average)}${cell(row.darts)}${cell(row.score)}${info.kind === "x01" ? cell(info.best[index] || "-") : ""}</tr>`).join("");
-  let visitRows = "";
-  for (let i = 0; i < info.log.length; i += 2) {
-    visitRows += `<tr>${cell(i / 2 + 1)}${cell(info.log[i] ? info.log[i].text : "-")}${cell(info.log[i + 1] ? info.log[i + 1].text : "-")}</tr>`;
-  }
+  const visitRows = info.visitRounds.map((pair, index) => `<tr>${cell(index + 1)}${cell(pair[0] ? pair[0].text : "-")}${cell(pair[1] ? pair[1].text : "-")}</tr>`).join("");
   const html = [
     `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:560px;margin:auto;color:#111827">`,
     `<h2 style="margin:0 0 4px">${escapeHtml(headline)}!</h2>`,

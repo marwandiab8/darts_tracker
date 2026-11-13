@@ -75,6 +75,17 @@ test("a session's owner cannot be changed by an update", async () => {
 
 // --- data shape: what the hardening adds ----------------------------------------------------
 
+test("a session can say whether it was finished; Save after Load updates it under its own id", async () => {
+  const db = asUser(me);
+  await assertSucceeds(setDoc(doc(db, "sessions", "tSid1"), session({ complete: false, total: 1 })));
+  await assertSucceeds(setDoc(doc(db, "sessions", "tSid2"), session({ complete: true })));
+  await assertFails(addDoc(collection(db, "sessions"), session({ complete: "no" })));
+  // A retry of the same save, after a timeout that went through after all: the same document again.
+  await assertSucceeds(setDoc(doc(db, "sessions", "tSid1"), session({ complete: false, total: 1 })));
+  // Loaded and corrected: the same document updated.
+  await assertSucceeds(updateDoc(doc(db, "sessions", "mine-1"), { total: 9, complete: true, entry: entry() }));
+});
+
 test("a session with the wrong shape is refused", async () => {
   const db = asUser(me);
   const refused = [
