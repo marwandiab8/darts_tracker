@@ -252,6 +252,8 @@
       darts: { player: [], bot: [] },
       undo: [],
     };
+    if (options && options.bot) { game.botModel = BOT_MODEL; game.bot = botFor(options.bot); }
+    if (options && options.bullUp && typeof options.bullUp === "object") game.bullUp = JSON.parse(JSON.stringify(options.bullUp));
     if (kind === "x01") {
       const wanted = Number(options && options.startScore);
       game.startScore = START_SCORES.includes(wanted) ? wanted : 501;
@@ -312,6 +314,7 @@
   // Score one dart for whoever's turn it is. Returns what happened.
   function throwDart(game, position) {
     if (game.winner) throw new Error("The game is over.");
+    if (game.bullUp && !game.bullUp.done) throw new Error("The bull-up comes first.");
     if (game.visitDone) throw new Error("This visit is finished.");
     const who = game.turn;
     const hit = classify(Number(position.x), Number(position.y));
@@ -663,7 +666,14 @@
     return game.visits.every((visit) => visit.input);
   }
 
-  const gameOptions = (game) => ({ kind: game.kind, startScore: game.startScore, doubleOut: game.doubleOut, first: game.first });
+  // A game's own settings, to play it again from the start (correcting or taking back a visit): the
+  // bot it was started with, and a bull-up already decided, come along.
+  const gameOptions = (game) => {
+    const o = { kind: game.kind, startScore: game.startScore, doubleOut: game.doubleOut, first: game.first };
+    if (game.botModel === BOT_MODEL && game.bot) o.bot = Object.assign({}, game.bot);
+    if (game.bullUp) o.bullUp = JSON.parse(JSON.stringify(game.bullUp));
+    return o;
+  };
 
   // The position of a side's latest visit, or -1. A game can only be corrected if every visit was
   // recorded.
@@ -824,6 +834,320 @@
     return game.kind === "x01" ? x01Aim(game, game.turn) : cricketAim(game, game.turn);
   }
 
+
+
+  // --- the bot on a real board (model 2, games from Nov 2026) -----------------------------------------
+  // The first bot threw on the app's drawn board, whose treble and double rings are wider than a real
+  // board's, so its doubles went in far too often. Model 2 throws in real-board units (millimetres
+  // over the 170 mm radius) and maps the dart to the drawn board ring by ring (realToApp, as the
+  // cameras do), so it scores what that dart would score on a real board and the dots still line up.
+  // Two spreads: one for scoring darts, one for doubles (a style is the ratio between them), chosen
+  // from a table measured by simulating 700 legs of 501 at each spread (scripts in the commit notes),
+  // so a level plays at its average. A game keeps its model (game.botModel) and the bot it was
+  // started with (game.bot), so a page still on the old code mid-game isn't mixed with this one for
+  // new games, and every device throws the same darts.
+  const BOT_MODEL = 2;
+  const MM = { bullIn: 6.35, bullOut: 15.9, tripleIn: 99, tripleOut: 107, doubleIn: 162, edge: 170 };
+  const RING_KEYS = ["bullIn", "bullOut", "tripleIn", "tripleOut", "doubleIn", "edge"];
+  const REAL = {};
+  for (const key of RING_KEYS) REAL[key] = MM[key] / MM.edge;
+  function remapRadius(r, from, to) {
+    if (!(r > 0)) return 0;
+    let r0 = 0, t0 = 0;
+    for (const key of RING_KEYS) {
+      const r1 = from[key], t1 = to[key];
+      if (r <= r1) return t0 + ((r - r0) * (t1 - t0)) / (r1 - r0);
+      r0 = r1; t0 = t1;
+    }
+    return r;
+  }
+  const APP_RINGS = { bullIn: GEOM.bullIn, bullOut: GEOM.bullOut, tripleIn: GEOM.tripleIn, tripleOut: GEOM.tripleOut, doubleIn: GEOM.doubleIn, edge: GEOM.edge };
+  function realToApp(p) {
+    const r = Math.hypot(p.x, p.y);
+    if (!r) return { x: 0, y: 0 };
+    const k = remapRadius(r, REAL, APP_RINGS) / r;
+    return { x: p.x * k, y: p.y * k };
+  }
+  function appToReal(p) {
+    const r = Math.hypot(p.x, p.y);
+    if (!r) return { x: 0, y: 0 };
+    const k = remapRadius(r, APP_RINGS, REAL) / r;
+    return { x: p.x * k, y: p.y * k };
+  }
+  // The middle of a bed on the real board (the outer single for "S"; the outer bull ring for SB).
+  function aimReal(target, ring) {
+    if (target === "BULL" || Number(target) === 25) return ring === "S" ? { x: 0, y: -(REAL.bullIn + REAL.bullOut) / 2 } : { x: 0, y: 0 };
+    const index = SEG_ORDER.indexOf(Number(target));
+    if (index < 0) return { x: 0, y: 0 };
+    const angle = -Math.PI / 2 + (index * Math.PI * 2) / 20;
+    const radius = ring === "T" ? (REAL.tripleIn + REAL.tripleOut) / 2 : ring === "D" ? (REAL.doubleIn + REAL.edge) / 2 : (REAL.tripleOut + REAL.doubleIn) / 2;
+    return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius };
+  }
+
+  // The levels' 3-dart averages, and the styles (the double spread over the scoring spread).
+  const LEVEL_AVG = { beginner: 30, casual: 42, club: 53, league: 72, pro: 95 };
+  const STYLES = [
+    { id: "standard", name: "Standard", f: 0.85, blurb: "Scores and finishes like most players at its level." },
+    { id: "grinder", name: "Steady grinder", f: 0.6, blurb: "Smaller scores, but rarely misses a double." },
+    { id: "scorer", name: "Heavy scorer", f: 1.25, blurb: "Big scores, weak on the doubles." },
+  ];
+  const styleById = (id) => STYLES.find((st) => st.id === id) || STYLES[0];
+  // [scoring spread, 3-dart average, checkout rate] per style, measured (see above).
+  const CALIB = {"0.6":[[0.04,101.6,0.669],[0.045,95.3,0.621],[0.05,89.2,0.569],[0.055,84.2,0.536],[0.06,79.3,0.49],[0.065,74.1,0.45],[0.07,69.6,0.416],[0.075,65.7,0.398],[0.08,62.6,0.401],[0.085,58.4,0.351],[0.09,56.2,0.339],[0.095,52.1,0.315],[0.1,49.0,0.299],[0.11,44.3,0.268],[0.12,39.2,0.237],[0.13,35.0,0.216],[0.14,31.5,0.198],[0.16,26.3,0.17],[0.18,20.5,0.14],[0.2,17.3,0.121],[0.24,12.6,0.092],[0.28,9.3,0.069]],"0.85":[[0.035,105.2,0.57],[0.04,97.6,0.51],[0.045,91.1,0.463],[0.05,84.7,0.418],[0.055,79.5,0.39],[0.06,73.9,0.356],[0.065,68.5,0.329],[0.07,65.0,0.304],[0.075,59.8,0.287],[0.08,55.9,0.261],[0.085,51.1,0.248],[0.09,47.4,0.223],[0.095,43.1,0.202],[0.1,41.5,0.206],[0.11,35.7,0.182],[0.12,29.8,0.153],[0.13,25.6,0.136],[0.14,22.7,0.125],[0.16,17.7,0.104],[0.18,13.5,0.083],[0.2,10.7,0.07],[0.24,8.3,0.053],[0.28,6.2,0.035]],"1.25":[[0.035,97.8,0.397],[0.04,90.5,0.356],[0.045,83.1,0.316],[0.05,74.3,0.268],[0.055,69.5,0.258],[0.06,62.5,0.23],[0.065,57.3,0.214],[0.07,52.4,0.195],[0.075,47.1,0.178],[0.08,41.6,0.161],[0.085,36.9,0.145],[0.09,34.5,0.136],[0.1,27.2,0.115],[0.11,21.7,0.097],[0.12,18.6,0.086],[0.14,12.9,0.065],[0.16,9.9,0.052],[0.2,6.6,0.033],[0.24,5.4,0.022]]};
+  // The spreads for a bot that averages `target` with this style: { s, d, avg, checkout }.
+  function botParams(target, styleId) {
+    const st = styleById(styleId);
+    const rows = CALIB[String(st.f)];
+    const t = Math.max(rows[rows.length - 1][1], Math.min(rows[0][1], Number(target) || 53));
+    for (let i = 0; i < rows.length - 1; i += 1) {
+      const a = rows[i], b = rows[i + 1];
+      if (t <= a[1] && t >= b[1]) {
+        const k = a[1] === b[1] ? 0 : (a[1] - t) / (a[1] - b[1]);
+        const sp = a[0] + k * (b[0] - a[0]);
+        return { s: sp, d: sp * st.f, avg: t, checkout: a[2] + k * (b[2] - a[2]) };
+      }
+    }
+    const last = rows[rows.length - 1];
+    return { s: last[0], d: last[0] * st.f, avg: last[1], checkout: last[2] };
+  }
+  // The bot a game is started with: { level, target, style }. level is a rank id, "custom" (its
+  // average set by hand) or "ladder".
+  function botFor(options) {
+    const level = options && options.level;
+    const named = Object.prototype.hasOwnProperty.call(LEVEL_AVG, level);
+    const target = named ? LEVEL_AVG[level] : Math.max(15, Math.min(110, Math.round(Number(options && options.target) || 53)));
+    return { level: named ? level : level === "ladder" ? "ladder" : "custom", target, style: styleById(options && options.style).id };
+  }
+  // The named level nearest an average (what the saved game's rank says).
+  function nearestRank(target) {
+    let best = "club", gap = Infinity;
+    for (const [id, avg] of Object.entries(LEVEL_AVG)) { const g = Math.abs(avg - target); if (g < gap) { gap = g; best = id; } }
+    return best;
+  }
+  // Where the bot's dart lands when it aims at { target, ring }: model 2 on a real board, or the first
+  // bot (rankId) for a game started before.
+  function botThrowAt(game, aim, rankId, rng) {
+    if (!game || game.botModel !== BOT_MODEL || !game.bot) return botThrow(aim, rankId, rng);
+    const p = botParams(game.bot.target, game.bot.style);
+    const sigma = aim.ring === "D" ? p.d : p.s;
+    const c = aimReal(aim.target, aim.ring);
+    const real = { x: c.x + gaussian(rng) * sigma, y: c.y + gaussian(rng) * sigma };
+    const app = realToApp(real);
+    return { x: round3(app.x), y: round3(app.y) };
+  }
+  // The bot's next dart in this game.
+  function botDart(game, rankId, rng) { return botThrowAt(game, botAim(game), rankId, rng); }
+
+  // --- the bot ladder --------------------------------------------------------------------------------
+  // Start at an average of 52; win 2 of 3 games at a step to move up 3. Worked out from the saved
+  // ladder games (oldest first), so nothing else is stored: { target, wins, losses, played, best }.
+  const LADDER = { start: 52, step: 3, top: 110 };
+  function ladderState(games) {
+    const list = (games || []).filter((g) => g && g.ladder === true && (g.result === "won" || g.result === "lost"))
+      .sort((a, b) => String(a.timestamp).localeCompare(String(b.timestamp)));
+    let target = LADDER.start, wins = 0, losses = 0, best = null;
+    for (const g of list) {
+      if (g.result === "won") { wins += 1; best = Math.max(best || 0, Number(g.botTarget) || target); }
+      else losses += 1;
+      if (wins >= 2) { target = Math.min(LADDER.top, target + LADDER.step); wins = 0; losses = 0; }
+      else if (wins + losses >= 3) { wins = 0; losses = 0; }
+    }
+    return { target, wins, losses, played: list.length, best };
+  }
+
+  // --- the bull-up -----------------------------------------------------------------------------------
+  // Before the first leg, one dart each at the bull; the closer throws first (a tie: again).
+  // game.bullUp = { player: { x, y, mm } | null, bot: ... | null, done, first }.
+  function startBullUp(game) { game.bullUp = { player: null, bot: null, done: false, first: null }; return game; }
+  const bullUpOn = (game) => !!(game && game.bullUp && !game.bullUp.done);
+  // How far from the centre a dart is, in millimetres on a real board.
+  const mmFromCentre = (p) => Math.round(Math.hypot(appToReal(p).x, appToReal(p).y) * MM.edge * 10) / 10;
+  function bullUpThrow(game, who, position) {
+    if (!bullUpOn(game) || game.bullUp[who]) return null;
+    const p = { x: round3(position.x), y: round3(position.y) };
+    game.bullUp[who] = { x: p.x, y: p.y, mm: mmFromCentre(p) };
+    const a = game.bullUp.player, b = game.bullUp.bot;
+    if (!a || !b) return { done: false };
+    if (Math.abs(a.mm - b.mm) < 0.05) { game.bullUp.player = null; game.bullUp.bot = null; return { done: false, tie: true }; }
+    const first = a.mm < b.mm ? "player" : "bot";
+    game.bullUp.done = true; game.bullUp.first = first;
+    game.first = first; game.turn = first;
+    if (game.kind === "x01") game.visitStart = game.remaining[first];
+    return { done: true, first };
+  }
+
+  // --- Board mode, the match report, fixing a dart, undo across visits ----------------------------------
+
+  const pointsOf = (label) => { const d = dartByLabelAny(label); return d ? d.points : 0; };
+  const dartByLabelAny = (label) => DART_OPTIONS.find((dart) => dart.label === label) || null;
+  // A dart at a finish: one that could have won (a double that leaves 0; any dart, single out).
+  const atFinish = (left, doubleOut) => DART_OPTIONS.some((d) => d.points === left && (!doubleOut || d.ring === "D"));
+
+  // What one dart did in an x01 visit, for its box: { label, points, read, sub, kind }.
+  // left: the score before it. A dart that bust or won says so.
+  function dartWords(label, left, doubleOut) {
+    const d = dartByLabelAny(label);
+    const pts = d ? d.points : 0;
+    const read = !d ? "Miss" : label === "DB" ? "Bull" : label === "SB" ? "25" : label;
+    if (!d) return { label, points: 0, read, sub: "0", kind: "miss" };
+    const after = left - pts;
+    if (after < 0 || (doubleOut && (after === 1 || (after === 0 && d.ring !== "D")))) return { label, points: pts, read, sub: "Bust", kind: "miss" };
+    if (after === 0) return { label, points: pts, read, sub: "Game shot", kind: "hit" };
+    return { label, points: pts, read, sub: String(pts), kind: pts >= 40 ? "hit" : "stay" };
+  }
+
+  // A visit's darts for Board mode: who threw them, each dart's box, the total, and what's left.
+  // From the visit in progress, or a finished visit (visit object).
+  function visitView(game, visit) {
+    const doubleOut = game.doubleOut !== false;
+    const cur = !visit;
+    const who = cur ? game.turn : visit.who;
+    const labels = cur ? game.visitDarts : visit.darts || [];
+    const start = cur ? game.visitStart : (visit.bust ? visit.remaining : visit.remaining + visit.scored);
+    const all = game.darts[who] || [];
+    // Where the darts landed: the side's last darts (a typed visit has none).
+    const typed = cur ? !(game.visitInput && game.visitInput.t === "b") && labels.length > 0 : !(visit.input && visit.input.t === "b");
+    let pos = [];
+    if (!typed) {
+      if (cur) pos = all.slice(all.length - labels.length);
+      else if (visit.input && visit.input.pts) pos = visit.input.pts;
+    }
+    let left = start;
+    const darts = labels.map((label, i) => {
+      const w = game.kind === "x01" ? dartWords(label, left, doubleOut) : { label, points: 0, read: label === "MISS" ? "Miss" : label, sub: "", kind: label === "MISS" ? "miss" : "hit" };
+      if (game.kind === "x01" && w.sub !== "Bust") left -= w.points;
+      const p = pos[i];
+      return Object.assign(w, { index: i, x: p && Number.isFinite(p.x) ? p.x : undefined, y: p && Number.isFinite(p.y) ? p.y : undefined });
+    });
+    const bust = cur ? !!game.visitBust : !!visit.bust;
+    const scored = game.kind !== "x01" ? 0 : bust ? 0 : start - (cur ? game.remaining[who] : visit.remaining);
+    return { who, darts, start, scored, bust, left: game.kind === "x01" ? (cur ? game.remaining[who] : visit.remaining) : 0, typed, done: cur ? !!game.visitDone : true };
+  }
+
+  // "You require 81": said at the start of a visit with a finish on. "" when there isn't one.
+  function requireLine(game, who) {
+    if (!game || game.kind !== "x01") return "";
+    const rem = game.remaining[who];
+    if (!(rem <= 170) || !checkoutRoute(rem, 3, game.doubleOut !== false)) return "";
+    return "You require " + rem;
+  }
+
+  // Fix dart i of the visit in progress (the winning dart too, before the game is finished): the visit
+  // is thrown again from that dart with the dart where it really landed. Darts after a bust or a
+  // checkout no longer count. Returns { dropped } or { error }.
+  function fixVisitDart(game, i, position) {
+    if (!game.visitInput || game.visitInput.t !== "b") return { error: "Only darts entered on the board can be fixed." };
+    const pts = game.visitInput.pts.slice();
+    if (!pts[i] || !position || !Number.isFinite(position.x) || !Number.isFinite(position.y)) return { error: "There is no such dart." };
+    pts[i] = { x: round3(position.x), y: round3(position.y) };
+    while (game.visitDarts.length) if (!undoDart(game)) break;
+    game.winner = null; game.visitDone = false;
+    let used = 0;
+    for (const p of pts) {
+      if (game.visitDone) break;
+      throwDart(game, p);
+      used += 1;
+    }
+    return { dropped: pts.length - used };
+  }
+
+  // Undo across visits, one dart at a time, from any device: a dart of the visit in progress; or,
+  // with none, the last visit of a side that can undo (yours; both sides with two players) is opened
+  // again without its last dart, and every visit after it (the bot's) is taken off - the bot throws
+  // it again. A visit typed as a total goes as a whole. The game is changed in place. Returns
+  // { kind: "dart" | "visit", removed } or null.
+  function stepBack(game, sides) {
+    const can = sides || ["player"];
+    if (game.visitDarts.length && can.includes(game.turn)) {
+      undoDart(game);
+      game.winner = null;
+      return { kind: "dart", removed: 0 };
+    }
+    if (!game.visits.every((v) => v.input)) return null;
+    let idx = -1;
+    for (let k = game.visits.length - 1; k >= 0; k -= 1) if (can.includes(game.visits[k].who)) { idx = k; break; }
+    if (idx < 0) return null;
+    const v = game.visits[idx];
+    const r = replayVisits(gameOptions(game), game.visits.slice(0, idx));
+    if (r.error) return null;
+    const g = r.game;
+    if (v.input.t === "b") for (const p of v.input.pts.slice(0, -1)) throwDart(g, p);
+    const removed = game.visits.length - idx - 1;
+    Object.keys(game).forEach((k) => { delete game[k]; });
+    Object.assign(game, g);
+    return { kind: "visit", removed };
+  }
+
+  // The big moment a finished visit makes, or null: a 180, a ton-plus finish, game shot, a high
+  // finish, the nine-dart watch (a 501 leg still on for nine darts after six).
+  function momentFor(game, visit) {
+    if (!game || !visit || game.kind !== "x01") return null;
+    const won = game.winner === visit.who && game.visits[game.visits.length - 1] === visit;
+    if (won && visit.scored >= 100) return { kind: "finish", big: String(visit.scored), sub: "Ton-plus finish!", who: visit.who };
+    if (won) return { kind: "win", big: "Game shot", sub: visit.scored + " checkout", who: visit.who };
+    const mine = game.visits.filter((v) => v.who === visit.who);
+    const nine = game.startScore === 501 && mine.length === 2 && mine[1] === visit && !mine.some((v) => v.bust) && visit.remaining <= 141 && !!checkoutRoute(visit.remaining, 3, game.doubleOut !== false);
+    if (!visit.bust && visit.scored === 180) return { kind: "180", big: "180", sub: nine ? "Nine-dart watch: " + visit.remaining + " left" : "One hundred and eighty!", who: visit.who };
+    if (nine) return { kind: "nine", big: "Nine-dart watch", sub: visit.remaining + " left, in three darts", who: visit.who };
+    return null;
+  }
+
+  // One side's leg, for the match report: darts, 3-dart average, first-9 average, checkout darts
+  // (darts thrown with a finish on, and the one that won), the highest finish, 60+/100+/140+/180s,
+  // and every visit's score.
+  function legReport(game, who) {
+    const doubleOut = game.doubleOut !== false;
+    const mine = game.visits.filter((v) => v.who === who);
+    if (game.kind !== "x01") {
+      const darts = (game.darts[who] || []).length;
+      return { who, kind: "cricket", darts, marksPerRound: darts ? Math.round((game.marksThrown[who] * 3 / darts) * 100) / 100 : 0, visits: mine.map((v) => v.marks || 0) };
+    }
+    let scored = 0, used = 0, f9s = 0, f9d = 0, atDouble = 0, finishes = 0, high = 0;
+    const tons = { s60: 0, s100: 0, s140: 0, s180: 0 };
+    mine.forEach((v, k) => {
+      const n = visitDartsForAverage(v);
+      scored += v.scored; used += n;
+      if (k < 3) { f9s += v.scored; f9d += n; }
+      const sc = v.bust ? 0 : v.scored;
+      if (sc === 180) tons.s180 += 1; else if (sc >= 140) tons.s140 += 1; else if (sc >= 100) tons.s100 += 1; else if (sc >= 60) tons.s60 += 1;
+      // Darts with a finish on: walk the visit's darts from its starting score.
+      let left = v.bust ? v.remaining : v.remaining + v.scored;
+      for (const label of v.darts || []) {
+        if (atFinish(left, doubleOut)) atDouble += 1;
+        const pts = pointsOf(label);
+        const after = left - pts;
+        if (after === 0 && (!doubleOut || /^D/.test(label))) { finishes += 1; high = Math.max(high, v.scored); break; }
+        if (after < 0 || (doubleOut && after <= 1)) break;
+        left = after;
+      }
+    });
+    return {
+      who, kind: "x01", visits: mine.map((v) => (v.bust ? 0 : v.scored)), darts: (game.darts[who] || []).length,
+      avg: used ? Math.round((scored * 3 / used) * 100) / 100 : 0,
+      first9: f9d ? Math.round((f9s * 3 / f9d) * 100) / 100 : 0,
+      checkout: { hits: finishes, darts: atDouble, pct: atDouble ? finishes / atDouble : null },
+      highFinish: high, tons, won: game.winner === who,
+    };
+  }
+
+  // Visit scores in bands, for the report's histogram: 0-19, 20-39, ... 160-180.
+  function visitBands(scores) {
+    const bands = Array.from({ length: 9 }, (_, i) => ({ from: i * 20, to: i === 8 ? 180 : i * 20 + 19, n: 0 }));
+    for (const sc of scores || []) bands[Math.min(8, Math.floor(Math.max(0, sc) / 20))].n += 1;
+    return bands;
+  }
+
+  // Every visit, for the saved game (botGames.visits): { w: "p" | "b", d: [labels], s: scored (or
+  // marks), b: 1 a bust, r: what was left, p: cricket points }.
+  function visitsRecord(game) {
+    return game.visits.slice(0, 400).map((v) => {
+      const o = { w: v.who === "player" ? "p" : "b", d: (v.darts || []).slice(0, 3) };
+      if (game.kind === "x01") { o.s = v.bust ? 0 : v.scored; o.r = v.remaining; if (v.bust) o.b = 1; }
+      else { o.s = v.marks || 0; if (v.points) o.p = v.points; }
+      return o;
+    });
+  }
+
   // --- heat map ------------------------------------------------------------------------------------------
 
   // A smoothed count of darts over the board, on an n by n grid covering -1 to 1 in each direction.
@@ -925,5 +1249,16 @@
     heatGrid,
     heatStats,
     cleanDarts,
+    BOT_MODEL, LEVEL_AVG, STYLES, CALIB, botParams, botFor, nearestRank, botThrowAt, botDart, realToApp, appToReal, aimReal,
+    LADDER, ladderState, startBullUp, bullUpOn, bullUpThrow, mmFromCentre,
+    dartWords,
+    visitView,
+    requireLine,
+    fixVisitDart,
+    stepBack,
+    momentFor,
+    legReport,
+    visitBands,
+    visitsRecord,
   };
 });

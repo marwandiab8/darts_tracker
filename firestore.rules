@@ -97,7 +97,18 @@ service cloud.firestore {
     // A game is never edited after it is saved, so there is no update rule below.
     function validBotGame(data) {
       return data.keys().hasOnly(['uid', 'timestamp', 'kind', 'startScore', 'doubleOut', 'rank', 'first', 'result',
-          'durationSec', 'rounds', 'playerAvg', 'botAvg', 'playerScore', 'botScore', 'playerDarts', 'botDarts'])
+          'durationSec', 'rounds', 'playerAvg', 'botAvg', 'playerScore', 'botScore', 'playerDarts', 'botDarts', 'visits',
+          'botModel', 'botTarget', 'botStyle', 'ladder', 'matchId', 'leg', 'legsToWin'])
+        && (!data.keys().hasAny(['visits']) || (data.visits is list && data.visits.size() <= 400))
+        // The real-board bot (practice-engine.js model 2): its average, how it plays, the ladder.
+        && (!data.keys().hasAny(['botModel']) || (data.botModel is int && data.botModel >= 1 && data.botModel <= 9))
+        && optionalNumber(data, 'botTarget', 10, 120)
+        && (!data.keys().hasAny(['botStyle']) || data.botStyle in ['standard', 'grinder', 'scorer'])
+        && (!data.keys().hasAny(['ladder']) || data.ladder is bool)
+        // A leg of a match: the match's id, which leg, first to how many.
+        && (!data.keys().hasAny(['matchId']) || (data.matchId is string && data.matchId.size() >= 4 && data.matchId.size() <= 40))
+        && (!data.keys().hasAny(['leg']) || (data.leg is int && data.leg >= 1 && data.leg <= 30))
+        && (!data.keys().hasAny(['legsToWin']) || (data.legsToWin is int && data.legsToWin >= 1 && data.legsToWin <= 11))
         && data.keys().hasAll(['uid', 'timestamp', 'kind', 'rank', 'result', 'playerDarts', 'botDarts'])
         && data.uid == request.auth.uid
         && data.timestamp is string && data.timestamp.size() >= 10 && data.timestamp.size() <= 20
@@ -245,6 +256,15 @@ service cloud.firestore {
     // The tracker's session being entered (index.html), shared the same way: it replaces the
     // older liveDrafts document, which a page opened before this change still writes.
     match /liveSessions/{uid} {
+      allow read, delete: if signedIn() && request.auth.uid == uid;
+      allow create: if signedIn() && request.auth.uid == uid && validLiveGame(request.resource.data);
+      allow update: if signedIn() && request.auth.uid == uid && validLiveGame(request.resource.data)
+        && (request.resource.data.parent == resource.data.vid || request.resource.data.parent == '');
+    }
+
+    // The JDC Challenge round in play (challenge.html), the same on every device: versions of it, as
+    // liveSessions (live-sync.js). The finished round is saved in challengeGames.
+    match /liveChallenges/{uid} {
       allow read, delete: if signedIn() && request.auth.uid == uid;
       allow create: if signedIn() && request.auth.uid == uid && validLiveGame(request.resource.data);
       allow update: if signedIn() && request.auth.uid == uid && validLiveGame(request.resource.data)

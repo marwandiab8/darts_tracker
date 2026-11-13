@@ -255,6 +255,22 @@ test("a signed-in user can save, list and delete their own bot games, and nobody
   await assertSucceeds(deleteDoc(ref));
 });
 
+test("a bot game can carry its visits (at most 400)", async () => {
+  const db = asUser(me);
+  const visits = Array.from({ length: 30 }, (_, i) => ({ w: i % 2 ? "b" : "p", d: ["T20", "S20", "S1"], s: 81, r: 501 - 81 * (i + 1) }));
+  await assertSucceeds(addDoc(collection(db, "botGames"), botGame({ visits })));
+  await assertFails(addDoc(collection(db, "botGames"), botGame({ visits: "lots" })));
+  await assertFails(addDoc(collection(db, "botGames"), botGame({ visits: Array.from({ length: 401 }, () => ({ w: "p" })) })));
+});
+
+test("a bot game can say which bot it was and which leg of a match", async () => {
+  const db = asUser(me);
+  await assertSucceeds(addDoc(collection(db, "botGames"), botGame({ botModel: 2, botTarget: 55, botStyle: "grinder", ladder: true, matchId: "m1abcdefg", leg: 2, legsToWin: 3 })));
+  for (const bad of [{ botModel: 0 }, { botTarget: 500 }, { botStyle: "lucky" }, { ladder: "yes" }, { matchId: "" }, { leg: 0 }, { legsToWin: 12 }]) {
+    await assertFails(addDoc(collection(db, "botGames"), botGame(bad)));
+  }
+});
+
 test("a cricket game has no start score, and an x01 game needs one from 201 to 701", async () => {
   const db = asUser(me);
   const cricket = botGame({ kind: "cricket", playerAvg: 2.1, botAvg: 1.7 });
@@ -465,6 +481,16 @@ test("the live game: its owner starts one, and each change is made from the late
   // A new game replaces whatever is there; leaving one is a version too.
   await assertSucceeds(setDoc(ref, liveVersion({ vid: "vid0000005", parent: "", rev: 1 })));
   await assertSucceeds(setDoc(ref, liveVersion({ vid: "vid0000006", parent: "vid0000005", rev: 2, phase: "none" })));
+  await assertSucceeds(deleteDoc(ref));
+});
+
+test("the JDC round in play: its owner's devices share it, version by version; nobody else", async () => {
+  const ref = doc(asUser(me), "liveChallenges", me);
+  await assertSucceeds(setDoc(ref, liveVersion({ state: JSON.stringify({ v: 1, round: { id: "jdc1", darts: [3, 1] } }) })));
+  await assertSucceeds(setDoc(ref, liveVersion({ vid: "vid0000002", parent: "vid0000001", rev: 2 })));
+  await assertFails(setDoc(ref, liveVersion({ vid: "vid0000003", parent: "vid0000001", rev: 2 })));
+  await assertFails(getDoc(doc(asUser(other), "liveChallenges", me)));
+  await assertFails(setDoc(doc(asUser(other), "liveChallenges", me), liveVersion({ uid: other })));
   await assertSucceeds(deleteDoc(ref));
 });
 

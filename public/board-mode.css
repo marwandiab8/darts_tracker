@@ -41,7 +41,7 @@ body.bm-open { overflow: hidden; }
 .bm button:focus-visible, .bm .bm-dart:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
 
 /* Top bar */
-.bm-top { grid-area: top; display: flex; align-items: center; gap: 10px; min-width: 0; }
+.bm-top { grid-area: top; display: flex; align-items: center; gap: 10px; min-width: 0; position: relative; z-index: 2; }
 .bm .bm-chip { display: inline-flex; align-items: center; gap: 8px; min-height: 48px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--bm-line); background: var(--bm-panel); font-weight: 700; font-size: 16px; white-space: nowrap; }
 .bm-chip svg { width: 20px; height: 20px; flex: none; }
 .bm-chip[aria-pressed="false"] { color: var(--muted); }
@@ -57,7 +57,7 @@ body.bm-open { overflow: hidden; }
 .bm-hero { grid-area: hero; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: end; gap: 12px 24px; }
 .bm-label { font-size: 15px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
 .bm.paused .bm-label { color: var(--accent); }
-.bm-target { font-size: var(--bm-target); font-weight: 900; line-height: .82; letter-spacing: -.03em; color: var(--accent); font-variant-numeric: tabular-nums; }
+.bm-target { pointer-events: none; font-size: var(--bm-target); font-weight: 900; line-height: .82; letter-spacing: -.03em; color: var(--accent); font-variant-numeric: tabular-nums; }
 .bm-target.long { font-size: calc(var(--bm-target) * .72); }
 .bm.paused .bm-target { opacity: .35; }
 .bm-side { display: grid; justify-items: end; gap: 14px; padding-bottom: 6px; }
@@ -167,6 +167,9 @@ body.bm-open { overflow: hidden; }
 .bm-done { grid-area: hero; }
 .bm.idle .bm-hero, .bm.idle .bm-board, .bm.idle .bm-slots, .bm.idle .bm-strip, .bm.idle .bm-pad { display: none; }
 .bm.finished .bm-hero, .bm.finished .bm-pad { display: none; }
+/* A report at the end (the bot game): the whole screen, scrolling */
+.bm.done-only .bm-board, .bm.done-only .bm-slots, .bm.done-only .bm-strip { display: none; }
+.bm.done-only .bm-done { grid-row: 2 / -1; grid-column: 1 / -1; align-content: start; overflow-y: auto; min-height: 0; padding-bottom: 12px; }
 .bm-idle-title { font-size: clamp(36px, 7vw, 72px); font-weight: 900; line-height: 1; }
 .bm-idle-sub, .bm-done-sub { font-size: 22px; color: var(--muted); }
 .bm-done-big { font-size: min(14vh, 18vw); font-weight: 900; line-height: .9; color: var(--bm-hit); }

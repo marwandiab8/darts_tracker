@@ -340,6 +340,7 @@
         if (m.modeLabel != null && ref.mode.textContent !== m.modeLabel) ref.mode.textContent = m.modeLabel;
         el.classList.toggle("idle", !v);
         el.classList.toggle("finished", !!(v && v.finished));
+        el.classList.toggle("done-only", !!(v && v.finished && m.doneOnly));
         el.classList.toggle("paused", !!m.paused);
         show(ref.idle, !v);
         show(ref.done, !!(v && v.finished));

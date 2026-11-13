@@ -1043,3 +1043,200 @@ test("bug 2: your winning dart can be undone before the game is finished", () =>
 test("cleanHold keeps only well-formed events", () => {
   assert.deepEqual(E.cleanHold({ wait: 9, queue: [{ k: "d", x: 0, y: 0 }, { k: "d" }, { k: "x" }, { k: "o" }] }), { wait: 3, queue: [{ k: "d", x: 0, y: 0 }, { k: "o" }] });
 });
+
+// ---- Phase 3: Board mode, fixing a dart, undo across visits, moments, the match report ------------
+{
+  const at3 = (label) => (label === "MISS" ? { x: 0, y: -1.1 } : E.aimPoint(label.slice(1), label[0]));
+  const play3 = (g, labels) => { labels.forEach((l) => E.throwDart(g, at3(l))); if (g.visitDone && !g.winner) E.endVisit(g); };
+
+  test("visitView: each dart's points, a bust and a checkout say so, with where they landed", () => {
+    const g = E.createGame({ kind: "x01", startScore: 201, first: "player" });
+    g.remaining.player = 40; g.visitStart = 40;
+    E.throwDart(g, at3("S20"));
+    let v = E.visitView(g);
+    assert.equal(v.darts[0].sub, "20");
+    assert.equal(v.left, 20);
+    E.throwDart(g, at3("D10"));
+    v = E.visitView(g);
+    assert.equal(v.darts[1].sub, "Game shot");
+    assert.equal(v.scored, 40);
+    assert.ok(Number.isFinite(v.darts[1].x));
+    const b = E.createGame({ kind: "x01", startScore: 201, first: "player" });
+    b.remaining.player = 40; b.visitStart = 40;
+    play3(b, ["S20", "S20"]);
+    assert.equal(E.visitView(b, b.visits[0]).darts[1].sub, "Bust", "S20 S20 on 40 is a bust (no double)");
+    assert.ok(E.visitView(b, b.visits[0]).bust);
+  });
+
+  test("fixing a dart of the visit in progress throws the visit again; the winning dart too", () => {
+    const g = E.createGame({ kind: "x01", startScore: 201, first: "player" });
+    g.remaining.player = 32; g.visitStart = 32;
+    E.throwDart(g, at3("D16"));
+    assert.equal(g.winner, "player");
+    let r = E.fixVisitDart(g, 0, at3("S16"));
+    assert.equal(r.dropped, 0);
+    assert.equal(g.winner, null, "it was a single 16: no win");
+    assert.equal(g.remaining.player, 16);
+    E.throwDart(g, at3("S1")); E.throwDart(g, at3("S5"));
+    r = E.fixVisitDart(g, 0, at3("D16"));
+    assert.equal(g.winner, "player", "back to the double: the win, and the darts after it don't count");
+    assert.equal(r.dropped, 2);
+    assert.deepEqual(g.visitDarts, ["D16"]);
+  });
+
+  test("Undo goes back across visits: the bot's visit comes off and yours opens without its last dart", () => {
+    const g = E.createGame({ kind: "x01", startScore: 501, first: "player" });
+    play3(g, ["T20", "T20", "S20"]);
+    play3(g, ["S1", "S1", "S1"]);   // the bot
+    assert.equal(g.turn, "player");
+    let r = E.stepBack(g);
+    assert.equal(r.kind, "visit");
+    assert.equal(r.removed, 1);
+    assert.equal(g.turn, "player");
+    assert.deepEqual(g.visitDarts, ["T20", "T20"]);
+    assert.equal(g.remaining.player, 381);
+    assert.equal(g.remaining.bot, 501);
+    r = E.stepBack(g);
+    assert.equal(r.kind, "dart");
+    assert.deepEqual(g.visitDarts, ["T20"]);
+    E.stepBack(g); 
+    assert.equal(E.stepBack(g), null, "nothing left to take back");
+  });
+
+  test("moments: a 180, the nine-dart watch, a ton-plus finish, game shot", () => {
+    const g = E.createGame({ kind: "x01", startScore: 501, first: "player" });
+    play3(g, ["T20", "T20", "T20"]);
+    assert.equal(E.momentFor(g, g.visits[0]).kind, "180");
+    play3(g, ["S1", "S1", "S1"]);
+    play3(g, ["T20", "T20", "T20"]);
+    const m = E.momentFor(g, g.visits[2]);
+    assert.equal(m.kind, "180");
+    assert.match(m.sub, /Nine-dart watch: 141 left/);
+    play3(g, ["S1", "S1", "S1"]);
+    play3(g, ["T20", "T19", "D12"]);
+    E.endVisit(g);
+    const f = E.momentFor(g, g.visits[4]);
+    assert.equal(f.kind, "finish");
+    assert.equal(f.big, "141");
+    assert.equal(E.momentFor(g, g.visits[1]), null);
+  });
+
+  test("the leg report: averages, first nine, checkout darts, the highest finish and the 100s", () => {
+    const g = E.createGame({ kind: "x01", startScore: 201, first: "player" });
+    play3(g, ["T20", "S20", "S20"]);  // 100: 101 left
+    play3(g, ["S1", "S1", "S1"]);
+    play3(g, ["T19", "S4", "S18"]);    // 79: 22 left
+    play3(g, ["S1", "S1", "S1"]);
+    play3(g, ["D10", "S1"]);           // on 22 (D11 on), D10 leaves 2 (D1 on), S1 leaves 1: bust
+    const r = E.legReport(g, "player");
+    assert.deepEqual(r.tons, { s60: 1, s100: 1, s140: 0, s180: 0 });
+    assert.equal(r.checkout.darts, 3, "three darts thrown with a finish on (S18 on 40, D10 on 22, S1 on 2)");
+    assert.equal(r.checkout.hits, 0);
+    play3(g, ["S1", "S1", "S1"]);
+    play3(g, ["D11"]);
+    E.endVisit(g);
+    const w = E.legReport(g, "player");
+    assert.equal(w.checkout.hits, 1);
+    assert.equal(w.checkout.darts, 4);
+    assert.equal(w.highFinish, 22);
+    assert.ok(w.won);
+    assert.equal(w.first9, Math.round((179 * 3 / 9) * 100) / 100);
+    assert.deepEqual(E.visitBands(w.visits).map((b) => b.n).reduce((a, b) => a + b, 0), w.visits.length);
+  });
+
+  test("requireLine and the saved visits", () => {
+    const g = E.createGame({ kind: "x01", startScore: 201, first: "player" });
+    assert.equal(E.requireLine(g, "player"), "");
+    g.remaining.player = 81;
+    assert.equal(E.requireLine(g, "player"), "You require 81");
+    g.remaining.player = 169;
+    assert.equal(E.requireLine(g, "player"), "", "no finish from 169");
+    const h = E.createGame({ kind: "x01", startScore: 201, first: "player" });
+    play3(h, ["T20", "S20", "MISS"]);
+    play3(h, ["S1", "S1", "S1"]);
+    assert.deepEqual(E.visitsRecord(h), [{ w: "p", d: ["T20", "S20", "MISS"], s: 80, r: 121 }, { w: "b", d: ["S1", "S1", "S1"], s: 3, r: 198 }]);
+  });
+}
+
+// ---- Phase 4: the bot on a real board, its average and style, the ladder, the bull-up ------------
+{
+  const at4 = (label) => (label === "MISS" ? { x: 0, y: -1.1 } : E.aimPoint(label.slice(1), label[0]));
+
+  test("the real-board bot plays at its level's average (a 501 simulation)", () => {
+    const run = (level, style, legs, seed) => {
+      const rng = E.mulberry32(seed);
+      let pts = 0, darts = 0;
+      for (let k = 0; k < legs; k += 1) {
+        const g = E.createGame({ kind: "x01", startScore: 501, first: "bot", bot: { level, style } });
+        let guard = 0;
+        while (!g.winner && guard++ < 300) {
+          E.throwDart(g, E.botDart(g, "club", rng));
+          if (g.visitDone) { E.endVisit(g); g.turn = "bot"; g.visitStart = g.remaining.bot; }
+        }
+        pts += 501; darts += g.visits.reduce((n, v) => n + (v.bust ? 3 : v.darts.length), 0);
+      }
+      return (pts * 3) / darts;
+    };
+    const club = run("club", "standard", 120, 5);
+    assert.ok(club > 46 && club < 60, "club plays at about 53: " + club.toFixed(1));
+    const pro = run("pro", "standard", 60, 9);
+    assert.ok(pro > 82, "pro is far stronger: " + pro.toFixed(1));
+  });
+
+  test("the spreads: a style changes the doubles, the levels keep their order", () => {
+    const club = E.botParams(53, "standard");
+    assert.ok(Math.abs(club.s - 0.083) < 0.005);
+    assert.ok(E.botParams(53, "grinder").d < club.d && E.botParams(53, "scorer").d > club.d);
+    assert.ok(E.botParams(53, "grinder").checkout > club.checkout && E.botParams(53, "scorer").checkout < club.checkout);
+    const levels = Object.values(E.LEVEL_AVG).map((a) => E.botParams(a, "standard").s);
+    for (let i = 1; i < levels.length; i += 1) assert.ok(levels[i] < levels[i - 1]);
+    assert.equal(E.nearestRank(58), "club");
+    assert.equal(E.nearestRank(64), "league");
+    assert.deepEqual(E.botFor({ level: "custom", target: 200, style: "x" }), { level: "custom", target: 110, style: "standard" });
+  });
+
+  test("a game keeps its bot: the first bot for old games, model 2 through a replay and an undo", () => {
+    const old = E.createGame({ kind: "x01", startScore: 501, first: "bot" });
+    assert.equal(old.botModel, undefined);
+    assert.deepEqual(E.botDart(old, "club", E.mulberry32(3)), E.botThrow(E.botAim(old), "club", E.mulberry32(3)), "an old game throws as before");
+    const g = E.createGame({ kind: "x01", startScore: 501, first: "player", bot: { level: "league", style: "scorer" } });
+    assert.equal(g.botModel, E.BOT_MODEL);
+    ["T20", "T20", "S20"].forEach((l) => E.throwDart(g, at4(l))); E.endVisit(g);
+    ["S1", "S1", "S1"].forEach((l) => E.throwDart(g, at4(l))); E.endVisit(g);
+    E.stepBack(g);
+    assert.equal(g.botModel, E.BOT_MODEL);
+    assert.deepEqual(g.bot, { level: "league", target: 72, style: "scorer" });
+  });
+
+  test("the ladder: start at 52, win 2 of 3 to move up 3, the highest average beaten", () => {
+    const at = (r, t, i) => ({ ladder: true, result: r, botTarget: t, timestamp: "2026-11-1" + i + " 18:00" });
+    assert.deepEqual(E.ladderState([]), { target: 52, wins: 0, losses: 0, played: 0, best: null });
+    let l = E.ladderState([at("won", 52, 1), at("lost", 52, 2), at("won", 52, 3)]);
+    assert.equal(l.target, 55);
+    assert.equal(l.best, 52);
+    l = E.ladderState([at("won", 52, 1), at("lost", 52, 2), at("lost", 52, 3)]);
+    assert.equal(l.target, 52, "1 of 3: stays");
+    assert.equal(l.wins + l.losses, 0, "and starts the step again");
+    l = E.ladderState([at("won", 52, 1), { result: "won", botTarget: 52, timestamp: "2026-11-12 18:00" }, at("abandoned", 52, 3)]);
+    assert.equal(l.target, 52, "games off the ladder and unfinished ones don't count");
+  });
+
+  test("the bull-up: the closer throws first; a tie throws again; no game darts before it", () => {
+    const g = E.startBullUp(E.createGame({ kind: "x01", startScore: 501, first: "player", bot: { level: "club" } }));
+    assert.throws(() => E.throwDart(g, at4("T20")), /bull-up/);
+    assert.deepEqual(E.bullUpThrow(g, "player", { x: 0.05, y: 0 }), { done: false });
+    const r = E.bullUpThrow(g, "bot", { x: 0.01, y: 0 });
+    assert.deepEqual(r, { done: true, first: "bot" });
+    assert.equal(g.turn, "bot");
+    assert.equal(g.first, "bot");
+    assert.ok(g.bullUp.player.mm > g.bullUp.bot.mm);
+    const t = E.startBullUp(E.createGame({ kind: "x01", startScore: 501, first: "player" }));
+    E.bullUpThrow(t, "player", { x: 0.02, y: 0 });
+    assert.deepEqual(E.bullUpThrow(t, "bot", { x: 0, y: 0.02 }), { done: false, tie: true });
+    assert.equal(t.bullUp.player, null);
+    // A game replayed (an undo, an edit) keeps the bull-up's result.
+    E.throwDart(g, at4("S1"));
+    const opts = E.gameOptions(g);
+    assert.ok(opts.bullUp.done);
+  });
+}

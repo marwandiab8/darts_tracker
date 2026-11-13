@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Practice - Darts Tracker</title>
+<link rel="stylesheet" href="board-mode.css?v=2">
 <style>
   :root {
     --bg: #0b0f17; --muted: #94a3b8; --text: #e5e7eb; --accent: #f59e0b; --bot: #38bdf8;
@@ -20,6 +21,12 @@
   header h1 { margin: 0; font-size: 22px; }
   .head-right { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
   #soundBtn { min-height: 36px; padding: 6px 12px; font-size: 14px; }
+  .over-report .bm-report { margin-top: 12px; text-align: left; }
+  .over-report table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  .over-report th, .over-report td { padding: 3px 12px 3px 0; text-align: left; font-size: 14px; }
+  .over-report th { color: var(--muted); font-weight: 700; }
+  .over-report svg { width: 100%; max-width: 420px; height: auto; display: block; margin-top: 8px; }
+  .over-report .up { color: #86efac; } .over-report .down { color: #fca5a5; }
   #soundBtn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
   #soundUnlock { min-height: 36px; padding: 6px 12px; font-size: 14px; }
   .head-left { display: flex; align-items: center; gap: 12px; min-width: 0; flex-wrap: wrap; }
@@ -265,7 +272,16 @@
         <div id="rankBox">
           <label for="rank">Bot level</label>
           <select id="rank"></select>
+          <div class="hidden" id="botTargetBox" style="margin-top:8px;">
+            <label for="botTarget">Its 3-dart average</label>
+            <input type="number" id="botTarget" min="15" max="110" step="1" inputmode="numeric">
+          </div>
           <div class="muted" id="rankBlurb" style="font-size:13px;margin-top:4px;"></div>
+        </div>
+        <div id="styleBox">
+          <label for="botStyle">How it plays</label>
+          <select id="botStyle"></select>
+          <div class="muted" id="styleBlurb" style="font-size:13px;margin-top:4px;"></div>
         </div>
         <div>
           <label for="handover">After my third dart</label>
@@ -279,24 +295,25 @@
           <select id="first">
             <option value="player">You</option>
             <option value="bot">The bot</option>
+            <option value="bullup">Bull-up: closest to the bull</option>
           </select>
         </div>
         <div>
           <label for="seriesTarget">Play</label>
           <select id="seriesTarget">
-            <option value="1">Single game</option>
-            <option value="2">First to win 2 games</option>
-            <option value="3">First to win 3 games</option>
-            <option value="4">First to win 4 games</option>
-            <option value="5">First to win 5 games</option>
-            <option value="7">First to win 7 games</option>
-            <option value="9">First to win 9 games</option>
+            <option value="1">One leg</option>
+            <option value="2">First to 2 legs (best of 3)</option>
+            <option value="3">First to 3 legs (best of 5)</option>
+            <option value="4">First to 4 legs (best of 7)</option>
+            <option value="5">First to 5 legs (best of 9)</option>
+            <option value="7">First to 7 legs (best of 13)</option>
+            <option value="9">First to 9 legs (best of 17)</option>
             <option value="11">First to win 11 games</option>
           </select>
           <div class="muted" style="font-size:13px;margin-top:4px;">Who throws first alternates each game after the first.</div>
         </div>
       </div>
-      <div class="actions"><button type="button" id="startBtn">Start game</button></div>
+      <div class="actions"><button type="button" id="startBtn">Start game</button><button type="button" class="secondary" id="boardBtnSetup" title="A full-screen scoreboard to read from the oche">Board mode</button></div>
     </section>
 
     <!-- Playing -->
@@ -336,6 +353,7 @@
             <button type="button" class="secondary hidden" id="editBtn">Edit my last visit</button>
             <button type="button" class="secondary hidden" id="editOtherBtn">Edit their last visit</button>
             <button type="button" class="secondary hidden" id="cancelEditBtn">Cancel edit</button>
+            <button type="button" class="secondary" id="boardBtn" title="A full-screen scoreboard to read from the oche">Board mode</button>
             <button type="button" class="danger" id="quitBtn">Quit game</button>
           </div>
         </div>
@@ -347,6 +365,7 @@
               <div class="muted" id="overSeries" style="font-weight:700;"></div>
               <div class="muted" id="overNote" style="font-size:13px;"></div>
               <div class="stats" id="overStats"></div>
+              <div id="overReport" class="over-report"></div>
               <div class="saved" id="saveNote" role="status"></div>
               <div class="saved" id="emailNote" role="status"></div>
               <div class="actions">
@@ -402,7 +421,8 @@
      Cache-Control: no-cache (a real, previously-seen failure mode - see docs/bot-practice.md) is
      still forced to fetch the matching engine instead of silently pairing a new page with a stale
      one, which throws inside announce()'s catch-all and looks like "no sound at all". -->
-<script src="practice-engine.js?v=7"></script>
+<script src="practice-engine.js?v=8"></script>
+<script src="board-mode.js?v=2"></script>
 <script src="practice-timer.js?v=2"></script>
 <script src="live-sync.js?v=1"></script>
 <script src="board-vision.js?v=9"></script>
@@ -427,6 +447,8 @@
   const SERIES_TARGETS = E.SERIES_TARGETS;
   const BOT_DELAY = 800, BOT_PAUSE = 1300;
   const RANK_IDS = E.RANKS.map((r) => r.id);
+  // The bot level choices: the named levels, an average set by hand, or the ladder.
+  const LEVEL_IDS = RANK_IDS.concat(["custom", "ladder"]);
 
   // Everything that persists in the browser is a convenience, so a blocked or full storage is fine.
   const store = {
@@ -436,7 +458,7 @@
   };
 
   let user = null;
-  let settings = Object.assign({ kind: "x01", startScore: 501, doubleOut: true, rank: "club", first: "player", entry: "board", confirm: false, camera: false, mute: false, opponent: "bot", oppName: "", oppEmail: "", seriesTarget: 1 }, store.get(SETTINGS_KEY) || {});
+  let settings = Object.assign({ kind: "x01", startScore: 501, doubleOut: true, rank: "club", first: "player", entry: "board", confirm: false, camera: false, mute: false, opponent: "bot", oppName: "", oppEmail: "", seriesTarget: 1, botTarget: 53, botStyle: "standard" }, store.get(SETTINGS_KEY) || {});
   // Who is playing the running game. Against the bot the two sides are "You" and the bot; with another
   // player they are two people sharing the phone, and the email address of the second one is kept
   // here so the result can be sent to both.
@@ -669,6 +691,7 @@
   }
 
   async function announce(visit) {
+    if (visit && game) showMoment(visit);
     if (!canSpeak || settings.mute || !visit || !game) return;
     let busy = false;
     try { busy = window.speechSynthesis.speaking || window.speechSynthesis.pending; } catch (_) {}
@@ -691,10 +714,14 @@
       const segs = typeof E.visitAnnouncement === "function"
         ? E.visitAnnouncement(visit, game.kind, game.winner === visit.who)
         : [{ text: E.visitSpeech(visit, game.kind, game.winner === visit.who), rate: 1, pitch: 1, volume: 1, clip: null }];
+      // The next thrower with a finish on: "You require 81" (with two players, their name first).
+      const next = game.turn;
+      const need = !game.winner && next !== visit.who && (versus() || next === "player") && typeof E.requireLine === "function" ? E.requireLine(game, next) : "";
+      if (need) segs.push({ text: (versus() ? firstWord(nameOf(next)) + ", y" + need.slice(1) : need) + ".", rate: 0.95, pitch: 1, volume: 1, clip: null, plain: true });
       // One after another (the score, then "Game shot!"), and abandoned if a newer call starts.
       for (const seg of segs) {
         if (token !== announceToken || settings.mute) return;
-        await playSeg(seg, botPitch);
+        await playSeg(seg, seg.plain ? 1 : botPitch);
       }
     } catch (_) { /* no voice available: the score is on the screen anyway */ }
   }
@@ -899,6 +926,7 @@
       note.classList.remove("hidden");
     }
     renderHistory(); renderHeat();
+    syncSetupVisibility(); // the ladder's step comes from the saved games
   }
 
   // --- setup ---------------------------------------------------------------------------------------------
@@ -906,9 +934,11 @@
     const start = $("startScore");
     E.START_SCORES.forEach((v) => { const o = el("option", "", String(v)); o.value = String(v); start.append(o); });
     const rank = $("rank");
-    E.RANKS.forEach((r) => { const o = el("option", "", r.name); o.value = r.id; rank.append(o); });
+    E.RANKS.forEach((r) => { const o = el("option", "", r.name + " (averages " + E.LEVEL_AVG[r.id] + ")"); o.value = r.id; rank.append(o); });
+    [["custom", "Set its average"], ["ladder", "The ladder: win 2 of 3 to move up"]].forEach(([v, t]) => { const o = el("option", "", t); o.value = v; rank.append(o); });
+    E.STYLES.forEach((st) => { const o = el("option", "", st.name); o.value = st.id; $("botStyle").append(o); });
     applySettingsToForm();
-    for (const id of ["startScore", "outRule", "rank", "first", "entry", "handover", "seriesTarget"]) $(id).addEventListener("change", readForm);
+    for (const id of ["startScore", "outRule", "rank", "first", "entry", "handover", "seriesTarget", "botStyle", "botTarget"]) $(id).addEventListener("change", readForm);
     for (const id of ["oppName", "oppEmail"]) { $(id).addEventListener("input", readForm); $(id).addEventListener("change", readForm); }
     document.querySelectorAll('input[name="kind"], input[name="opp"]').forEach((r) => r.addEventListener("change", readForm));
   }
@@ -916,12 +946,16 @@
   function applySettingsToForm() {
     if (!["x01", "cricket"].includes(settings.kind)) settings.kind = "x01";
     if (!E.START_SCORES.includes(Number(settings.startScore))) settings.startScore = 501;
-    if (!RANK_IDS.includes(settings.rank)) settings.rank = "club";
+    if (!LEVEL_IDS.includes(settings.rank)) settings.rank = "club";
+    if (!E.STYLES.some((st) => st.id === settings.botStyle)) settings.botStyle = "standard";
+    settings.botTarget = Math.max(15, Math.min(110, Math.round(Number(settings.botTarget) || 53)));
     document.querySelectorAll('input[name="kind"]').forEach((r) => { r.checked = r.value === settings.kind; });
     $("startScore").value = String(settings.startScore);
     $("outRule").value = settings.doubleOut === false ? "straight" : "double";
     $("rank").value = settings.rank;
-    $("first").value = settings.first === "bot" ? "bot" : "player";
+    $("first").value = settings.first === "bot" || settings.first === "bullup" ? settings.first : "player";
+    $("botStyle").value = settings.botStyle;
+    $("botTarget").value = String(settings.botTarget);
     $("entry").value = settings.entry === "keypad" ? "keypad" : "board";
     $("handover").value = settings.confirm ? "enter" : "auto";
     $("seriesTarget").value = SERIES_TARGETS.includes(Number(settings.seriesTarget)) ? String(settings.seriesTarget) : "1";
@@ -936,9 +970,34 @@
     const seriesTarget = Number($("seriesTarget").value);
     settings = { kind: kind ? kind.value : "x01", startScore: Number($("startScore").value), doubleOut: $("outRule").value !== "straight", rank: $("rank").value, first: $("first").value, entry: $("entry").value, confirm: $("handover").value === "enter",
       opponent: (document.querySelector('input[name="opp"]:checked') || {}).value === "human" ? "human" : "bot", oppName: $("oppName").value.trim().slice(0, 40), oppEmail: $("oppEmail").value.trim(), mute: settings.mute, camera: !!settings.camera && $("entry").value !== "keypad",
-      seriesTarget: SERIES_TARGETS.includes(seriesTarget) ? seriesTarget : 1 };
+      seriesTarget: SERIES_TARGETS.includes(seriesTarget) ? seriesTarget : 1,
+      botStyle: $("botStyle").value, botTarget: Math.max(15, Math.min(110, Math.round(Number($("botTarget").value) || 53))) };
     store.set(SETTINGS_KEY, settings);
     syncSetupVisibility();
+  }
+
+  // The bot a new game is played against (practice-engine.js botFor): a named level, an average set by
+  // hand, or the ladder's step (worked out from your saved ladder games).
+  const ladderNow = () => E.ladderState(savedGames.filter((g) => g.coll === "botGames").map((g) => g.data));
+  function botForNewGame() {
+    const level = settings.rank;
+    return E.botFor({ level, target: level === "ladder" ? ladderNow().target : settings.botTarget, style: settings.botStyle });
+  }
+  function levelBlurb() {
+    if (settings.rank === "custom") { const p = E.botParams(settings.botTarget, settings.botStyle); return "Plays at about " + settings.botTarget + " and checks out with about " + Math.round(p.checkout * 100) + "% of its darts at a double."; }
+    if (settings.rank === "ladder") {
+      const l = ladderNow();
+      return "You're on the step at " + l.target + " (" + l.wins + " won, " + l.losses + " lost at this step). Win 2 of 3 to move up 3." + (l.best ? " Highest average beaten: " + l.best + "." : "");
+    }
+    return E.rankById(settings.rank).blurb + " Averages about " + E.LEVEL_AVG[settings.rank] + ".";
+  }
+  // What the bot is called: "Club bot", "58-average bot", "Ladder bot (55)".
+  function botTitle(bot) {
+    const b = bot || (game && game.bot) || null;
+    if (!b) return rankName(RANK_IDS.includes(settings.rank) ? settings.rank : "club") + " bot";
+    if (b.level === "ladder") return "Ladder bot (" + b.target + ")";
+    if (b.level === "custom") return b.target + "-average bot";
+    return rankName(b.level) + " bot";
   }
 
   // Whether a game against another player can start: their email is needed, and yours has to exist so
@@ -959,7 +1018,13 @@
     $("entryBox").classList.toggle("hidden", !x01);
     $("humanBox").classList.toggle("hidden", !human);
     $("rankBox").classList.toggle("hidden", human);
-    $("rankBlurb").textContent = E.rankById(settings.rank).blurb;
+    $("rankBlurb").textContent = levelBlurb();
+    $("botTargetBox").classList.toggle("hidden", human || settings.rank !== "custom");
+    $("styleBox").classList.toggle("hidden", human);
+    $("styleBlurb").textContent = (E.STYLES.find((st) => st.id === settings.botStyle) || E.STYLES[0]).blurb;
+    // A bull-up is against the bot; with two people, who starts is chosen.
+    if (human && settings.first === "bullup") { settings.first = "player"; $("first").value = "player"; }
+    $("first").options[2].hidden = human;
     // "Who throws first" names the other player when there is one.
     $("first").options[1].textContent = human ? (String(settings.oppName || "").trim() || "The other player") : "The bot";
     $("handover").options[0].textContent = human ? "Pass to the other player automatically" : "Pass to the bot automatically";
@@ -1007,7 +1072,7 @@
   }
 
   // Whether the bot is to throw now (against the bot, its visit not over, nobody correcting a visit).
-  const botTurnNow = () => !!game && !versus() && !reviewing && !editing && game.turn === "bot" && !game.winner;
+  const botTurnNow = () => !!game && !versus() && !reviewing && !editing && game.turn === "bot" && !game.winner && !E.bullUpOn(game);
   // The bot's visit is thrown but not closed yet (its checkout included): it is still the bot's go.
   const botVisitToClose = () => !!game && !versus() && !reviewing && !editing && game.turn === "bot" && game.visitDone;
   const botGoing = () => botTurnNow() || botVisitToClose();
@@ -1024,7 +1089,8 @@
   // darts, passing a finished visit over. (A match's next game is started where the game was finished.)
   function drive() {
     if (!game || reviewing || (live && live.latest && live.latest.by !== live.by)) return;
-    if (botGoing() && !botLoop) runBot();
+    if (bullUpWaiting() && game.bullUp.player && !game.bullUp.bot && !botLoop) runBullUpBot();
+    else if (botGoing() && !botLoop) runBot();
     else if (game.visitDone && !game.winner && humanTurn() && !settings.confirm && !keypadActive() && !passTimer) scheduleAutoPass();
   }
 
@@ -1036,7 +1102,8 @@
     let wait = 0, act = null;
     if (reviewing) {
       if (series && !E.seriesDecided(series) && over && over.result !== "abandoned") { wait = NEXT_GAME_DELAY; act = startNextSeriesGame; }
-    } else if (botGoing()) { wait = BOT_DELAY + BOT_PAUSE; act = runBot; }
+    } else if (bullUpWaiting() && game.bullUp.player && !game.bullUp.bot) { wait = BOT_DELAY + BOT_PAUSE; act = runBullUpBot; }
+    else if (botGoing()) { wait = BOT_DELAY + BOT_PAUSE; act = runBot; }
     else if (game.visitDone && !game.winner && humanTurn() && !settings.confirm && !keypadActive()) { wait = PASS_DELAY_BUST; act = passTurn; }
     if (!act) return;
     const fire = () => {
@@ -1169,7 +1236,7 @@
 
   // The two names for a new game. With another player, names that would be the same are told apart.
   function buildMatch() {
-    if (settings.opponent !== "human") return { human: false, names: { player: "You", bot: rankName(settings.rank) + " bot" }, opponentEmail: "" };
+    if (settings.opponent !== "human") return { human: false, names: { player: "You", bot: botTitle(botForNewGame()) }, opponentEmail: "" };
     const email = String(settings.oppEmail || "").trim();
     const mine = firstWord(user && (user.displayName || user.email)) || "Player 1";
     const fromEmail = email.split("@")[0].slice(0, 40).replace(/^./, (c) => c.toUpperCase());
@@ -1185,8 +1252,12 @@
     match = buildMatch();
     store.remove(SERIES_KEY);
     const target = Number(settings.seriesTarget);
-    series = SERIES_TARGETS.includes(target) ? E.createSeries({ target, first: settings.first }) : null;
-    game = E.createGame({ kind: settings.kind, startScore: settings.startScore, doubleOut: settings.doubleOut, first: series ? series.nextFirst : settings.first });
+    const bullUp = settings.first === "bullup" && settings.opponent !== "human";
+    const first = bullUp ? "player" : settings.first === "bot" ? "bot" : "player";
+    series = SERIES_TARGETS.includes(target) ? E.createSeries({ target, first }) : null;
+    if (series) series.id = newGameId(); // the match's id, on each leg's record
+    game = E.createGame({ kind: settings.kind, startScore: settings.startScore, doubleOut: settings.doubleOut, first: series ? series.nextFirst : first, bot: settings.opponent !== "human" ? botForNewGame() : null });
+    if (bullUp) E.startBullUp(game);
     gameId = newGameId(); over = null; camDarts = []; camHold = E.cleanHold(null);
     startedAt = Date.now(); reviewing = false; lastMessage = ""; pendingRecord = null;
     timer = T.start(startedAt);
@@ -1202,7 +1273,8 @@
   function startNextSeriesGame() {
     if (!series || E.seriesDecided(series)) return;
     stopDriving(); editing = null;
-    game = E.createGame({ kind: settings.kind, startScore: settings.startScore, doubleOut: settings.doubleOut, first: series.nextFirst });
+    // The same bot all match (its average and style), whatever the settings say now.
+    game = E.createGame({ kind: settings.kind, startScore: settings.startScore, doubleOut: settings.doubleOut, first: series.nextFirst, bot: !versus() ? (game && game.bot) || botForNewGame() : null });
     gameId = newGameId(); over = null; camDarts = []; camHold = E.cleanHold(null);
     startedAt = Date.now(); reviewing = false; lastMessage = ""; pendingRecord = null;
     timer = T.start(startedAt);
@@ -1332,10 +1404,10 @@
     // The time away counts like any break: at most the 3 minutes before the timer paused itself.
     timer = T.restore(saved.timer, Date.now())
       || Object.assign(T.start(Date.now()), { activeMs: Math.max(0, Number(saved.playClock && saved.playClock.activeMs) || 0) });
-    match = saved.match && saved.match.names && typeof saved.match.human === "boolean" ? saved.match : { human: false, names: { player: "You", bot: rankName(settings.rank) + " bot" }, opponentEmail: "" };
+    match = saved.match && saved.match.names && typeof saved.match.human === "boolean" ? saved.match : { human: false, names: { player: "You", bot: botTitle() }, opponentEmail: "" };
     series = saved.series && looksLikeSeries(saved.series) ? saved.series : null;
     E.upgradeGame(game);
-    if (saved.settings && RANK_IDS.includes(saved.settings.rank)) settings = Object.assign(settings, saved.settings);
+    if (saved.settings && LEVEL_IDS.includes(saved.settings.rank)) settings = Object.assign(settings, saved.settings);
     reviewing = false; lastMessage = "Game resumed."; pendingRecord = null;
     // A bot turn was interrupted: start it over from the beginning of the visit. (A checkout waiting
     // to be finished stays as it is.)
@@ -1355,8 +1427,8 @@
     const saved = store.get(SERIES_KEY);
     if (!saved || !looksLikeSeries(saved.series)) { checkResume(); return; }
     series = saved.series;
-    match = saved.match && saved.match.names && typeof saved.match.human === "boolean" ? saved.match : { human: false, names: { player: "You", bot: rankName(settings.rank) + " bot" }, opponentEmail: "" };
-    if (saved.settings && RANK_IDS.includes(saved.settings.rank)) settings = Object.assign(settings, saved.settings);
+    match = saved.match && saved.match.names && typeof saved.match.human === "boolean" ? saved.match : { human: false, names: { player: "You", bot: botTitle() }, opponentEmail: "" };
+    if (saved.settings && LEVEL_IDS.includes(saved.settings.rank)) settings = Object.assign(settings, saved.settings);
     startNextSeriesGame();
   }
 
@@ -1446,6 +1518,13 @@
     box.classList.toggle("no-checkout", !!game && game.kind !== "x01");
     box.classList.remove("has-checkout");
     if (reviewing) return;
+    if (bullUpWaiting()) {
+      const line = el("div", "st-main");
+      line.append(el("strong", "", "Bull-up"), document.createTextNode(game.bullUp.player ? " · the bot's dart…" : " · throw one dart at the bull: the closer throws first."));
+      box.append(line);
+      if (lastMessage) box.append(el("div", "st-msg", lastMessage));
+      return;
+    }
     let note = lastMessage, noteClass = "st-msg";
     if (editing) {
       const was = editing.original, what = game.kind === "x01" ? (was.bust ? "a bust" : was.scored) : was.marks + " marks" + (was.points ? ", +" + was.points : "");
@@ -1511,6 +1590,7 @@
     syncCamera();
     timerView.refresh();
     holdGameHeight();
+    renderBotBoard();
   }
 
   // During a game the page never gets shorter. Buttons under the board come and go every visit; when the page is
@@ -1754,6 +1834,7 @@
   // A dart tapped on the board (or Missed the board). If the cameras are waiting for a dart they
   // couldn't read, this is it, and the darts they held behind it go in after it.
   function playerThrow(position) {
+    if (bullUpWaiting()) { if (!botBusy) bullUpDart(position); return; }
     if (!game || reviewing || !humanTurn() || game.visitDone || game.winner || botBusy) return;
     const result = E.throwDart(game, position);
     lastMessage = visitText(result);
@@ -1901,6 +1982,14 @@
     } else ev = { k: e.type === "takeout" ? "o" : "u", seq: e.seq || 0 };
     noteCamera(e);
     if (mine) noteActivity();
+    // The bull-up: your dart at the bull (the rest of that visit, and the pull-out, mean nothing).
+    if (bullUpWaiting()) {
+      if (ev.k === "d" && !game.bullUp.player) bullUpDart({ x: ev.x, y: ev.y });
+      else if (ev.k === "u" && !game.bullUp.player) cameraSays("Camera: a dart it couldn't read. Tap where it landed.", true);
+      return;
+    }
+    // Your winning visit: pulling the darts out confirms it, so there's no walk to the iPad to finish.
+    if (ev.k === "o" && mine && game.winner && game.winner === game.turn && game.visitDone && !editing) { persistGame(); passTurn(); return; }
     const out = E.cameraEvent(game, camHold, ev, mine, missPosition);
     if (out.length === 1 && out[0].t === "none") { persistGame(); return cameraSays("Camera on: watching the board."); }
     applyCamera(out);
@@ -2057,12 +2146,50 @@
         return;
       }
       if (!botTurnNow()) { botBusy = false; botLoop = false; render(); return; }
-      const result = E.throwDart(game, E.botThrow(E.botAim(game), settings.rank, E.mulberry32(botSeed())));
+      const result = E.throwDart(game, E.botDart(game, legacyRank(), E.mulberry32(botSeed())));
       lastMessage = "Bot: " + visitText(result);
       persistGame(); render();
-      setTimeout(step, BOT_DELAY);
+      setTimeout(step, botDelay());
     };
-    setTimeout(step, BOT_DELAY);
+    setTimeout(step, botDelay());
+  }
+
+  // The first bot's level (games started before the real-board bot), and the bot's rhythm: not a
+  // metronome, and a breath longer before a double.
+  const legacyRank = () => (RANK_IDS.includes(settings.rank) ? settings.rank : "club");
+  function botDelay() {
+    const aim = game && !game.winner && game.turn === "bot" && game.kind === "x01" ? E.botAim(game) : null;
+    return Math.round(BOT_DELAY * (0.75 + Math.random() * 0.6) + (aim && aim.ring === "D" ? 350 : 0));
+  }
+
+  // --- the bull-up ------------------------------------------------------------------------------------------------
+  // One dart each at the bull before the first leg; the closer throws first. Yours from the board or
+  // the cameras, then the bot's.
+  const bullUpWaiting = () => !!game && E.bullUpOn(game) && !reviewing;
+  function bullUpDart(position) {
+    if (!bullUpWaiting() || game.bullUp.player) return;
+    E.bullUpThrow(game, "player", position);
+    lastMessage = "Your dart: " + game.bullUp.player.mm + " mm from the centre. Now the bot.";
+    persistGame(); render();
+    runBullUpBot();
+  }
+  function runBullUpBot() {
+    const token = ++botToken;
+    botBusy = true; botLoop = true;
+    setTimeout(() => {
+      if (token !== botToken || !bullUpWaiting() || !game.bullUp.player || game.bullUp.bot) { botBusy = false; botLoop = false; return; }
+      const mine = game.bullUp.player.mm;
+      const r = E.bullUpThrow(game, "bot", E.botThrowAt(game, { target: "BULL", ring: "D" }, legacyRank(), E.mulberry32(botSeed() ^ 0x5bd1e995)));
+      botBusy = false; botLoop = false;
+      if (r && r.tie) lastMessage = "Both " + mine + " mm from the centre: throw again.";
+      else if (r && r.done) {
+        const theirs = game.bullUp.bot.mm;
+        lastMessage = (r.first === "player" ? "You're closer (" + mine + " mm against " + theirs + " mm): you throw first." : "The bot is closer (" + theirs + " mm against your " + mine + " mm): it throws first.") + " Pull your dart out.";
+        if (series && !series.gamesPlayed) series.nextFirst = r.first;
+      }
+      persistGame(); render();
+      if (r && r.done && game.turn === "bot") runBot();
+    }, BOT_DELAY + 500);
   }
 
   // --- saving -----------------------------------------------------------------------------------------------------
@@ -2075,13 +2202,21 @@
   function buildRecord(result) {
     const s = E.summarize(game);
     const record = {
-      uid: user.uid, timestamp: localStamp(startedAt), kind: game.kind, rank: settings.rank, first: game.first, result,
+      uid: user.uid, timestamp: localStamp(startedAt), kind: game.kind, rank: game.bot ? E.nearestRank(game.bot.target) : legacyRank(), first: game.first, result,
       durationSec: playedSeconds(),
       rounds: game.round, playerAvg: s.player.avg, botAvg: s.bot.avg, playerScore: s.player.score, botScore: s.bot.score,
       playerDarts: game.darts.player.map(dartRecord),
       botDarts: game.darts.bot.map(dartRecord),
+      // Every visit (who, the darts, the score, what was left), for the match report and stats.
+      visits: E.visitsRecord(game),
     };
     if (game.kind === "x01") { record.startScore = game.startScore; record.doubleOut = game.doubleOut; }
+    // The real-board bot (its average, how it plays, the ladder), and the match this leg was part of.
+    if (game.botModel === E.BOT_MODEL && game.bot) {
+      record.botModel = game.botModel; record.botTarget = game.bot.target; record.botStyle = game.bot.style;
+      if (game.bot.level === "ladder") record.ladder = true;
+    }
+    if (series && series.id) { record.matchId = String(series.id).slice(0, 40); record.leg = Math.max(1, Math.min(30, series.gamesPlayed + (result === "abandoned" ? 1 : 0))); record.legsToWin = series.target; }
     return record;
   }
 
@@ -2157,6 +2292,7 @@
       store.remove(UNSAVED_KEY);
       pendingRecord = null;
       if (!savedGames.some((g) => g.id === ref.id)) savedGames.push({ id: ref.id, coll: collectionName, data: record });
+      syncSetupVisibility();
       note.className = "saved ok";
       note.textContent = collectionName === "versusGames" ? "Saved to your record." : "Saved to your practice record. It will show up in Time Left.";
       if (collectionName === "versusGames") watchEmail(ref, record);
@@ -2219,8 +2355,8 @@
       $("overTitle").textContent = abandoned ? "Game ended" : nameOf(won ? "player" : "bot") + " won!";
       $("overSub").textContent = gameLabel + ": " + nameOf("player") + " against " + nameOf("bot");
     } else {
-      $("overTitle").textContent = abandoned ? "Game ended" : won ? "You won!" : "The " + rankName(settings.rank) + " bot won";
-      $("overSub").textContent = gameLabel + " against the " + rankName(settings.rank) + " bot";
+      $("overTitle").textContent = abandoned ? "Game ended" : won ? "You won!" : "The " + botTitle() + " won";
+      $("overSub").textContent = gameLabel + " against the " + botTitle();
     }
     if (series) {
       $("overSeries").textContent = decided
@@ -2251,6 +2387,7 @@
     add(game.round, "rounds");
     const typed = game.darts.player.filter((d) => !hasPosition(d)).length + (versus() ? game.darts.bot.filter((d) => !hasPosition(d)).length : 0);
     $("overNote").textContent = typed ? typed + " of the darts were entered as scores, so they are not on the board or the heat map." : "";
+    $("overReport").innerHTML = reportHtml();
     render();
     $("status").textContent = "Game over. Every dart is shown on the board.";
   }
@@ -2286,6 +2423,282 @@
       renderHistory(); renderHeat();
     } catch (_) { /* still offline or refused: it stays on the device for the next visit */ }
   }
+
+  // --- Board mode (board-mode.js): the scoreboard to read from the oche ----------------------------------
+  // The thrower's score, huge, with YOUR THROW / BOT THROWING; the three dart boxes (what each scored,
+  // a bust, game shot, a dart the cameras didn't see); the visit's total, what it leaves and the route;
+  // the board with the visit's darts and the route's next bed lit; the last visits of both sides; big
+  // buttons. Before your first dart the bot's last visit stays on the board, so walking back from the
+  // board you see what it did. Tap a dart of the visit in progress (the winning dart too) to fix it.
+  // A 180, a ton-plus finish, game shot and the nine-dart watch fill the screen for a moment. At the
+  // end, the match report. Remembered on each device; the screen stays on while a game runs.
+  const BOT_BOARD_KEY = "dt_practiceBoard";
+  const botBoardWanted = () => { try { return localStorage.getItem(BOT_BOARD_KEY) === "1"; } catch (_) { return false; } };
+  const keepAwake = window.BoardMode ? BoardMode.wakeLock() : () => {};
+  const fmt1 = (n) => (Math.round(n * 10) / 10).toFixed(1);
+  const litOf = (label) => {
+    if (label === "BULLUP") return [{ n: "BULL", beds: "BI" }];
+    if (!label || label === "MISS") return [];
+    if (label === "DB") return [{ n: "BULL", beds: "I" }];
+    if (label === "SB") return [{ n: "BULL", beds: "B" }];
+    return [{ n: Number(label.slice(1)), beds: label[0], tint: true }];
+  };
+  function setBotBoard(on) {
+    try { localStorage.setItem(BOT_BOARD_KEY, on ? "1" : "0"); } catch (_) { /* private mode */ }
+    if (on && settings.mute) setMute(false);
+    renderBotBoard();
+  }
+  // Which visit's darts are on the board: the one in progress; before its first dart, the last one.
+  function shownVisit() {
+    if (!game || game.kind !== "x01") return null;
+    if (game.visitDarts.length || game.visitDone || !game.visits.length) return { view: E.visitView(game), index: game.visits.length, current: true };
+    const index = game.visits.length - 1;
+    return { view: E.visitView(game, game.visits[index]), index, current: false };
+  }
+  // The dart boxes: a dart the cameras didn't see (filled in as a miss at a pull-out) says so.
+  function boxesOf(sv) {
+    return sv.view.darts.map((d) => {
+      const c = camDarts.find((x) => x.gameId === gameId && x.v === sv.index && x.i === d.index && x.fill);
+      const box = { index: d.index, s: (sv.current ? "c" : "v") + sv.index + "." + d.index + "." + d.label, x: d.x, y: d.y, read: d.read, sub: d.sub, kind: d.kind, label: d.label, current: sv.current };
+      if (c) Object.assign(box, { read: "Not seen", sub: "Counted as a miss", kind: "miss unseen" });
+      return box;
+    });
+  }
+  const canFixNow = () => !!game && !reviewing && !editing && !botBusy && humanTurn() && game.visitDarts.length > 0 && !keypadActive();
+  function botFixOptions(d) {
+    if (!d.current || !canFixNow()) return [];
+    const opts = [];
+    const m = /^([SDT])(\d+)$/.exec(d.label || "");
+    if (m) {
+      const n = m[2];
+      [["T", "Treble"], ["D", "Double"], ["S", "Single"]].forEach(([r, w]) => opts.push({ id: r + n, text: `${w} ${n}: ${Number(n) * (r === "T" ? 3 : r === "D" ? 2 : 1)}`, hit: true, cur: d.label === r + n }));
+    } else if (d.label === "SB" || d.label === "DB") {
+      opts.push({ id: "DB", text: "Bullseye: 50", hit: true, cur: d.label === "DB" }, { id: "SB", text: "Outer bull: 25", hit: true, cur: d.label === "SB" });
+    }
+    opts.push({ id: "MISS", text: "Missed the board", cur: d.label === "MISS" && d.read !== "Not seen" });
+    opts.push({ id: "other", text: "Another number" });
+    return opts;
+  }
+  // A dart fixed by tapping it: the visit is thrown again with it (practice-engine.js fixVisitDart).
+  function botFix(index, seq, label) {
+    if (!canFixNow() || !label) return;
+    const d = boxesOf(shownVisit()).find((x) => x.index === index);
+    if (!d || d.s !== seq) return;
+    const p = label === "MISS" ? (Number.isFinite(d.x) ? BoardMode.spotIn("MISS", d.x, d.y) : missPosition()) : BoardMode.spotIn(label, d.x, d.y);
+    cancelAutoPass();
+    const r = E.fixVisitDart(game, index, p);
+    if (r.error) { lastMessage = r.error; render(); return; }
+    lastMessage = "Dart " + (index + 1) + " fixed: " + describe(label) + (r.dropped ? ". The darts after it don't count." : ".");
+    persistGame();
+    if (game.visitDone && !game.winner && !settings.confirm) scheduleAutoPass();
+    render();
+  }
+  // Undo in Board mode: a dart of this visit, or back across visits (the bot's visit comes off and
+  // yours opens again without its last dart).
+  const canStepBack = () => !!game && !reviewing && !editing && !botBusy && !keypadActive() && (game.visitDarts.length ? humanTurn() : game.visits.some((v) => versus() || v.who === "player"));
+  function botUndo() {
+    if (!canStepBack()) return;
+    if (game.visitDarts.length) { undo(); return; }
+    stopDriving();
+    const r = E.stepBack(game, versus() ? ["player", "bot"] : ["player"]);
+    if (!r) { lastMessage = "Nothing more to take back."; render(); return; }
+    lastMessage = r.removed ? "Taken back, with the bot's visit after it." : "Taken back.";
+    kpText = ""; kpAsking = false;
+    persistGame(); render();
+  }
+  function botManual(man) {
+    if (!game) return;
+    if (man === "miss") missDart();
+    else if (man === "pass") { if (botWonWaiting()) finishGame("lost"); else passTurn(); }
+    else if (man === "edit") startEdit(botWonWaiting() ? "player" : game.turn);
+  }
+  function botTogglePause() {
+    if (!timer || !game || game.winner || reviewing) return;
+    const now = Date.now();
+    if (T.isPaused(timer, now)) T.resume(timer, now); else T.pause(timer, now);
+    persistGame(); render();
+  }
+
+  // The match report: each side's leg, a histogram of your visits, where your darts went, and how it
+  // compares with your last 10 games against the bot.
+  function reportHtml() {
+    if (!game || game.kind !== "x01") return "";
+    const me = E.legReport(game, "player"), them = E.legReport(game, "bot");
+    const pct = (c) => (c.pct == null ? "-" : Math.round(c.pct * 100) + "% (" + c.hits + "/" + c.darts + ")");
+    const row = (label, a, b) => `<tr><th>${label}</th><td>${a}</td><td>${b}</td></tr>`;
+    const t = (r) => [r.tons.s60, r.tons.s100, r.tons.s140, r.tons.s180].join(" / ");
+    let html = `<div class="bm-report"><table><tr><th></th><th>${esc(nameOf("player"))}</th><th>${esc(nameOf("bot"))}</th></tr>`
+      + row("3-dart average", fmt1(me.avg), fmt1(them.avg)) + row("First 9", fmt1(me.first9), fmt1(them.first9))
+      + row("Checkout", pct(me.checkout), pct(them.checkout)) + row("Highest finish", me.highFinish || "-", them.highFinish || "-")
+      + row("60+ / 100+ / 140+ / 180", t(me), t(them)) + row("Darts", me.darts, them.darts) + "</table>";
+    // Your visits, in bands of 20.
+    const bands = E.visitBands(me.visits), top = Math.max(1, ...bands.map((b) => b.n));
+    const bw = 520 / bands.length;
+    html += `<svg viewBox="0 -22 520 172" role="img" aria-label="Your visit scores">` + bands.map((b, i) => {
+      const h = Math.round((b.n / top) * 100);
+      return `<rect x="${i * bw + 4}" y="${110 - h}" width="${bw - 8}" height="${h}" rx="4" fill="var(--accent)" fill-opacity="${b.n ? 0.85 : 0.15}"/><text x="${i * bw + bw / 2}" y="128" text-anchor="middle" font-size="13" fill="var(--muted)">${b.from}${i === 8 ? "+" : ""}</text>${b.n ? `<text x="${i * bw + bw / 2}" y="${104 - h}" text-anchor="middle" font-size="14" font-weight="800" fill="var(--text)">${b.n}</text>` : ""}`;
+    }).join("") + `<text x="0" y="146" font-size="13" fill="var(--muted)">Your visits by score</text></svg>`;
+    // Against your last 10 finished games (this one left out).
+    const prev = savedGames.filter((g) => g.coll === "botGames" && g.id !== gameId && g.data && g.data.kind === "x01" && g.data.result !== "abandoned" && Number.isFinite(g.data.playerAvg))
+      .sort((a, b) => String(a.data.timestamp).localeCompare(String(b.data.timestamp))).slice(-10);
+    if (prev.length && !versus()) {
+      const avg = prev.reduce((n, g) => n + g.data.playerAvg, 0) / prev.length;
+      const d = me.avg - avg;
+      html += `<p>${fmt1(me.avg)} against <b>${fmt1(avg)}</b>, your average over your last ${prev.length} game${prev.length === 1 ? "" : "s"}: <b class="${d >= 0 ? "up" : "down"}">${d >= 0 ? "+" : ""}${fmt1(d)}</b>.</p>`;
+    }
+    const mine = game.darts.player.filter(hasPosition);
+    if (mine.length && window.BoardMode) html += `<div style="max-width:320px">${BoardMode.boardSvg([], mine.map((d, i) => ({ index: i, x: d.x, y: d.y, kind: "hit" })), { small: true })}</div>`;
+    return html + "</div>";
+  }
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  const botBoard = window.BoardMode ? BoardMode.mount(document.body, {
+    id: "boardMode",
+    modeLabel: "Bot game",
+    heroAria: "The score to throw at",
+    stripAria: "The last visits",
+    pad: [{ man: "miss", text: "Missed the board", cls: "m" }, { man: "edit", text: "Edit my last visit" }, { man: "pass", text: "Bot's turn" }],
+    idleTitle: "A game against the bot",
+    idleSub: "Start a game: your score, huge, and every dart as it lands.",
+    idleStart: "Start a game",
+    doneBig: "Game over",
+    big: (t) => (t == null ? "" : String(t)),
+    pickRing: true,
+    curNote: "what it is now",
+    lit: (v) => litOf(v.litLabel),
+    fixOptions: botFixOptions,
+    fixSub: (d) => `Dart ${d.index + 1} reads as ${d.read === "Miss" ? "a miss" : d.read}. What was it?`,
+    fixValue: (id) => id,
+  }, {
+    exit: () => setBotBoard(false),
+    start: () => $("startBtn").click(),
+    pause: botTogglePause,
+    voice: () => setMute(!settings.mute),
+    camera: () => setCamera(!settings.camera),
+    manual: botManual,
+    undo: botUndo,
+    fix: botFix,
+    boardTap: (x, y) => playerThrow({ x, y }),
+    again: () => $("againBtn").click(),
+    next: () => $("nextGameBtn").click(),
+    change: () => { setBotBoard(false); $("changeBtn").click(); },
+  }) : null;
+  if (botBoard) botBoard.el.classList.add("taps");
+
+  // A big moment, on every device showing Board mode (each device calls out each finished visit).
+  function showMoment(visit) {
+    if (!botBoard || !botBoardWanted() || !game) return;
+    const m = E.momentFor(game, visit);
+    if (!m) return;
+    if (versus()) m.sub = nameOf(visit.who) + ": " + m.sub;
+    else if (visit.who === "bot") m.sub = "The bot: " + m.sub;
+    botBoard.moment(m);
+  }
+
+  function renderBotBoard() {
+    if (!botBoard) return;
+    const on = botBoardWanted() && !!user && !$("app").classList.contains("hidden");
+    botBoard.show(on);
+    if (!on) { keepAwake(false); return; }
+    if (!game) {
+      botBoard.update({ view: null, voiceOn: !settings.mute, camOn: !!settings.camera, idleTitle: "A game against the bot", lastRound: "" });
+      keepAwake(false);
+      return;
+    }
+    const x01 = game.kind === "x01";
+    const thrower = botWonWaiting() ? "bot" : game.turn;
+    const other = thrower === "player" ? "bot" : "player";
+    const s = E.summarize(game);
+    const sv = shownVisit();
+    const darts = sv ? boxesOf(sv) : [];
+    const rem = x01 ? game.remaining[thrower] : game.points[thrower];
+    const dartsLeft = 3 - game.visitDarts.length;
+    const route = x01 && !game.visitDone && rem <= 170 ? E.checkoutRoute(rem, dartsLeft, game.doubleOut) : null;
+    const setup = x01 && !game.visitDone && !route && rem <= 230 ? E.setupShot(rem, dartsLeft, game.doubleOut) : null;
+    let label, labelClass;
+    if (reviewing) { label = over && over.result === "won" ? (versus() ? nameOf("player") + " won" : "You won") : over && over.result === "lost" ? (versus() ? nameOf("bot") + " won" : "The bot won") : "Game over"; labelClass = "over"; }
+    else if (botWonWaiting()) { label = "The bot checked out"; labelClass = "bot"; }
+    else if (game.winner) { label = (versus() ? nameOf(game.winner) : "You") + " won the game"; labelClass = "you"; }
+    else if (versus()) { label = nameOf(thrower) + " to throw"; labelClass = thrower === "player" ? "you" : "bot"; }
+    else { label = thrower === "player" ? "Your throw" : "Bot throwing"; labelClass = thrower === "player" ? "you" : "bot"; }
+    // The visit's line: what the darts on the board did.
+    let info = "";
+    if (sv && !sv.current && sv.view.who !== thrower && !reviewing) {
+      const v = sv.view;
+      info = `<span class="m">${esc(nameOf(v.who))} ${v.bust ? "bust" : "scored"}</span> <b>${v.bust ? "" : v.scored}</b> <span class="m">· leaves</span> ${v.left}`;
+    } else if (sv && sv.view.darts.length) {
+      const v = sv.view;
+      info = v.bust ? `<b class="down">Bust</b> <span class="m">· back to</span> ${game.remaining[v.who]}` : `<b>${v.scored}</b> <span class="m">this visit · leaves</span> <b>${v.left}</b>`;
+    } else if (x01 && thrower === "player" && !versus()) {
+      info = s.player.avg ? `<span class="m">Your average</span> ${fmt1(s.player.avg)}` : "";
+    }
+    const routeLabels = (route || (setup ? setup.darts : [])).map((d) => short(d.label));
+    const nextLabel = route ? (dartsLeft === 3 && !game.visitDarts.length ? "You require " + rem + ":" : "Checkout") : setup ? "Set up · leaves " + setup.leaves : "";
+    const recent = game.visits.slice(-12).map((v) => ({
+      key: String(v.round) + v.who, num: x01 ? (v.bust ? "Bust" : String(v.scored)) : String(v.marks || 0),
+      state: (v.who === "player" ? "vis-p" : "vis-b") + (x01 && !v.bust && v.scored >= 100 ? " hi" : "") + (v.bust ? " vis-bust" : ""),
+      sub: v.who === "player" ? (versus() ? firstWord(nameOf("player")).slice(0, 6) : "You") : versus() ? firstWord(nameOf("bot")).slice(0, 6) : "Bot",
+      title: nameOf(v.who) + ", round " + v.round,
+    }));
+    const avgs = x01 ? `${esc(nameOf("player"))} ${fmt1(s.player.avg)} · ${esc(nameOf("bot"))} ${fmt1(s.bot.avg)}` : "";
+    const seriesLine = series ? ` · ${esc(nameOf("player"))} ${series.wins.player}–${series.wins.bot} ${esc(nameOf("bot"))}` : "";
+    const view = {
+      target: x01 ? rem : rem,
+      finished: reviewing,
+      label, labelClass,
+      countHtml: reviewing ? "" : game.visitDone ? (game.winner ? "Game shot" : "Visit done") : `Dart ${game.visitDarts.length + 1} <span>of 3</span>`,
+      next: routeLabels, nextLabel,
+      litLabel: route ? route[0].label : setup ? setup.dart.label : x01 && !game.visitDone ? "T20" : "",
+      dartNo: Math.min(3, game.visitDarts.length + 1),
+      darts,
+      waiting: humanTurn() && camHold.wait ? Array.from({ length: Math.min(3 - game.visitDarts.length, camHold.wait) }, () => ({ read: "Not read", sub: "Tap where it landed" })) : [],
+      unseen: 0,
+      visitDone: !sv || !sv.current || game.visitDone || !humanTurn() || botBusy,
+      cells: recent, cols: 12,
+      capHtml: `<strong>Round ${game.round}</strong>${avgs ? " · " + avgs : ""}${seriesLine}`,
+      note: "",
+    };
+    // The bull-up: one dart each at the bull, before the first leg.
+    if (bullUpWaiting() || (game.bullUp && game.bullUp.done && !game.visits.length && !game.visitDarts.length && game.turn === "bot" && botBusy)) {
+      const bu = game.bullUp, side = (k, who) => (bu[who] ? [{ index: k, s: "bu" + who + bu[who].mm, x: bu[who].x, y: bu[who].y, read: who === "player" ? "You" : "Bot", sub: bu[who].mm + " mm from the centre", kind: who === "player" ? "hit" : "stay" }] : []);
+      Object.assign(view, { target: "Bull", label: "Bull-up", labelClass: "over", countHtml: bu.player ? (bu.done ? "" : "The bot's dart") : "One dart at the bull", next: [], nextLabel: "", litLabel: "BULLUP", darts: side(0, "player").concat(side(1, "bot")), visitDone: !!bu.player });
+      info = "";
+    }
+    const pass = botWonWaiting() ? "Finish game" : editing ? "Save change" : game.winner ? "Finish game" : settings.confirm ? "Enter" : versus() ? "Next player" : "Bot's turn";
+    const pendingPass = (humanTurn() && game.visitDone && !reviewing) || botWonWaiting();
+    const meEdit = botWonWaiting() ? "player" : game.turn;
+    const model = {
+      view,
+      paused: !!timer && !game.winner && !reviewing && T.isPaused(timer, Date.now()),
+      camOn: !!settings.camera, voiceOn: !settings.mute,
+      undoCount: canStepBack() ? 1 : 0,
+      note: camText && camText !== "setup" ? camText : lastMessage,
+      noteWarn: !!camWarn,
+      dartsText: x01 ? game.startScore + (game.doubleOut ? "" : " straight") : "Cricket",
+      modeLabel: versus() ? nameOf("player") + " v " + nameOf("bot") : "Against the " + botTitle(),
+      oppHtml: `<span class="who">${esc(nameOf(other))}</span><span class="sc">${x01 ? game.remaining[other] : game.points[other]}</span><span class="sub">${x01 && s[other].avg ? "avg " + fmt1(s[other].avg) : ""}</span>`,
+      info,
+      pad: [
+        { man: "miss", text: "Missed the board", disabled: !(humanTurn() && !game.visitDone && !botBusy && !game.winner), hidden: keypadActive() },
+        { man: "edit", text: versus() ? "Edit " + nameOf(meEdit) + "'s last visit" : "Edit my last visit", hidden: !showEdit(meEdit) },
+        { man: "pass", text: pass, hidden: !pendingPass },
+      ],
+      pauseOff: !timer || !!game.winner,
+    };
+    if (reviewing) {
+      const decided = !!series && E.seriesDecided(series);
+      const midSeries = !!series && !decided;
+      model.doneBig = label;
+      model.doneText = gameName({ kind: game.kind, startScore: game.startScore, doubleOut: game.doubleOut }) + (series ? " · " + seriesScoreLine(series) : "");
+      model.doneHtml = reportHtml();
+      model.doneOnly = true;
+      model.doneActions = midSeries ? [{ act: "next", text: "Next game", primary: true }, { act: "change", text: "Change setup" }] : [{ act: "again", text: "Play again", primary: true }, { act: "change", text: "Change setup" }];
+    }
+    botBoard.update(model);
+    botBoard.tick(T.format(timer ? T.elapsedMs(timer, Date.now()) : 0));
+    keepAwake(!reviewing);
+  }
+  setInterval(() => { if (botBoard && botBoardWanted() && document.visibilityState !== "hidden") renderBotBoard(); }, 500);
 
   // --- start up -----------------------------------------------------------------------------------------------------
   buildSetup(); buildKeypad();
@@ -2331,6 +2744,8 @@
   $("entryBoard").addEventListener("click", () => setEntry("board"));
   $("entryKeypad").addEventListener("click", () => setEntry("keypad"));
   $("startBtn").addEventListener("click", startGame);
+  $("boardBtn").addEventListener("click", () => setBotBoard(true));
+  $("boardBtnSetup").addEventListener("click", () => setBotBoard(true));
 
   // The practice timer on the game screen, shown while a game is being played.
   timerView = T.mount($("practiceTimer"), { get: () => (game && !game.winner && !reviewing ? timer : null), onChange: () => persistGame() });
@@ -2371,6 +2786,7 @@
     $("app").classList.toggle("hidden", !u);
     $("userPill").classList.toggle("hidden", !u);
     renderSound(); syncSetupVisibility();
+    renderBotBoard();
     if (!u) { botToken++; stopLive(); return; }
     // Looked for the cameras before sign-in finished: look again, for the account's camera station.
     if (camFailed && camText === "setup") { camFailed = false; if (game) render(); }

@@ -180,6 +180,16 @@ const botGame = (overrides = {}) => ({
   ...overrides,
 });
 
+test("a bot game against the real-board bot, in a match, says so in its summary (the title stays)", () => {
+  const item = _test.mapBotGameToTimeLeft(botGame({ botModel: 2, botTarget: 58, botStyle: "grinder", ladder: true, leg: 2, legsToWin: 3, matchId: "m1" }), "game9");
+  assert.equal(item.title, "Bot practice: 501 vs Club (won)");
+  assert.match(item.summary, /45 darts thrown\. The bot plays at about 58, a steady grinder \(the ladder\)\. Leg 2 of a first-to-3 match\.$/);
+  assert.equal(item.metadata.botTarget, 58);
+  assert.equal(item.metadata.leg, 2);
+  const plain = _test.mapBotGameToTimeLeft(botGame({ botStyle: "<b>", leg: 99 }), "game10");
+  assert.match(plain.summary, /45 darts thrown\.$/, "nothing made up from bad fields");
+});
+
 test("maps a bot game to a Time Left darts record, without the dart positions", () => {
   const item = _test.mapBotGameToTimeLeft(botGame(), "game1");
   assert.equal(item.dateId, "2026-09-20");

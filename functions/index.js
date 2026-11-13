@@ -250,7 +250,16 @@ function mapBotGameToTimeLeft(game, gameId, syncStatus = "active") {
   const scores = [];
   if (playerAvg !== null && playerDarts) scores.push(`Your ${averageName} ${playerAvg} against ${botAvg === null ? "the bot's" : botAvg}`);
 
-  const summary = `${resultWord} ${gameName} against the ${rankName} bot${scores.length ? `. ${scores[0]}` : ""}${playerDarts ? `. ${playerDarts} darts thrown` : ""}.`;
+  // The real-board bot (its average set by hand, a style, the ladder) and a leg of a match, when known.
+  const STYLE_NAMES = { grinder: "a steady grinder", scorer: "a heavy scorer" };
+  const botTarget = cleanNumber(game.botTarget, 10, 120);
+  const extras = [];
+  if (botTarget !== null) extras.push(`The bot plays at about ${Math.round(botTarget)}${STYLE_NAMES[game.botStyle] ? `, ${STYLE_NAMES[game.botStyle]}` : ""}${game.ladder === true ? " (the ladder)" : ""}`);
+  const leg = Number.isInteger(game.leg) && game.leg >= 1 && game.leg <= 30 ? game.leg : null;
+  const legsToWin = Number.isInteger(game.legsToWin) && game.legsToWin >= 1 && game.legsToWin <= 11 ? game.legsToWin : null;
+  if (leg && legsToWin) extras.push(`Leg ${leg} of a first-to-${legsToWin} match`);
+
+  const summary = `${resultWord} ${gameName} against the ${rankName} bot${scores.length ? `. ${scores[0]}` : ""}${playerDarts ? `. ${playerDarts} darts thrown` : ""}${extras.map((x) => `. ${x}`).join("")}.`;
 
   return {
     dateId: dateId || undefined,
@@ -292,6 +301,9 @@ function mapBotGameToTimeLeft(game, gameId, syncStatus = "active") {
       playerDarts,
       botDarts,
       rounds: cleanNumber(game.rounds, 0, 1000, 0),
+      botTarget,
+      leg,
+      legsToWin,
       durationSec,
       timestamp: cleanString(game.timestamp || ""),
       source: "dartstracker2026",

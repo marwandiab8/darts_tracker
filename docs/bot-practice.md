@@ -20,9 +20,41 @@
 - **The bot** throws one dart at a time, drawn in blue. It aims for a checkout when it has one, plays a set-up shot when it is close but has no finish, and treble 20 otherwise (Cricket: the highest number it has not closed, then points on numbers you have open). Its checkout visit is closed like any other (since Nov 13, 2026): it gets its "Game shot", it is in the Rounds table, and its saved average counts it (a five-dart 101 is 60.6; it used to save 36.0). Enter finishes the game while the bot's checkout waits, like "Finish game".
 - **Checkout routes** (`checkoutRoute` in `public/practice-engine.js`), shown on your turn and played by the bot, are the standard ones: fewest darts, then the easiest double to finish on (D16 and D20 best, then D8, D10, D12; odd doubles and D1 last) set up with singles rather than trebles, and the bull only when it's needed (170, 167, 164, 161, 50 with one dart). So 41 is S9 D16, 53 S13 D20, 60 S20 D20, 61 T15 D8, 116 T20 S16 D20. With one or two darts left it is the best route for those darts; with no finish possible it says what to leave ("Set up: S13 leaves 40"; on 169, T20 · T20 · S17 leaves 32).
 - **Averages:** a bust counts as a three-dart visit however it was entered (on the board it stops on the dart that bust; a typed total or typed darts bust too), so the average no longer depends on how you entered your darts. Only finished visits count.
-- **Levels:** Beginner, Casual, Club, League and Pro. A level is the spread of the bot's throws around its aim, as a fraction of the board radius: 0.30, 0.18, 0.12, 0.085 and 0.062. In a 501 game they average roughly 30, 42, 55, 72 and 95 per three darts, and `tests/practice-engine.test.cjs` checks the order and a sane range. Change `RANKS` in `public/practice-engine.js` to adjust them. There is no language model involved; it is all local and free.
+- **Levels:** Beginner, Casual, Club, League and Pro, or an average you set (see "The bot" below for how it throws and the averages). Games started before Nov 13, 2026 keep the first bot (`RANKS` in `public/practice-engine.js`: a spread of 0.30, 0.18, 0.12, 0.085 or 0.062 of the drawn board's radius, which measured 23.8, 36.4, 51.5, 70.9 and 94.0). There is no language model involved; it is all local and free.
 - **A match (more than one game):** "Play", when you set up a game, offers a single game or first-to-N (2, 3, 4, 5, 7, 9 or 11 wins) - the same choice works against the bot or another player. Who throws first alternates each game after the first, regardless of who won the last one. When a game inside a match ends, the score so far ("Match: You 2 - 1 Bot") is shown and "Next game" starts the next one with the running score kept; "Play again" and "Change setup" do not appear until the match itself is decided (or you quit, which ends the whole match, not just the game). Every game in a match is still saved individually, exactly as a single game would be - there is no separate "match" record. A match in progress is kept in the browser like an unfinished game is, and offered back ("Continue match") even between games, not only mid-game.
 - An unfinished game is kept for your account (see below) and in the browser, and the setup card offers to resume it. "Quit game" saves it as unfinished if you have thrown a dart.
+
+## The bot
+
+Since Nov 13, 2026 the bot throws on a real board (`practice-engine.js`, model 2). The first bot threw on the app's drawn board, whose treble and double rings are wider than a real board's (0.08 and 0.10 of the radius against about 0.047), so the stronger levels hit doubles far too often and the averages weren't what the levels said. Model 2 aims at the middle of a bed on a real board (in millimetres over the 170 mm radius), its dart lands with a spread, and the dart is moved to the drawn board ring by ring (`realToApp`, as the cameras do): it scores what it would on a real board, and its dots and heat map still line up.
+
+- **Two spreads:** one for scoring darts, one for doubles. They come from a table measured by simulating 700 legs of 501 at each spread (`CALIB` in the engine); `botParams(average, style)` picks the spreads for an average.
+- **Levels** (the averages it plays at, and the share of its darts at a double that win, for the standard style): Beginner 30 (15%), Casual 42 (20%), Club 53 (25%), League 72 (35%), Pro 95 (49%). Or **Set its average** (15 to 110).
+- **How it plays:** Standard; **Steady grinder** (smaller scores, rarely misses a double: Club checks out 32%); **Heavy scorer** (big scores, weak doubles: Club 20%). Each plays at the same average.
+- **Its rhythm** varies (about 0.6 to 1.1 s between darts) and it takes a breath before a double.
+- **A game keeps its bot** (`game.botModel`, `game.bot`: level, average, style), through Edit and Undo too, and every device throws the same darts. A game started before keeps the first bot.
+- **The ladder:** start at an average of 52; win 2 of 3 games at a step to move up 3. It's worked out from your saved ladder games, so nothing else is stored; the setup shows your step and the highest average you've beaten.
+
+## Matches
+
+- **Legs:** one leg, or first to 2, 3, 4, 5, 7 or 9 legs. Who throws first alternates each leg. Each leg is saved as its own game with the match's id (`matchId`), its number (`leg`) and `legsToWin`.
+- **Bull-up:** "Who throws first: Bull-up". Before the first leg, you throw one dart at the bull (tap it or let the cameras see it), then the bot; the closer (in millimetres on a real board) throws first, and a tie throws again. Against the bot only.
+
+## Board mode
+
+A full-screen scoreboard to read from the oche, on the shared Board mode kit (`public/board-mode.js` + `.css`, also used by Doubles and the tracker). Turn it on with **Board mode** on the setup screen or under the board; it stays on for that device until **Exit**, and the screen stays on while a game runs.
+
+- **The score to throw at**, huge, under YOUR THROW or BOT THROWING (with two players, the name), and the other side's score and average beside it.
+- **Three dart boxes** with what each dart scored ("T20 · 60", "D16 · Game shot", "S5 · Bust", "Not seen · Counted as a miss" for a dart the cameras didn't see before the pull-out, "Not read · Tap where it landed"), the visit's total and what it leaves, and the route under the dart count: "You require 81: T19 D12" at the start of a visit, "Checkout" during it, or "Set up · leaves 40". The route's next bed is lit on the board.
+- **The bot's visit stays on the board** (its darts and "Club bot scored 85 · leaves 116") until your first dart lands, so walking back from the board you see what it did.
+- **The strip** shows the last 12 visits of both sides (100+ outlined), with the round and both averages.
+- **Fixing a dart:** tap a dart of the visit in progress (the winning dart too, until the game is finished) and choose what it was: the beds of that number, the bull, Missed the board, or Another number (then the ring). The visit is thrown again with it; darts after a bust or a checkout no longer count.
+- **Undo** takes back a dart of the visit in progress; with none, it goes back across visits: the bot's visit comes off and your last visit opens again without its last dart (the bot throws its visit again after yours). It works from any device.
+- **Big buttons:** Missed the board, Edit my last visit, and Bot's turn / Enter / Finish game when they apply. A tap on the board enters a dart where you tapped.
+- **Pulling your darts out after your winning double finishes the game**: no walk to the iPad to tap Finish. When the bot checks out, the game still waits (so a misread winning double of yours can be corrected with Edit my last visit).
+- **Moments:** a 180, a ton-plus finish, game shot and the nine-dart watch (a 501 leg still on for nine darts after six) fill the screen for about two seconds (a tap skips it), on every device in Board mode.
+- **The caller** says "You require 81" after the bot's visit when you have a finish on (with two players, "Sam, you require 81"). It is the browser's voice: the recorded clips cover only 140 to 180, Bust, No score and Game shot (making "You require" clips needs the Piper voice, which isn't installed here).
+- **The match report** at the end (here and on the game-over card): each side's 3-dart average, first-9 average, checkout (darts thrown with a finish on, and the one that won), highest finish, 60+/100+/140+/180s and darts; a histogram of your visit scores; where your darts went; and your average against your last 10 games.
 
 ## On more than one device
 
@@ -47,6 +79,10 @@ playerScore and botScore (score left, or Cricket points),
 playerDarts and botDarts: [{ x, y, s }] where x and y are the landing point as fractions of the
 board radius (see dart-positions.md) and s is what it scored ("T20", "D16", "SB", "DB", "S5", "MISS").
 A dart entered on the keypad is just { s: "?" }: it counts, but has no position.
+botModel, botTarget, botStyle, ladder (the real-board bot: its average, how it plays, a ladder game),
+matchId, leg, legsToWin (a leg of a match). rank is the nearest named level.
+visits (since Nov 13, 2026): every visit in order, { w: "p" | "b", d: [what each dart scored],
+s: the score (0 for a bust; marks in Cricket), r: what was left, b: 1 for a bust, p: Cricket points }.
 ```
 
 A saved game is never edited. Rules for the collection are in `firestore.rules` (`validBotGame`): the owner reads, creates and deletes; nothing updates. If saving fails the page says so, keeps the game on the device and offers "Try saving again". It tries again on the next visit too.
