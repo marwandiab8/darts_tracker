@@ -271,6 +271,15 @@ service cloud.firestore {
         && (request.resource.data.parent == resource.data.vid || request.resource.data.parent == '');
     }
 
+    // The games you hid from your stats (stats.html): their ids. Nothing is deleted; they just don't count.
+    match /statsHidden/{uid} {
+      allow read, delete: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['ids', 'updatedAt'])
+        && request.resource.data.ids is list && request.resource.data.ids.size() <= 2000
+        && (!('updatedAt' in request.resource.data) || request.resource.data.updatedAt is number);
+    }
+
     // The Doubles game (doubles.html, doubles-engine.js): one state document per player with the
     // round in progress, the lifetime totals and the last thing Undo can take back.
     match /doublesState/{uid} {

@@ -494,6 +494,16 @@ test("the JDC round in play: its owner's devices share it, version by version; n
   await assertSucceeds(deleteDoc(ref));
 });
 
+test("the games hidden from your stats: only yours, a list of ids", async () => {
+  const ref = doc(asUser(me), "statsHidden", me);
+  await assertSucceeds(setDoc(ref, { ids: ["g1", "s2"], updatedAt: 1 }));
+  await assertSucceeds(getDoc(ref));
+  await assertFails(setDoc(ref, { ids: "g1" }));
+  await assertFails(setDoc(ref, { ids: [], note: "x" }));
+  await assertFails(getDoc(doc(asUser(other), "statsHidden", me)));
+  await assertFails(setDoc(doc(asUser(other), "statsHidden", me), { ids: [] }));
+});
+
 test("nobody else can read or change someone's live game", async () => {
   await assertSucceeds(setDoc(doc(asUser(me), "liveGames", me), liveVersion()));
   const theirs = asUser(other);

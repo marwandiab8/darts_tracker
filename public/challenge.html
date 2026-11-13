@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
 <title>JDC Challenge - Darts Tracker</title>
+<link rel="stylesheet" href="board-mode.css?v=3">
 <style>
   :root {
     --bg: #0b0f17; --muted: #94a3b8; --text: #e5e7eb; --accent: #f59e0b; --blue: #38bdf8;
@@ -49,6 +50,23 @@
   .visit span.filled.hit { border-color: var(--accent); color: var(--accent); }
   .keys { display: grid; gap: 10px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .keys.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .keys.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .keys.five { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .toggles { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 0 0 12px; }
+  .toggles label { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 999px; font-weight: 700; font-size: 14px; cursor: pointer; }
+  .cam-note { min-height: 20px; font-size: 14px; color: var(--muted); margin: 0 0 8px; }
+  .cam-note.warn { color: #fca5a5; }
+  .nums { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 6px; }
+  .nums div { border: 1px solid var(--border); border-radius: 10px; padding: 6px; text-align: center; }
+  .nums div span { display: block; font-size: 12px; color: var(--muted); }
+  .nums div b { display: block; font-size: 18px; }
+  .nums div small { color: var(--muted); letter-spacing: .1em; }
+  .nums div.sh { border-color: var(--accent); }
+  .nums div.sh b { color: var(--accent); }
+  .tag { display: inline-block; padding: 4px 10px; border-radius: 10px; border: 1px solid rgba(245,158,11,.6); color: var(--accent); font-weight: 800; margin: 0 4px 4px 0; }
+  table.sum td, table.sum th { font-size: 15px; }
+  .up { color: var(--good); } .down { color: #fca5a5; }
+  .dbl-board { max-width: 320px; }
   .keys button { min-height: 76px; font-size: 20px; }
   .keys button.miss { background: rgba(255,255,255,.07); color: var(--text); border: 1px solid var(--border); }
   .keys button small { display: block; font-size: 12px; font-weight: 700; opacity: .75; }
@@ -123,19 +141,26 @@
           <li><b>Part 1 - Shanghai 10 to 15:</b> three darts at each number. A single scores the number, a double twice it, a treble three times. Hit a single, a double <i>and</i> a treble of the same number in one visit (a <b>Shanghai</b>) for a <b>+100</b> bonus.</li>
           <li><b>Part 2 - Doubles:</b> one dart at each double, D1 to D20, then one at the bull. Every hit scores <b>50</b>.</li>
           <li><b>Part 3 - Shanghai 15 to 20:</b> the same as Part 1.</li>
-          <li>Throw each dart, then tap what it hit. The keys only offer what that target can score. "Undo" takes back the last dart.</li>
+          <li>Throw each dart, then tap what it hit, or let the cameras enter them. Every visit is 3 darts: three at one number, or one at each of three doubles in order (D1, D2, D3...). The bull is the bullseye only. "3 misses" ends a visit; "Undo" takes back the last change (up to 10), from any device; tap a dart in Board mode to fix it.</li>
         </ol>
       </details>
       <div class="actions">
         <button type="button" id="startBtn">Start a round</button>
+        <button type="button" class="secondary" id="boardBtn2" title="A full-screen scoreboard to read from the oche">Board mode</button>
         <button type="button" class="secondary hidden" id="resumeBtn">Resume round</button>
         <button type="button" class="danger hidden" id="discardBtn">Discard unfinished round</button>
       </div>
       <p class="muted small hidden" id="resumeText"></p>
     </section>
 
-    <section class="card hidden" id="playCard" aria-live="polite">
+    <section class="card hidden" id="playCard">
       <div id="practiceTimer"></div>
+      <div class="toggles">
+        <button type="button" class="secondary" id="boardBtn" title="A full-screen scoreboard to read from the oche">Board mode</button>
+        <label><input type="checkbox" id="voiceToggle"> Voice</label>
+        <label><input type="checkbox" id="camToggle"> Cameras</label>
+      </div>
+      <div class="cam-note" id="camNote" aria-live="polite"></div>
       <div class="now">
         <div>
           <div class="part" id="partLabel"></div>
@@ -161,13 +186,14 @@
         <button type="button" class="danger" id="quitBtn">Quit round</button>
       </div>
       <div class="track" id="track"></div>
-      <p class="muted small">Keyboard: 0 miss, 1 single, 2 double, 3 treble (doubles: 1 hit, 0 miss), Backspace undo.</p>
+      <p class="muted small">Keyboard: 0 miss, 1 single, 2 double, 3 treble (doubles: 1 hit, 0 miss), X the rest of the visit missed, Backspace undo.</p>
     </section>
 
     <section class="card hidden" id="resultCard">
       <h2>Round finished</h2>
       <div class="stats" id="resultStats"></div>
       <p id="resultNote" class="muted"></p>
+      <div id="resultSummary"></div>
       <div class="actions">
         <button type="button" id="againBtn">Play another round</button>
       </div>
@@ -200,8 +226,12 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
-<script src="challenge-engine.js?v=2"></script>
+<script src="challenge-engine.js?v=3"></script>
 <script src="practice-timer.js?v=2"></script>
+<script src="live-sync.js?v=1"></script>
+<script src="board-vision.js?v=9"></script>
+<script src="board-camera.js?v=11"></script>
+<script src="board-mode.js?v=3"></script>
 <script>
 (function () {
   "use strict";
@@ -217,10 +247,12 @@
   if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
   const auth = firebase.auth(), db = firebase.firestore();
   const COLL = "challengeGames", ROUND_KEY = "dt_challenge_round", UNSAVED_KEY = "dt_challenge_unsaved";
+  const BOARD_KEY = "dt_challengeBoard", VOICE_KEY = "dt_challengeVoice", CAMERA_KEY = "dt_challengeCamera";
 
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const fmt = (n, d = 0) => (n == null ? "-" : Number(n).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d }));
+  const signed = (n) => (n > 0 ? "+" : n < 0 ? "−" : "±") + fmt(Math.abs(n));
   const stamp = (date = new Date()) => {
     const p = (n) => String(n).padStart(2, "0");
     return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())} ${p(date.getHours())}:${p(date.getMinutes())}`;
@@ -229,23 +261,166 @@
     get(key) { try { return JSON.parse(localStorage.getItem(key) || "null"); } catch (_) { return null; } },
     set(key, value) { try { value == null ? localStorage.removeItem(key) : localStorage.setItem(key, JSON.stringify(value)); } catch (_) { /* private mode */ } },
   };
+  const flag = (key) => store.get(key) === 1;
 
   let user = null;
   let games = [];
   let historyLoaded = false, gamesUnsub = null;
-  // { id, darts: [], startedAt: ms, timer }: the id is the saved round's id, so it can only ever be saved once.
+  // The round in play (challenge-engine.js newRound): the same on every device of the account. Its id
+  // is the saved round's id, so it can only ever be saved once.
   let round = null;
+  // The round just finished here (for its summary, after the shared round is cleared).
+  let lastResult = null;
   const newRoundId = () => "jdc" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
   // All 57 darts in: saved after this long (Undo first to change the last dart), or with Save now.
   const SAVE_AFTER_MS = 10000, SAVE_TIMEOUT_MS = 15000;
   let doneTimer = null, doneAt = 0, doneTick = null;
-  // The round's timer (practice-timer.js): Pause/Resume above the round, and it pauses itself after
-  // 3 minutes with no throws. Its time is the round's length.
   const T = window.PracticeTimer;
   let timerView = { refresh() {} };
   let flashTimer = null;
 
   $("maxScore").textContent = fmt(C.MAX_SCORE);
+
+  // ---- the round, the same on every device (live-sync.js, liveChallenges/{uid}) ------------------
+  // Every change is an op, applied here at once and kept until the version carrying it is in. When
+  // another device's version got in first, the ops it doesn't have are applied again on top of it, so
+  // a dart is never lost. Nothing is written before the shared round has arrived. A camera event
+  // carries the station's count (seq), so it goes in once however many devices saw it. The latest
+  // thing to say goes with the round (say), and each device with Voice on says it once.
+  const LS = window.LiveSync;
+  let live = null, pendingOps = [], writeTimer = null, sayLine = null, heardSay = null, sayPrimed = false;
+  const newOpId = () => "o" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+  function bestDarts() {
+    const best = games.reduce((a, g) => (!a || g.total > a.total ? g : a), null);
+    return best && Array.isArray(best.darts) ? best.darts : null;
+  }
+
+  // One change to the round. Returns what the engine said.
+  function applyOp(op) {
+    let out = null;
+    const r = round;
+    switch (op.k) {
+      case "start": round = C.newRound(op.id, op.now); round.timer = T.start(op.now); sayLine = null; return round;
+      case "adopt": round = C.cleanRound(op.round); if (round) round.timer = T.restore(round.timer, Date.now()) || T.start(Date.now()); return round;
+      case "clear": round = null; sayLine = null; return true;
+      case "timer": if (r) r.timer = op.timer; return true;
+    }
+    if (!r) return null;
+    switch (op.k) {
+      case "key": out = C.keyDart(r, op.v); break;
+      case "x3": out = C.threeMisses(r); break;
+      case "cam": out = C.camDart(r, op.ev); break;
+      case "unread": out = C.camUnread(r, op.ev); break;
+      case "out": out = C.camTakeout(r, op.ev); break;
+      case "fix": out = C.fixDart(r, op.i, op.v); break;
+      case "undo": out = C.undoStep(r); break;
+    }
+    if (out && ["key", "x3", "cam", "out", "fix"].includes(op.k)) {
+      r.timer = r.timer || T.start(Date.now());
+      T.activity(r.timer, Date.now());
+    }
+    const line = lineFor(op, out, r);
+    if (line) sayLine = { id: op.id, text: line };
+    return out;
+  }
+  // What a change sounds like (challenge-engine.js voiceLine).
+  function lineFor(op, out, r) {
+    if (!out) return "";
+    const went = Array.isArray(out) ? out : out.went || [];
+    if (op.k === "fix") return C.voiceLine(r.darts, { k: "fix", index: out.index });
+    if (op.k === "undo") return "Undone.";
+    return went.map((d) => C.voiceLine(r.darts, { k: "dart", index: d.index }, bestDarts())).filter(Boolean).join(" ");
+  }
+  function state() { return { v: 1, round, say: sayLine }; }
+  function runOp(op) {
+    if (!op.id) op.id = newOpId();
+    const before = round ? round.darts.slice() : null;
+    const out = applyOp(op);
+    pendingOps.push({ op, vid: null, refused: false, tries: 0 });
+    if (pendingOps.length > 80) pendingOps = pendingOps.slice(-80);
+    afterChange(before);
+    scheduleWrite();
+    return out;
+  }
+  function scheduleWrite() {
+    if (!live || !live.loaded) return;
+    clearTimeout(writeTimer);
+    writeTimer = setTimeout(writeNow, 60);
+  }
+  function writeNow() {
+    writeTimer = null;
+    if (!live || !live.loaded) return;
+    const v = live.write(round ? "play" : "none", state());
+    if (!v) return;
+    pendingOps.forEach((p) => { if (!p.vid || p.refused) { p.vid = v.vid; p.refused = false; } });
+  }
+  // The round as another device left it, with this device's changes it doesn't have yet on top.
+  function adopt(v) {
+    const before = round ? round.darts.slice() : null;
+    const wasFinished = round && round.darts.length >= C.TOTAL_DARTS ? JSON.parse(JSON.stringify(round)) : null;
+    const s = v && v.state;
+    round = s && s.round ? C.cleanRound(s.round) : null;
+    if (round) round.timer = T.restore(round.timer, Date.now()) || T.start(Date.now());
+    sayLine = s && s.say && typeof s.say.id === "string" ? s.say : null;
+    if (!sayPrimed) { sayPrimed = true; heardSay = sayLine ? sayLine.id : null; }
+    const again = pendingOps.filter((p) => !p.vid || p.refused);
+    again.forEach((p) => applyOp(p.op));
+    if (again.length) scheduleWrite();
+    // Saved and cleared on another device: the round finished here too, saved once (its own id).
+    if (!round && wasFinished && (!lastResult || lastResult.id !== wasFinished.id)) { round = wasFinished; finishRound(true); return; }
+    afterChange(before);
+  }
+  function startLive(uid) {
+    stopLive();
+    if (!LS) return;
+    let first = true;
+    live = LS.createLiveDoc({
+      ref: db.collection("liveChallenges").doc(uid), uid,
+      onRemote: (v) => {
+        if (first) {
+          first = false;
+          if (!v || !v.state || !v.state.round) {
+            sayPrimed = true;
+            // A round this device was playing before rounds were shared: it becomes the shared one.
+            const local = store.get(ROUND_KEY);
+            if (!round && local && Array.isArray(local.darts) && local.darts.length) {
+              store.set(ROUND_KEY, null);
+              runOp({ k: "adopt", round: Object.assign({ id: local.id || newRoundId() }, local) });
+            } else if (pendingOps.length) scheduleWrite();
+            afterChange(null);
+            return;
+          }
+        }
+        adopt(v);
+      },
+      onSaved: (v) => { pendingOps = pendingOps.filter((p) => p.vid !== v.vid); setSync(""); },
+      onRefused: (v, error) => {
+        pendingOps.forEach((p) => { if (p.vid === v.vid) { p.refused = true; p.tries += 1; } });
+        pendingOps = pendingOps.filter((p) => p.tries <= 4);
+        if (!(error && error.code === "permission-denied")) setSync("Offline: your darts are kept here and go up when the connection is back.");
+      },
+      onError: () => setSync("Can't reach your other devices right now."),
+    });
+    live.start();
+  }
+  function stopLive() { clearTimeout(writeTimer); writeTimer = null; if (live) live.stop(); live = null; pendingOps = []; }
+  function setSync(text) { $("syncNote").textContent = text || ""; }
+
+  // ---- after every change ---------------------------------------------------------------------
+  function afterChange(before) {
+    hearSay();
+    if (round && before) celebrate(before, round.darts);
+    if (round) {
+      showCard("play");
+      renderPlay();
+    } else if (!lastResult || $("resultCard").classList.contains("hidden")) {
+      cancelDone();
+      if (!lastResult) { showCard("start"); refreshStart(); }
+    }
+    timerView.refresh();
+    renderBoard();
+  }
 
   // ---- playing -----------------------------------------------------------------------------
   const RING = ["Miss", "Single", "Double", "Treble"];
@@ -255,68 +430,71 @@
     $("startCard").classList.toggle("hidden", which !== "start");
   }
 
-  function startRound(resume) {
-    const now = Date.now();
+  function startRound() {
     cancelDone();
-    round = resume || { darts: [], startedAt: now };
-    if (!round.id) round.id = newRoundId();
-    // A resumed round's time away counts like any break; a round saved before the timer starts one now.
-    round.timer = T.restore(round.timer, now) || T.start(now);
-    store.set(ROUND_KEY, round);
-    timerView.refresh();
+    lastResult = null;
+    runOp({ k: "start", id: newRoundId(), now: Date.now() });
     showCard("play");
     renderPlay();
   }
 
-  function bestRound() {
-    const best = games.reduce((a, g) => (!a || g.total > a.total ? g : a), null);
-    return best && Array.isArray(best.darts) ? best.darts : null;
+  // Against your best round and your last 10 at the same point (whole visits on both sides).
+  function paceNow(darts) {
+    const p = C.pace(darts, bestDarts());
+    const recent = [...games].filter((g) => Array.isArray(g.darts)).sort((a, b) => String(a.timestamp).localeCompare(String(b.timestamp))).slice(-10);
+    const mine = C.runningTotals(darts);
+    let avg = null;
+    if (mine.length && recent.length) {
+      const at = mine.length - 1;
+      avg = recent.reduce((n, g) => n + (C.runningTotals(g.darts)[at] || 0), 0) / recent.length;
+    }
+    return { best: p, avg, now: mine.length ? mine[mine.length - 1] : 0 };
   }
 
   function renderPlay() {
+    if (!round) return;
     const pos = C.position(round.darts);
     if (!pos) return renderDone();
     hideDone();
     const { step, dartInStep, index } = pos;
     const s = C.summarize(round.darts);
+    const k = C.visitOf(round.darts.length), vinfo = C.visitInfo(round.darts, k);
     $("partLabel").textContent = `Part ${step.part} of 3 · ${C.PART_NAMES[step.part]}`;
     $("targetLabel").textContent = step.kind === "double" ? (step.target === C.BULL ? "Bull" : `Double ${step.target}`) : `${step.target}`;
-    $("dartLabel").textContent = step.kind === "double" ? `Dart ${round.darts.length + 1} of ${C.TOTAL_DARTS} · one dart` : `Dart ${dartInStep + 1} of 3 · dart ${round.darts.length + 1} of ${C.TOTAL_DARTS}`;
+    $("dartLabel").textContent = step.kind === "double"
+      ? `Visit ${vinfo.steps.map((x) => C.doubleLabel(x.target)).join(" · ")} · dart ${round.darts.length % 3 + 1} of 3`
+      : `Dart ${dartInStep + 1} of 3 · dart ${round.darts.length + 1} of ${C.TOTAL_DARTS}`;
     $("runningScore").textContent = fmt(s.total);
-
-    // Against your best round at the same point: at the end of each visit, the same visits on both sides.
-    const p = C.pace(round.darts, bestRound());
+    const p = C.pace(round.darts, bestDarts());
     const pace = $("pace");
     pace.className = "pace";
     if (p) {
       pace.textContent = p.diff === 0 ? "level with your best" : `${p.diff > 0 ? "+" : ""}${fmt(p.diff)} vs your best`;
       pace.classList.add(p.diff >= 0 ? "up" : "down");
     } else pace.textContent = historyLoaded ? "" : "Loading your rounds…";
-
-    // This visit's darts so far.
-    const visit = C.stepsOf(round.darts)[index].darts;
-    $("visitSlots").innerHTML = Array.from({ length: step.darts }, (_, i) => {
-      if (i >= visit.length) return "<span>-</span>";
-      const v = visit[i];
-      const text = step.kind === "double" ? (v ? "Hit" : "Miss") : (v ? `${"SDT"[v - 1]}${step.target}` : "Miss");
-      return `<span class="filled${v ? " hit" : ""}">${text}</span>`;
+    // This visit's darts so far (3 darts: one number, or three doubles).
+    $("visitSlots").innerHTML = [0, 1, 2].map((j) => {
+      const i = 3 * k + j;
+      if (i >= round.darts.length) return "<span>-</span>";
+      const box = C.dartBox(i, round.darts[i], round.meta[i]);
+      return `<span class="filled${box.kind === "hit" || box.kind === "stay" ? " hit" : ""}">${esc(box.read)}</span>`;
     }).join("");
-
     const keys = $("keys");
-    keys.className = step.kind === "double" ? "keys two" : "keys";
-    keys.innerHTML = step.kind === "double"
+    keys.className = step.kind === "double" ? "keys three" : "keys five";
+    keys.innerHTML = (step.kind === "double"
       ? `<button type="button" class="miss" data-v="0">Miss</button><button type="button" data-v="1">Hit ${esc(C.doubleLabel(step.target))}<small>+50</small></button>`
-      : [0, 1, 2, 3].map((v) => `<button type="button" class="${v ? "" : "miss"}" data-v="${v}">${v ? `${RING[v]} ${step.target}` : "Miss"}${v ? `<small>+${step.target * v}</small>` : ""}</button>`).join("");
-
-    $("undoBtn").disabled = !round.darts.length;
+      : [0, 1, 2, 3].map((v) => `<button type="button" class="${v ? "" : "miss"}" data-v="${v}">${v ? `${RING[v]} ${step.target}` : "Miss"}${v ? `<small>+${step.target * v}</small>` : ""}</button>`).join(""))
+      + `<button type="button" class="miss" data-x3="1">3 misses<small>rest of the visit</small></button>`;
+    $("undoBtn").disabled = !C.undoCount(round);
+    $("undoBtn").textContent = C.undoCount(round) > 1 ? `Undo (${C.undoCount(round)})` : "Undo";
     renderTrack(index);
   }
 
   function renderTrack(index) {
     $("track").innerHTML = C.stepsOf(round.darts).map((x, i) => {
       const cls = [i === index ? "cur" : "", C.isShanghai(x.step, x.darts) ? "sh" : ""].join(" ");
-      const label = x.step.kind === "double" ? C.doubleLabel(x.step.target) : `S${x.step.target}`;
-      return `<div class="${cls}">${label}<b>${x.done || x.darts.length ? x.score : "·"}</b></div>`;
+      const label = x.step.kind === "double" ? C.doubleLabel(x.step.target) : `${x.step.target}s`;
+      return `<div class="${cls}" aria-hidden="true">${label}<b>${x.done || x.darts.length ? x.score : "·"}</b></div>`;
     }).join("");
   }
 
@@ -327,34 +505,53 @@
   }
 
   function throwDart(value) {
-    if (!round) return;
-    const pos = C.position(round.darts);
-    if (!pos || !C.validDart(pos.step, value)) return;
-    round.darts = C.addDart(round.darts, value);
-    T.activity(round.timer, Date.now());
-    store.set(ROUND_KEY, round);
-    timerView.refresh();
-    const step = C.stepsOf(round.darts)[pos.index];
-    if (step.done && C.isShanghai(step.step, step.darts)) flash(`SHANGHAI! +${C.SHANGHAI_BONUS}`);
-    else if (step.done && pos.step.kind === "shanghai") flash(`${pos.step.target}: ${step.score}`);
-    renderPlay();
+    if (!round || !C.position(round.darts)) return;
+    if (!C.validDart(C.position(round.darts).step, value)) return;
+    runOp({ k: "key", v: value });
+  }
+  function threeMisses() { if (round && C.position(round.darts)) runOp({ k: "x3" }); }
+  function undo() {
+    if (!round || !C.undoCount(round)) return;
+    cancelDone();
+    runOp({ k: "undo" });
+    $("flash").textContent = "";
   }
 
-  function undo() {
-    if (!round || !round.darts.length) return;
-    cancelDone();
-    round.darts = round.darts.slice(0, -1);
-    T.activity(round.timer, Date.now());
-    store.set(ROUND_KEY, round);
-    timerView.refresh();
-    $("flash").textContent = "";
-    renderPlay();
+  // The moments: a Shanghai, all three doubles of a visit, a part PB, going ahead of your best.
+  function celebrate(before, after) {
+    if (after.length <= before.length) return;
+    const doneVisits = [];
+    for (let k = C.visitOf(before.length); k < C.VISITS; k += 1) {
+      if (3 * (k + 1) > after.length) break;
+      if (3 * (k + 1) > before.length) doneVisits.push(k);
+    }
+    for (const k of doneVisits) {
+      const v = C.visitInfo(after, k);
+      let m = null;
+      if (v.shanghai) m = { big: "SHANGHAI!", sub: `${v.steps[0].target}: +${C.SHANGHAI_BONUS}`, kind: "finish" };
+      else if (v.kind === "double" && v.vals.every((x) => x === 1)) m = { big: "3 doubles!", sub: v.steps.map((x) => C.doubleLabel(x.target)).join(" · ") + ": +150", kind: "win" };
+      else {
+        const lastOfPart = k === 5 || k === 12 || k === 18;
+        if (lastOfPart && historyLoaded && games.length) {
+          const key = "part" + v.part, mine = C.summarize(after)[key];
+          const best = Math.max(...games.map((g) => g[key] || 0));
+          if (mine > best) m = { big: "Part PB", sub: `${C.PART_NAMES[v.part]}: ${fmt(mine)} (was ${fmt(best)})`, kind: "win" };
+        }
+        if (!m) {
+          const was = C.pace(after.slice(0, 3 * k), bestDarts()), now = C.pace(after.slice(0, 3 * (k + 1)), bestDarts());
+          if (was && now && was.diff < 0 && now.diff >= 0) m = { big: "PB pace", sub: `${now.diff ? signed(now.diff) + " on" : "Level with"} your best`, kind: "nine" };
+        }
+      }
+      if (m) {
+        if (board && boardOn()) board.moment(m);
+        else flash(`${m.big} ${m.sub}`);
+      }
+    }
   }
 
   // ---- all 57 darts in -----------------------------------------------------------------------
   // The round isn't saved the moment the last dart goes in: there are a few seconds to Undo a
-  // mis-tapped last dart (or Save now). Closing the page meanwhile keeps the round on this device,
-  // offered for saving when the page opens again.
+  // mis-tapped last dart (or Save now).
   function renderDone() {
     const s = C.summarize(round.darts);
     $("partLabel").textContent = "All 57 darts in";
@@ -364,7 +561,7 @@
     $("pace").textContent = "";
     $("visitSlots").innerHTML = "";
     $("keys").innerHTML = "";
-    $("undoBtn").disabled = false;
+    $("undoBtn").disabled = !C.undoCount(round);
     renderTrack(-1);
     $("donePanel").hidden = false;
     if (!doneTimer) {
@@ -375,10 +572,11 @@
     }
     showDoneText();
   }
+  const doneLeft = () => Math.max(0, Math.ceil((doneAt - Date.now()) / 1000));
   function showDoneText() {
     if (!round) return;
-    const left = Math.max(0, Math.ceil((doneAt - Date.now()) / 1000));
-    $("doneText").textContent = `${fmt(C.summarize(round.darts).total)} out of ${fmt(C.MAX_SCORE)}. Saving in ${left} s. Undo to change the last dart.`;
+    $("doneText").textContent = `${fmt(C.summarize(round.darts).total)} out of ${fmt(C.MAX_SCORE)}. Saving in ${doneLeft()} s. Undo to change the last dart.`;
+    renderBoard();
   }
   function hideDone() { $("donePanel").hidden = true; }
   function cancelDone() {
@@ -389,15 +587,14 @@
   }
 
   // ---- saving --------------------------------------------------------------------------------
-  // Each round saves as challengeGames/{its id}, so a retry can never save it twice. It is kept on
-  // this device (a list, so a second round not saved never replaces the first) from the moment it is
-  // finished until the save is confirmed: offline, or with the page closed before then, it's saved
-  // the next time the page opens or the connection comes back.
+  // Each round saves as challengeGames/{its id}, so a retry (or two devices) can never save it twice.
+  // It is kept on this device until the save is confirmed: offline, or with the page closed before
+  // then, it's saved the next time the page opens or the connection comes back.
   function unsavedList() {
     const raw = store.get(UNSAVED_KEY);
     if (!raw) return [];
     if (Array.isArray(raw)) return raw.filter((u) => u && u.rec && u.rec.uid);
-    return raw.uid ? [{ id: null, rec: raw }] : []; // a page from before kept one record
+    return raw.uid ? [{ id: null, rec: raw }] : [];
   }
   function keepUnsaved(id, rec) {
     store.set(UNSAVED_KEY, unsavedList().filter((u) => !(id && u.id === id)).concat([{ id, rec }]).slice(-20));
@@ -406,13 +603,11 @@
     const left = unsavedList().filter((u) => (id ? u.id !== id : !(u.rec.timestamp === rec.timestamp && u.rec.total === rec.total)));
     store.set(UNSAVED_KEY, left.length ? left : null);
   }
-
   async function saveRecord(rec, id) {
     const ref = id ? db.collection(COLL).doc(id) : db.collection(COLL).doc();
     keepUnsaved(id || ref.id, rec);
     try {
       const write = ref.set(rec).catch(async (error) => {
-        // Already there (a saved round can't be changed, so a second save is refused): that's fine.
         const there = await ref.get().catch(() => null);
         if (!(there && there.exists)) throw error;
       });
@@ -425,9 +620,6 @@
       return false;
     }
   }
-
-  // Rounds kept on this device that aren't saved yet: saved now. (Ones a page from before kept, with no
-  // id, are skipped if a round with the same time and score is already there.)
   let retrying = false;
   async function retryUnsaved() {
     if (!user || retrying) return;
@@ -443,21 +635,42 @@
   }
   window.addEventListener("online", () => retryUnsaved());
 
-  async function finishRound() {
+  // The round is over: saved (once, under its id), the shared round cleared, and the summary shown.
+  // fromElsewhere: another device saved and cleared it.
+  async function finishRound(fromElsewhere) {
     if (!round) return;
     cancelDone();
-    const prevBest = games.length ? Math.max(...games.map((g) => g.total)) : null;
-    const prevAvg = C.progress(games).avgLast10;
-    // Saved at the time the round began, with the time the timer counted.
-    const rec = C.record(user.uid, round.darts, { timestamp: stamp(new Date(round.timer.startedAt)), durationSec: T.seconds(round.timer, Date.now()) });
-    const id = round.id || newRoundId();
+    const r = round;
+    const others = games.filter((g) => g.id !== r.id);
+    const prevBest = others.length ? Math.max(...others.map((g) => g.total)) : null;
+    const prevAvg = C.progress(others).avgLast10;
+    const timer = r.timer || T.start(r.startedAt || Date.now());
+    const rec = C.record(user.uid, r.darts, { timestamp: stamp(new Date(timer.startedAt)), durationSec: T.seconds(timer, Date.now()) });
+    const id = r.id || newRoundId();
     keepUnsaved(id, rec); // kept before anything else: closing the page now loses nothing
+    lastResult = { id, rec, others, meta: r.meta };
     round = null;
-    timerView.refresh();
-    store.set(ROUND_KEY, null);
+    if (!fromElsewhere) runOp({ k: "clear" }); // the other devices end the round too
+    else { sayLine = null; afterChange(null); }
     showCard("result");
+    $("resultStats").innerHTML = resultStats(rec);
+    $("resultSummary").innerHTML = summaryHtml(rec, others);
+    let note = !historyLoaded ? "Your earlier rounds haven't loaded, so there's nothing to compare with yet."
+      : prevBest == null ? "Your first round - this is the score to beat." : rec.total > prevBest ? `New personal best! Up ${fmt(rec.total - prevBest)} on your old best of ${fmt(prevBest)}.` : `Your best is ${fmt(prevBest)}.`;
+    if (historyLoaded && prevAvg != null) note += ` Your recent average was ${fmt(prevAvg)}.`;
+    lastResult.note = note;
+    if (historyLoaded && prevBest != null && rec.total > prevBest && board && boardOn()) board.moment({ big: "NEW PB", sub: `${fmt(rec.total)} (was ${fmt(prevBest)})`, kind: "win", ms: 2500 });
+    $("resultNote").textContent = note + " Saving…";
+    renderBoard();
+    const ok = await saveRecord(rec, id);
+    lastResult.saved = ok;
+    $("resultNote").textContent = note + (ok ? " Saved." : " Not saved yet (you may be offline): it's kept on this device and saved as soon as it can be.");
+    renderProgress();
+    renderBoard();
+  }
+  function resultStats(rec) {
     const s = C.summarize(rec.darts);
-    $("resultStats").innerHTML = [
+    return [
       ["Score", fmt(rec.total), `out of ${fmt(C.MAX_SCORE)}`],
       ["Shanghai 10-15", fmt(rec.part1), ""],
       ["Doubles", fmt(rec.part2), `${rec.doublesHit} of 21 hit`],
@@ -467,13 +680,35 @@
       ["Number hit", `${fmt(s.hitRate * 100)}%`, "Shanghai darts on the number"],
       ["Time", rec.durationSec != null ? `${Math.floor(rec.durationSec / 60)}:${String(rec.durationSec % 60).padStart(2, "0")}` : "-", ""],
     ].map(([k, v, d]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div><div class="d muted">${d}</div></div>`).join("");
-    let note = !historyLoaded ? "Your earlier rounds haven't loaded, so there's nothing to compare with yet."
-      : prevBest == null ? "Your first round - this is the score to beat." : rec.total > prevBest ? `New personal best! Up ${fmt(rec.total - prevBest)} on your old best of ${fmt(prevBest)}.` : `Your best is ${fmt(prevBest)}.`;
-    if (historyLoaded && prevAvg != null) note += ` Your recent average was ${fmt(prevAvg)}.`;
-    $("resultNote").textContent = note + " Saving…";
-    const ok = await saveRecord(rec, id);
-    $("resultNote").textContent = note + (ok ? " Saved." : " Not saved yet (you may be offline): it's kept on this device and saved as soon as it can be.");
-    renderProgress();
+  }
+  // The round's summary: each part against your average and best, each number's points and S/D/T,
+  // the 21 doubles on a board, and what to practise next.
+  function summaryHtml(rec, others) {
+    const p = C.progress(others);
+    const best = (key) => (others.length ? Math.max(...others.map((g) => g[key] || 0)) : null);
+    const parts = [["part1", 1], ["part2", 2], ["part3", 3]].map(([key, n]) => {
+      const avg = p.parts.find((x) => x.key === key);
+      const b = best(key);
+      const a = avg && avg.last10 != null ? avg.last10 : null;
+      return `<tr><th>${esc(C.PART_NAMES[n])}</th><td><b>${fmt(rec[key])}</b></td><td>${a == null ? "-" : `${signed(rec[key] - a)} <span class="muted">on ${fmt(a)}</span>`}</td><td>${b == null ? "-" : rec[key] > b ? '<b class="up">best yet</b>' : fmt(b)}</td></tr>`;
+    }).join("");
+    let html = `<div class="table-wrap"><table class="sum"><thead><tr><th></th><th>This round</th><th>Last 10</th><th>Best</th></tr></thead><tbody>${parts}</tbody></table></div>`;
+    const steps = C.stepsOf(rec.darts).filter((x) => x.step.kind === "shanghai");
+    html += `<h3>Each number</h3><div class="nums">${steps.map((x) => {
+      const marks = x.darts.map((v) => (v ? "SDT"[v - 1] : "–")).join("");
+      return `<div class="${C.isShanghai(x.step, x.darts) ? "sh" : ""}"><span>${x.step.target}</span><b>${x.score}</b><small>${marks}</small></div>`;
+    }).join("")}</div>`;
+    const hit = C.stepsOf(rec.darts).filter((x) => x.step.kind === "double" && x.darts[0] === 1).map((x) => x.step.target);
+    if (window.BoardMode) {
+      html += `<h3>Doubles hit: ${hit.length} of 21</h3><div class="dbl-board">${BoardMode.boardSvg(hit.map((t) => (t === C.BULL ? { n: "BULL", beds: "I" } : { n: t, beds: "D" })), [])}</div>`;
+    }
+    // Practise next: the doubles with the lowest hit rate over this round and the last 10, and the
+    // number where the fewest marks went in.
+    const recent = others.slice(-10).concat([rec]);
+    const rate = C.progress(recent).doubles.filter((d) => d.tries).sort((a, b) => a.rate - b.rate || a.target - b.target).slice(0, 3);
+    const weakNum = steps.slice().sort((a, b) => a.darts.reduce((n, v) => n + v, 0) - b.darts.reduce((n, v) => n + v, 0))[0];
+    html += `<h3>Practise next</h3><p>${rate.map((d) => `<span class="tag">${esc(d.label)} · ${fmt(d.rate * 100)}%</span>`).join(" ")}${weakNum ? ` <span class="tag">${weakNum.step.target}s · ${weakNum.darts.reduce((n, v) => n + v, 0)} marks</span>` : ""}</p>`;
+    return html;
   }
 
   function quit() {
@@ -481,10 +716,7 @@
     if (!C.position(round.darts)) { finishRound(); return; } // all 57 in: that's a finished round, saved
     cancelDone();
     if (round.darts.length && !confirm("Quit this round? Unfinished rounds aren't saved.")) return;
-    round = null;
-    store.set(ROUND_KEY, null);
-    showCard("start");
-    refreshStart();
+    runOp({ k: "clear" });
   }
 
   // ---- progress ----------------------------------------------------------------------------
@@ -542,7 +774,7 @@
     $("partStats").innerHTML = p.parts.map((x) => {
       const extra = x.key === "part2" ? ` · ${fmt(x.last10 / C.DOUBLE_POINTS, 1)} of 21 hit` : "";
       return `<div class="stat"><div class="k">${names[x.key]}</div><div class="v">${fmt(x.last10)}</div><div class="d muted">of ${fmt(partMax[x.key])}${extra} · all-time ${fmt(x.all)}</div></div>`;
-    }).join("") + `<div class="stat"><div class="k">Biggest part to gain</div><div class="v" style="font-size:18px">${esc(biggestGap(p, partMax, names))}</div></div>`;
+    }).join("") + `<div class="stat"><div class="k">Most points left in</div><div class="v" style="font-size:18px">${esc(biggestGap(p, partMax, names))}</div></div>`;
     $("weakest").textContent = p.weakest.length ? `Weakest doubles: ${p.weakest.map((d) => `${d.label} (${fmt(d.rate * 100)}%)`).join(", ")}. Red bars are below 25%.` : "";
     $("bars").innerHTML = p.doubles.map((d) => `<div class="${d.rate != null && d.rate < 0.25 ? "low" : ""}" style="height:${d.rate == null ? 0 : Math.max(2, d.rate * 100)}%" title="${d.label}: ${d.rate == null ? "no darts yet" : `${d.hits} of ${d.tries} (${fmt(d.rate * 100)}%)`}"></div>`).join("");
     $("barLabels").innerHTML = p.doubles.map((d) => `<div>${d.target === C.BULL ? "B" : d.target}</div>`).join("");
@@ -552,12 +784,12 @@
     requestAnimationFrame(() => drawChart(p));
   }
 
-  // Where the most points are being left: the part furthest below its maximum, as a share.
+  // Where the most points are being left: the part with the most points below its maximum.
   function biggestGap(p, partMax, names) {
     const scored = p.parts.filter((x) => x.last10 != null);
     if (!scored.length) return "-";
-    const worst = scored.reduce((a, b) => (b.last10 / partMax[b.key] < a.last10 / partMax[a.key] ? b : a));
-    return names[worst.key];
+    const worst = scored.reduce((a, b) => (partMax[b.key] - b.last10 > partMax[a.key] - a.last10 ? b : a));
+    return `${names[worst.key]} (${fmt(partMax[worst.key] - worst.last10)} a round)`;
   }
 
   async function deleteGame(id) {
@@ -569,20 +801,13 @@
   }
 
   function refreshStart() {
-    const saved = store.get(ROUND_KEY);
-    const has = saved && Array.isArray(saved.darts) && saved.darts.length > 0;
-    const finished = has && !C.position(saved.darts);
-    $("resumeBtn").classList.toggle("hidden", !has);
-    $("discardBtn").classList.toggle("hidden", !has);
-    $("resumeText").classList.toggle("hidden", !has);
-    $("resumeBtn").textContent = finished ? "Save the finished round" : "Resume round";
-    if (finished) $("resumeText").textContent = `You finished a round that wasn't saved: ${fmt(C.summarize(saved.darts).total)} out of ${fmt(C.MAX_SCORE)}.`;
-    else if (has) $("resumeText").textContent = `You have a round in progress: ${saved.darts.length} of ${C.TOTAL_DARTS} darts, ${fmt(C.summarize(saved.darts).total)} so far.`;
-    $("startBtn").textContent = has ? "Start a new round" : "Start a round";
+    $("resumeBtn").classList.add("hidden");
+    $("discardBtn").classList.add("hidden");
+    $("resumeText").classList.add("hidden");
+    $("startBtn").textContent = "Start a round";
   }
 
-  // Your rounds, kept up to date (a round finished on another device shows here too). If they can't
-  // be read, the page says so instead of acting as if there were none.
+  // Your rounds, kept up to date (a round finished on another device shows here too).
   function load() {
     if (gamesUnsub) gamesUnsub();
     historyLoaded = false;
@@ -593,8 +818,9 @@
       historyLoaded = true;
       $("noGames").textContent = "No rounds yet. Your scores, averages and weakest doubles show here after your first round.";
       renderProgress();
-      if (round && C.position(round.darts)) renderPlay();
-      if (first) retryUnsaved(); // rounds finished while offline are saved now
+      if (round) renderPlay();
+      renderBoard();
+      if (first) retryUnsaved();
     }, (err) => {
       console.error(err);
       $("noGames").classList.remove("hidden");
@@ -602,66 +828,274 @@
     });
   }
 
+  // ---- the cameras ------------------------------------------------------------------------------
+  // With Cameras on, the camera station enters the darts (board-camera.js). Each visit is 3 darts;
+  // see challenge-engine.js for what a pull-out, a 4th dart and a dart they couldn't read do.
+  let cam = null, camNote = "", camWarn = false;
+  function setCamNote(text, warn) { camNote = text || ""; camWarn = !!warn; $("camNote").textContent = camNote; $("camNote").classList.toggle("warn", camWarn); renderBoard(); }
+  async function setCamera(on) {
+    store.set(CAMERA_KEY, on ? 1 : null);
+    $("camToggle").checked = on;
+    if (!on) { if (cam) cam.stop(); cam = null; setCamNote(""); return; }
+    const pending = { stop() { this.stopped = true; }, stopped: false };
+    cam = pending;
+    setCamNote("Looking for the cameras…");
+    let watcher = null;
+    try { watcher = window.DartCamera ? await DartCamera.chooseWatcher({ db, user: auth.currentUser, onEvent: onCamera }) : null; } catch (_) { watcher = null; }
+    if (pending.stopped || cam !== pending) return;
+    if (!watcher) { cam = null; $("camToggle").checked = false; store.set(CAMERA_KEY, null); setCamNote("No cameras yet: no camera station is running for your account.", true); return; }
+    cam = watcher;
+    try { await watcher.start(); } catch (error) { if (cam === watcher) cam = null; $("camToggle").checked = false; setCamNote(error.message, true); }
+  }
+  function onCamera(e) {
+    if (e.type === "status") return setCamNote(e.text);
+    if (e.type === "error") return setCamNote(e.text, true);
+    if (e.type === "ready") return setCamNote("Cameras on: watching the board.");
+    if (!round || !C.position(round.darts) && e.type !== "takeout") return;
+    if (e.seq && e.seq <= (round.camSeq || 0)) return; // already in: another device put it in
+    if (e.type === "dart") {
+      const x = Math.round(e.app.x * 10000) / 10000, y = Math.round(e.app.y * 10000) / 10000;
+      const l = window.BoardVision ? BoardVision.classify(x, y, BoardVision.APP).label : e.label;
+      const out = runOp({ k: "cam", ev: { seq: e.seq || 0, l, x, y } });
+      if (out && out.late) setCamNote(`Camera: ${l === "MISS" ? "a miss" : l}, not counted: this visit has its 3 darts. Pull your darts out.`, true);
+      else if (out && out.held) setCamNote(`Camera: ${l}, held until you tap in the dart it couldn't read.`, true);
+      else setCamNote(`Camera: ${l === "MISS" ? "a miss" : l}` + (e.uncertain ? ". It wasn't sure: tap the dart to fix it." : "."), !!e.uncertain);
+    } else if (e.type === "unreadable") {
+      runOp({ k: "unread", ev: { seq: e.seq || 0 } });
+      setCamNote("Camera: a dart it couldn't read. Tap what it hit (the keys).", true);
+    } else if (e.type === "takeout") {
+      const out = runOp({ k: "out", ev: { seq: e.seq || 0 } });
+      setCamNote(out && out.unseen ? `Darts out: ${out.unseen} not seen, counted as ${out.unseen === 1 ? "a miss" : "misses"}. Undo if that's wrong.` : "Cameras on: watching the board.");
+    }
+  }
+
+  // ---- the voice --------------------------------------------------------------------------------
+  const voice = window.BoardMode ? BoardMode.voice(() => flag(VOICE_KEY)) : { speak() {}, warmUp() {} };
+  function hearSay() {
+    if (!sayLine || sayLine.id === heardSay) return;
+    heardSay = sayLine.id;
+    voice.speak(sayLine.text);
+  }
+  function setVoice(on) { store.set(VOICE_KEY, on ? 1 : null); $("voiceToggle").checked = on; if (on) voice.warmUp(); renderBoard(); }
+
+  // ---- Board mode (board-mode.js) -------------------------------------------------------------------
+  // The target huge (a number, or this visit's double with the other two beside it), lit on the
+  // board; the three dart boxes; the Shanghai so far; the score with pace against your best and your
+  // last 10, and the most still possible; the 19 visits; big keys. Tap a dart to fix it.
+  const boardOn = () => flag(BOARD_KEY) && !!user;
+  const keepAwake = window.BoardMode ? BoardMode.wakeLock() : () => {};
+  function setBoard(on) {
+    if (on && store.get(VOICE_KEY) === null && localStorage.getItem(VOICE_KEY + "Set") === null) { setVoice(true); try { localStorage.setItem(VOICE_KEY + "Set", "1"); } catch (_) { /* private mode */ } }
+    store.set(BOARD_KEY, on ? 1 : null);
+    renderBoard();
+  }
+  const targetText = (step) => (step.kind === "double" ? (step.target === C.BULL ? "BULL" : "D" + step.target) : String(step.target));
+  function visitCells(darts) {
+    return Array.from({ length: C.VISITS }, (_, k) => {
+      const v = C.visitInfo(darts, k);
+      const label = v.kind === "double" ? `${v.steps[0].target}-${v.steps[2].target === C.BULL ? "B" : v.steps[2].target}` : String(v.steps[0].target);
+      const cur = k === C.visitOf(darts.length) && darts.length < C.TOTAL_DARTS;
+      if (cur) return { key: "v" + k, num: label, state: "current", sub: v.vals.length ? String(v.score) : "" };
+      if (!v.done) return { key: "v" + k, num: label, state: "todo", sub: "" };
+      const level = v.kind === "double" ? v.vals.filter((x) => x).length : Math.min(3, Math.ceil(v.vals.reduce((n, x) => n + x, 0) / 2));
+      return { key: "v" + k, num: label, state: v.shanghai ? "h3 sh" : "h" + level, sub: v.shanghai ? "★" + v.score : String(v.score), title: `${label}: ${v.score}` };
+    });
+  }
+  const board = window.BoardMode ? BoardMode.mount(document.body, {
+    id: "boardMode",
+    modeLabel: "JDC Challenge",
+    heroAria: "The target",
+    stripAria: "The 19 visits",
+    pad: [{ man: "1", text: "Single" }, { man: "2", text: "Double" }, { man: "3", text: "Treble" }, { man: "0", text: "Miss", cls: "m" }, { man: "x3", text: "3 misses", cls: "m" }],
+    idleTitle: "JDC Challenge",
+    idleSub: "Shanghai 10 to 15, every double and the bull, Shanghai 15 to 20: 57 darts.",
+    idleStart: "Start a round",
+    doneBig: "Round done",
+    big: (t) => (t == null ? "" : String(t)),
+    longTarget: (t) => String(t).length > 3,
+    curNote: "what it is now",
+    lit: (v) => v.lit || [],
+    fixOptions: (d) => {
+      if (!round || !(d.index >= 0)) return [];
+      const step = C.stepAt(d.di);
+      if (!step) return [];
+      const cur = round.darts[d.di];
+      if (step.kind === "double") return [{ id: "1", text: `Hit ${C.doubleLabel(step.target)}: +50`, hit: true, cur: cur === 1 }, { id: "0", text: "Miss", cur: cur === 0 }];
+      return [3, 2, 1].map((v) => ({ id: String(v), text: `${RING[v]} ${step.target}: ${step.target * v}`, hit: true, cur: cur === v })).concat([{ id: "0", text: "Miss", cur: cur === 0 }]);
+    },
+    fixSub: (d) => `Dart ${d.index + 1} of the visit: ${d.read === "Miss" ? "a miss" : d.read}. What was it?`,
+    fixValue: (id) => Number(id),
+  }, {
+    exit: () => setBoard(false),
+    start: () => startRound(),
+    pause: () => {
+      if (!round || !round.timer) return;
+      const t = JSON.parse(JSON.stringify(round.timer)), now = Date.now();
+      if (T.isPaused(t, now)) T.resume(t, now); else T.pause(t, now);
+      runOp({ k: "timer", timer: t });
+    },
+    voice: () => setVoice(!flag(VOICE_KEY)),
+    camera: () => setCamera(!$("camToggle").checked),
+    manual: (man) => { if (man === "x3") threeMisses(); else throwDart(Number(man)); },
+    undo: () => undo(),
+    fix: (index, seq, value) => {
+      const v = boardView();
+      const d = v && v.darts[index];
+      if (!d || d.s !== seq || !Number.isInteger(value)) return;
+      runOp({ k: "fix", i: d.di, v: value });
+    },
+    save: () => finishRound(),
+    again: () => startRound(),
+  }) : null;
+
+  // What Board mode shows now.
+  function boardView() {
+    if (!round) return null;
+    const darts = round.darts, n = darts.length, pos = C.position(darts);
+    if (!pos) return null;
+    // The visit on the board: the cameras' visit, or the one going on, or (before its first dart,
+    // until the darts are pulled out) the one just finished.
+    let k = C.visitOf(n), pullOut = false;
+    if (round.cam) k = round.cam.visit;
+    else if (n && n % 3 === 0 && !round.pulled) { k = C.visitOf(n - 1); pullOut = true; }
+    const info = C.visitInfo(darts, k);
+    const boxes = info.vals.map((v, j) => {
+      const di = info.from + j, m = round.meta[di] || {};
+      return Object.assign({ index: j, di, s: di + ":" + v + ":" + (m.seq || m.src || ""), x: m.x, y: m.y, fixed: !!m.f }, C.dartBox(di, v, m));
+    });
+    const waiting = [];
+    if (round.cam && round.cam.visit === k) {
+      for (let u = 0; u < round.cam.unread; u += 1) waiting.push({ read: "Not read", sub: "Tap what it hit" });
+      round.cam.hold.forEach(() => waiting.push({ read: "Held", sub: "Behind the dart they couldn't read" }));
+    }
+    const step = pos.step;
+    const visitNow = C.visitInfo(darts, C.visitOf(n));
+    const lit = step.kind === "double"
+      ? visitNow.steps.map((st) => (st.target === C.BULL ? { n: "BULL", beds: "I", tint: st === step } : { n: st.target, beds: "D", tint: st === step }))
+      : [{ n: step.target, beds: "SDT", tint: true }];
+    const next = [];
+    for (let i = n + 1; next.length < 3 && i < C.TOTAL_DARTS; i += 1) {
+      const st = C.stepAt(i);
+      const t = targetText(st);
+      if (st.kind === "shanghai" && (i % 3)) continue; // one chip per number
+      if (!next.includes(t)) next.push(t);
+    }
+    return {
+      target: targetText(step),
+      label: pullOut ? "Pull your darts out, then" : step.kind === "double" ? "Doubles: " + visitNow.steps.map((st) => C.doubleLabel(st.target)).join(" · ") : "Shanghai " + step.target,
+      labelClass: pullOut ? "" : "over",
+      pullOut,
+      countHtml: pullOut ? "Next visit" : `Dart ${n % 3 + 1} <span>of 3</span>`,
+      finished: false,
+      next, nextLabel: "Next",
+      lit, darts: boxes, waiting, unseen: 0, visitDone: info.done || pullOut,
+      cells: visitCells(darts), cols: C.VISITS,
+      capHtml: `<strong>Part ${step.part}</strong> · ${esc(C.PART_NAMES[step.part])}: ${fmt(C.summarize(darts)["part" + step.part])}`,
+      note: `${n} of ${C.TOTAL_DARTS} darts`,
+    };
+  }
+  function renderBoard() {
+    if (!board) return;
+    const on = boardOn();
+    board.show(on);
+    if (!on) { keepAwake(false); return; }
+    const base = { camOn: $("camToggle").checked, voiceOn: flag(VOICE_KEY), note: camNote || $("flash").textContent || $("syncNote").textContent, noteWarn: camWarn };
+    if (!round && lastResult) {
+      const rec = lastResult.rec;
+      board.update(Object.assign(base, {
+        view: { finished: true, target: "", darts: [], cells: visitCells(rec.darts), cols: C.VISITS, next: [], capHtml: "", note: "" },
+        doneBig: fmt(rec.total), doneText: `out of ${fmt(C.MAX_SCORE)}. ${lastResult.note || ""} ${lastResult.saved ? "Saved." : lastResult.saved === false ? "Kept on this device until it can be saved." : "Saving…"}`,
+        doneHtml: summaryHtml(rec, lastResult.others), doneOnly: true, modeLabel: "JDC Challenge",
+        doneActions: [{ act: "again", text: "Play another round", primary: true }],
+        undoCount: 0, pauseOff: true,
+      }));
+      keepAwake(false);
+      return;
+    }
+    if (!round) { board.update(Object.assign(base, { view: null, idleTitle: "JDC Challenge", modeLabel: "JDC Challenge" })); keepAwake(false); return; }
+    const darts = round.darts;
+    if (!C.position(darts)) {
+      board.update(Object.assign(base, {
+        view: { finished: true, target: "", darts: [], cells: visitCells(darts), cols: C.VISITS, next: [], capHtml: "", note: "" },
+        doneBig: fmt(C.summarize(darts).total), doneText: `out of ${fmt(C.MAX_SCORE)}. Saving in ${doneLeft()} s: Undo to change the last dart.`,
+        doneHtml: "", modeLabel: "JDC Challenge · all 57 in", doneActions: [{ act: "save", text: "Save now", primary: true }, { act: "undo", text: "Undo the last dart" }],
+        undoCount: C.undoCount(round), pauseOff: true,
+      }));
+      keepAwake(true);
+      return;
+    }
+    const v = boardView();
+    const pc = paceNow(darts);
+    const step = C.position(darts).step;
+    let info = `<b>${fmt(C.summarize(darts).total)}</b>`;
+    if (pc.best) info += ` <span class="m">· best</span> <b class="${pc.best.diff >= 0 ? "up" : "down"}">${signed(pc.best.diff)}</b>`;
+    if (pc.avg != null) { const d = Math.round(pc.now - pc.avg); info += ` <span class="m">· last 10</span> <b class="${d >= 0 ? "up" : "down"}">${signed(d)}</b>`; }
+    info += ` <span class="m">· most possible</span> ${fmt(C.mostPossible(darts))}`;
+    const sh = C.shanghaiNote(darts);
+    if (sh) info += `<br><span class="m">${esc(sh)}</span>`;
+    const dbl = step.kind === "double";
+    board.update(Object.assign(base, {
+      view: v,
+      paused: !!round.timer && T.isPaused(round.timer, Date.now()),
+      undoCount: C.undoCount(round),
+      dartsText: `${darts.length} darts`,
+      modeLabel: `JDC Challenge · part ${step.part} of 3`,
+      info,
+      pad: dbl
+        ? [{ man: "1", text: `Hit ${C.doubleLabel(step.target)}` }, { man: "2", hidden: true }, { man: "3", hidden: true }, { man: "0", text: "Miss" }, { man: "x3", text: "3 misses" }]
+        : [{ man: "1", text: `Single ${step.target}` }, { man: "2", text: `Double ${step.target}` }, { man: "3", text: `Treble ${step.target}` }, { man: "0", text: "Miss" }, { man: "x3", text: "3 misses" }],
+    }));
+    board.tick(T.format(round.timer ? T.elapsedMs(round.timer, Date.now()) : 0));
+    keepAwake(true);
+  }
+  setInterval(() => { if (board && boardOn() && document.visibilityState !== "hidden") renderBoard(); }, 500);
+
   // ---- wiring ------------------------------------------------------------------------------
   $("keys").addEventListener("click", (e) => {
+    if (e.target.closest("button[data-x3]")) { threeMisses(); return; }
     const b = e.target.closest("button[data-v]");
     if (b) throwDart(Number(b.dataset.v));
   });
   $("undoBtn").addEventListener("click", undo);
-  timerView = T.mount($("practiceTimer"), { get: () => (round ? round.timer : null), onChange: () => store.set(ROUND_KEY, round) });
+  timerView = T.mount($("practiceTimer"), { get: () => (round ? round.timer : null), onChange: (t) => { if (round) runOp({ k: "timer", timer: JSON.parse(JSON.stringify(t || round.timer)) }); } });
   $("quitBtn").addEventListener("click", quit);
   $("startBtn").addEventListener("click", () => {
-    if (store.get(ROUND_KEY) && !confirm("Start over? The round in progress will be discarded.")) return;
-    startRound(null);
-  });
-  $("resumeBtn").addEventListener("click", () => {
-    const saved = store.get(ROUND_KEY);
-    startRound(saved);
-    if (saved && Array.isArray(saved.darts) && !C.position(saved.darts)) finishRound(); // a finished round: saved now
+    if (round && round.darts.length && !confirm("Start over? The round in progress will be discarded.")) return;
+    startRound();
   });
   $("saveNowBtn").addEventListener("click", () => finishRound());
-  // The same round open in another tab: the latest change there shows here, so neither tab writes
-  // over the other's darts. (Across devices: a later phase keeps the round in your account.)
-  window.addEventListener("storage", (e) => {
-    if (e.key !== ROUND_KEY) return;
-    const other = store.get(ROUND_KEY);
-    if (round && other && other.id === round.id) {
-      cancelDone();
-      round = other;
-      round.timer = T.restore(round.timer, Date.now()) || T.start(Date.now());
-      $("syncNote").textContent = "Updated from this round in another tab.";
-      renderPlay();
-    } else if (round && !other) {
-      cancelDone();
-      round = null;
-      showCard("start");
-      refreshStart();
-      $("syncNote").textContent = "";
-    } else if (!round) refreshStart();
-  });
-  $("discardBtn").addEventListener("click", () => { store.set(ROUND_KEY, null); refreshStart(); });
-  $("againBtn").addEventListener("click", () => startRound(null));
+  $("againBtn").addEventListener("click", () => startRound());
+  $("boardBtn").addEventListener("click", () => setBoard(true));
+  $("boardBtn2").addEventListener("click", () => setBoard(true));
+  $("voiceToggle").addEventListener("change", (e) => setVoice(e.target.checked));
+  $("camToggle").addEventListener("change", (e) => setCamera(e.target.checked));
   $("history").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-del]");
-    if (b) deleteGame(b.dataset.del).catch((err) => alert(`Couldn't delete it: ${err.message}`));
+    if (b) deleteGame(b.dataset.del).catch((err) => { $("noGames").classList.remove("hidden"); $("noGames").textContent = `Couldn't delete it: ${err.message}`; });
   });
   document.addEventListener("keydown", (e) => {
     if (!round || e.target.closest("input, select, textarea")) return;
     if (/^[0-3]$/.test(e.key)) { e.preventDefault(); throwDart(Number(e.key)); }
     else if (e.key === "Backspace") { e.preventDefault(); undo(); }
+    else if (e.key.toLowerCase() === "x") { e.preventDefault(); threeMisses(); }
   });
   window.addEventListener("resize", () => { if (games.length) drawChart(C.progress(games)); });
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") renderBoard(); });
 
   $("signInBtn").addEventListener("click", () => auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()));
+  $("voiceToggle").checked = flag(VOICE_KEY);
   auth.onAuthStateChanged((u) => {
     user = u;
     $("authScreen").classList.toggle("hidden", !!u);
     $("app").classList.toggle("hidden", !u);
     $("userPill").classList.toggle("hidden", !u);
-    if (!u) return;
+    if (!u) { stopLive(); renderBoard(); return; }
     $("userName").textContent = u.displayName || u.email || "";
     refreshStart();
     load();
+    startLive(u.uid);
+    if (flag(CAMERA_KEY)) setCamera(true);
+    renderBoard();
   });
 })();
 </script>

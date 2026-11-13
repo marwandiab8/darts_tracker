@@ -178,7 +178,7 @@
     <div class="bm-cap"><span data-ref="capLeft"><strong>0 of 21</strong> done</span><span data-ref="capNote"></span></div>
     <div class="bm-cells" data-ref="cells"></div>
   </section>
-  <div class="bm-pad" data-ref="pad" aria-label="Enter a dart by hand">
+  <div class="bm-pad" data-ref="pad" aria-label="Enter a dart by hand" style="--bm-pad:${(cfg.pad || []).length + 1}">
     ${pad}
     <button type="button" data-act="undo" data-ref="undo" class="u">Undo</button>
   </div>

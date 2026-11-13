@@ -84,3 +84,103 @@ test("bug 3: pace compares whole visits only, never the darts of the visit you a
   assert.equal(C.pace(now, null), null);
   assert.equal(C.pace([1, 1, 1, 3, 3, 3], best).diff, 99 - 33);
 });
+
+// ---- Phase 5: a round shared between devices, the cameras' visits, fixing, undo, the voice ---------
+const R = () => C.newRound("jdcTest", 1);
+const ev = (seq, l) => ({ seq, l, x: 0.1, y: -0.5 });
+
+test("every visit is 3 darts: the same number, or three doubles in order", () => {
+  assert.equal(C.VISITS, 19);
+  assert.equal(C.visitOf(17), 5);
+  assert.equal(C.stepAt(17).target, 15);
+  assert.deepEqual(C.visitInfo(Array(21).fill(1), 6).steps.map((s) => s.target), [1, 2, 3]);
+  assert.deepEqual(C.visitInfo(Array(39).fill(0), 12).steps.map((s) => s.target), [19, 20, C.BULL]);
+  assert.equal(C.stepAt(57), null);
+});
+
+test("camera darts go to their own target; the bull is the bullseye only", () => {
+  const r = R();
+  C.camDart(r, ev(1, "T10")); C.camDart(r, ev(2, "S11")); C.camDart(r, ev(3, "D10"));
+  assert.deepEqual(r.darts, [3, 0, 2], "a dart in the 11 is a miss at 10");
+  assert.equal(C.valueAt(18 + 20, "DB"), 1);
+  assert.equal(C.valueAt(18 + 20, "SB"), 0, "the outer bull doesn't count");
+  assert.equal(C.valueAt(18 + 6, "D7"), 1);
+  assert.equal(C.valueAt(18 + 6, "D8"), 0);
+});
+
+test("a 4th dart before the pull-out isn't counted, so later targets never shift", () => {
+  const r = R();
+  ["S10", "S10", "S10"].forEach((l, i) => C.camDart(r, ev(i + 1, l)));
+  const late = C.camDart(r, ev(4, "T11"));
+  assert.ok(late.late);
+  assert.equal(r.darts.length, 3);
+  C.camTakeout(r, { seq: 5 });
+  C.camDart(r, ev(6, "T11"));
+  assert.deepEqual(r.darts, [1, 1, 1, 3]);
+});
+
+test("the pull-out: darts not seen are misses at that visit only", () => {
+  const r = R();
+  C.camDart(r, ev(1, "T10"));
+  const out = C.camTakeout(r, { seq: 2 });
+  assert.equal(out.unseen, 2);
+  assert.deepEqual(r.darts, [3, 0, 0]);
+  assert.deepEqual(r.meta.map((m) => m.src), ["cam", "unseen", "unseen"]);
+  assert.equal(r.cam, null);
+  assert.deepEqual(C.camTakeout(r, { seq: 3 }), { went: [], unseen: 0 }, "a second pull-out does nothing");
+});
+
+test("a dart the cameras couldn't read waits for a tap, and the darts after it wait behind it", () => {
+  const r = C.newRound("d", 1);
+  r.darts = Array(18).fill(0); r.meta = r.darts.map(() => ({ src: "key" })); // on to D1, D2, D3
+  C.camUnread(r, { seq: 1 });
+  C.camDart(r, ev(2, "D2"));
+  assert.equal(r.darts.length, 18, "D2 waits behind the dart at D1");
+  C.keyDart(r, 1); // the dart they couldn't read was a hit on D1
+  assert.deepEqual(r.darts.slice(18), [1, 1], "D1 hit, then D2 hit: each at its own double");
+  C.camUnread(r, { seq: 3 });
+  C.camTakeout(r, { seq: 4 });
+  assert.deepEqual(r.darts.slice(18), [1, 1, 0], "never tapped: a miss at the pull-out");
+  assert.equal(r.meta[20].src, "unread");
+});
+
+test("3 misses, fixing a dart and a 10-step undo", () => {
+  const r = R();
+  C.keyDart(r, 3);
+  C.threeMisses(r);
+  assert.deepEqual(r.darts, [3, 0, 0]);
+  const f = C.fixDart(r, 1, 2);
+  assert.equal(f.was, 0);
+  assert.deepEqual(r.darts, [3, 2, 0]);
+  assert.equal(r.meta[1].f, 1);
+  assert.equal(C.fixDart(r, 1, 2), null, "the same value: nothing to fix");
+  assert.equal(C.fixDart(r, 18, 1), null, "no dart there yet");
+  assert.ok(C.undoStep(r)); assert.deepEqual(r.darts, [3, 0, 0]);
+  assert.ok(C.undoStep(r)); assert.deepEqual(r.darts, [3]);
+  for (let k = 0; k < 15; k += 1) C.keyDart(r, 1);
+  assert.equal(C.undoCount(r), 10, "undo keeps the last 10 steps");
+});
+
+test("Board mode: the dart boxes, the Shanghai so far, the most still possible", () => {
+  const r = R();
+  C.camDart(r, ev(1, "T10")); C.camDart(r, ev(2, "S2"));
+  assert.deepEqual(C.dartBox(0, r.darts[0], r.meta[0]), { read: "T10", sub: "30", kind: "hit" });
+  assert.deepEqual(C.dartBox(1, r.darts[1], r.meta[1]), { read: "Miss", sub: "In the 2", kind: "miss" });
+  assert.equal(C.shanghaiNote([3]), "T ✓ · need the S and D for +100");
+  assert.equal(C.shanghaiNote([3, 2]), "D ✓ T ✓ · need the S for +100");
+  assert.equal(C.shanghaiNote([3, 0]), "", "a miss: no Shanghai left");
+  assert.equal(C.mostPossible([]), C.MAX_SCORE);
+  assert.equal(C.mostPossible([0, 0, 0]), C.MAX_SCORE - C.stepMax(C.STEPS[0]));
+  const d = C.dartBox(18, 1, { src: "cam", l: "D1" });
+  assert.deepEqual(d, { read: "D1", sub: "+50", kind: "hit" });
+});
+
+test("the voice: each dart, the visit with its score and against your best, a Shanghai", () => {
+  const best = Array(57).fill(1).map((v, i) => (C.stepAt(i).kind === "double" ? 0 : 1));
+  assert.equal(C.voiceLine([3], { k: "dart", index: 0 }, best), "Treble.");
+  assert.equal(C.voiceLine([3, 1, 0], { k: "dart", index: 2 }, best), "10: treble, single, miss. 40. 10 ahead of your best.");
+  assert.equal(C.voiceLine([3, 1, 2], { k: "dart", index: 2 }, best), "SHANGHAI! 160.");
+  const dbl = Array(18).fill(0).concat([1, 0, 0]);
+  assert.equal(C.voiceLine(dbl, { k: "dart", index: 20 }, null), "D 1, D 2, D 3: hit, miss, miss. 50.");
+  assert.equal(C.voiceLine([3, 1, 0], { k: "fix", index: 1 }, best), "Fixed: single.");
+});

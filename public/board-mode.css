@@ -156,7 +156,7 @@ body.bm-open { overflow: hidden; }
 }
 
 /* Buttons */
-.bm-pad { grid-area: pad; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(0, .9fr); gap: 10px; }
+.bm-pad { grid-area: pad; display: grid; grid-template-columns: repeat(var(--bm-pad, 5), minmax(0, 1fr)); gap: 10px; }
 .bm .bm-pad button { min-height: 64px; border-radius: 14px; font-weight: 800; font-size: 18px; border: 2px solid rgba(34, 197, 94, .55); color: var(--bm-hit-ink); }
 .bm .bm-pad button.m { border-color: rgba(248, 113, 113, .5); color: var(--bm-miss-ink); }
 .bm .bm-pad button.u { border-color: var(--bm-line); color: var(--text); background: var(--bm-panel); }

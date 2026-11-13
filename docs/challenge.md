@@ -11,16 +11,52 @@ checked by `tests/challenge-engine.test.cjs`.
 2. **Doubles:** one dart at each of D1-D20, then the bull. Each hit scores 50.
 3. **Shanghai 15-20:** as part 1.
 
-Each dart is entered with a key (Miss / Single / Double / Treble, or Miss / Hit for a double), or 0-3 and Backspace
-on a keyboard. While playing, the score is compared with your best round at the end of each visit (`pace`: the same
-finished visits on both sides, so the visit you're in never counts against the best round's total from before it).
-An unfinished round is kept in the browser and offered back; only finished rounds are saved. The same round open in
-two tabs stays in step (the latest dart in either shows in both).
+Each dart is entered with a key (Miss / Single / Double / Treble, or Miss / Hit for a double, and **3 misses** for the
+rest of a visit), or 0-3, X and Backspace on a keyboard, or by the cameras. While playing, the score is compared with
+your best round at the end of each visit (`pace`: the same finished visits on both sides, so the visit you're in never
+counts against the best round's total from before it). Only finished rounds are saved.
+
+**Visits.** Every visit at the board is 3 darts: three at one number in the Shanghai parts, and one at each of three
+doubles in order in the doubles part (D1 · D2 · D3, ..., D19 · D20 · Bull). The bull is the bullseye only (decided
+Nov 13, 2026: the outer bull is a miss).
+
+**One round on every device** (since Nov 13, 2026). The round in play is kept in your account (`liveChallenges/{uid}`,
+versions as in the tracker, `live-sync.js`): a second tab, the iPad and the computer all show it, and any of them can
+add darts. Every change is an op; one refused because another device's change got in first is applied again on top,
+so a dart is never lost. Offline, play goes on and the darts go up when the connection is back. A round the page from
+before left in the browser becomes the shared round when the page opens. **Undo** takes back the last change (a dart,
+a fix, a pull-out's misses), up to 10, from any device.
+
+**The cameras** (Cameras on the play card, remembered on each device; see `challenge-engine.js`):
+- a visit belongs to the darts the cameras see from their first one after a pull-out, and is exactly 3 darts: nothing
+  ends it early;
+- a 4th dart before the pull-out isn't counted (the note says to pull your darts out), so one bad visit can't shift
+  every later target;
+- at the pull-out the visit's darts not seen are misses, at that visit only;
+- a dart they couldn't read waits for a tap (the keys), and the darts read after it wait behind it, so each goes to its
+  own target (in the doubles part every dart is a different double); never tapped, it's a miss at the pull-out.
+
+**Board mode** (on the start screen and the play card; remembered on each device; the first time it turns the voice
+on): the target huge, with the visit's three doubles named and lit on the board (a whole number lit in the Shanghai
+parts); the three dart boxes ("T17 · 51", "Miss · In the 2", "D8 · +50", "Not seen", "Not read", "Held"); the score
+with pace against your best and against the average of your last 10 rounds at the same visit, and the most still
+possible; the Shanghai so far ("T ✓ · need the S and D for +100"); the 19 visits; big keys. Tap a dart (its box or its
+dot) to fix it. The screen stays on.
+
+**Moments** fill the screen for a couple of seconds (a tap skips one): a Shanghai, all three doubles of a visit, going
+ahead of your best, a part beating your best for that part, and a new best round.
+
+**The voice** (Voice on the play card, per device) says each dart ("Treble.", "Hit.") and each visit with its score and
+how it stands against your best ("17: treble, single, miss. 68. 40 ahead of your best.", "D 7, D 8, D 9: hit, miss,
+miss. 50.", "SHANGHAI! 160."). The line goes with the round, so every device with Voice on says it once.
 
 **After the 57th dart** (since Nov 13, 2026) the round isn't saved at once: it says "Round complete" and saves after
-10 seconds, or at once with "Save the round". Undo (or Backspace) in that time takes the last dart back, so a
-mis-tapped last dart can be fixed. A finished round left on the device (the page closed in those 10 seconds) is
-offered as "Save the finished round" the next time the page opens.
+10 seconds, or at once with "Save the round". Undo in that time takes the last dart back, so a mis-tapped last dart
+can be fixed. Whichever device saves it, it is saved once (its own id), and the round ends on every device.
+
+**The summary** after a round: each part against the average of your last 10 rounds and your best for that part; each
+number's points and S/D/T; the 21 doubles on a board (the ones hit lit); and what to practise next (the doubles with
+the lowest hit rate over this round and your last 10, and the number where the fewest marks went in).
 
 ## What is saved and shown
 

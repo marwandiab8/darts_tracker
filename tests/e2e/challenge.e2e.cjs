@@ -1,8 +1,9 @@
 // The JDC Challenge (challenge.html): the bugs that lost or corrupted rounds, each on the real page.
 // The 57th dart can be undone before the round is saved; a round finished offline is kept and saved
 // once when the connection is back, and a second one doesn't replace the first; pace compares whole
-// visits; rounds saved elsewhere show up without a reload; a finished round left on the device is
-// offered for saving; and two tabs with the round open stay in step.
+// visits; rounds saved elsewhere show up without a reload; a round left on the device by the page
+// from before (localStorage) becomes the shared round and is saved; and a second tab (or device)
+// shares the round.
 const H = require("./harness.cjs");
 const C = require("../../public/challenge-engine.js");
 const { doc, setDoc } = require("firebase/firestore");
@@ -49,8 +50,7 @@ const { check, failed } = H.checker();
     const tab2 = await page.context().newPage();
     tab2.errors = []; tab2.on("pageerror", (e) => tab2.errors.push(String(e)));
     await tab2.goto(url);
-    await tab2.waitForSelector("#resumeBtn:not(.hidden)", { timeout: 10000 });
-    await tab2.click("#resumeBtn");
+    await tab2.waitForSelector("#playCard:not(.hidden)", { timeout: 10000 }); // it joins the round
     await press(["2"]);                      // a dart in the first tab
     check(await until(async () => /Dart 2 of 3/.test(await tab2.$eval("#dartLabel", (e) => e.textContent))), "two tabs: a dart in one shows in the other");
     await tab2.close();
@@ -88,14 +88,15 @@ const { check, failed } = H.checker();
     check((await rounds()).length === 5, "bug 2: and only once each");
     check(await until(async () => !(await page.evaluate(() => localStorage.getItem("dt_challenge_unsaved"))), 8000), "bug 2: nothing is left waiting on the device");
 
-    // ---- bug 5: a finished round left on the device is offered and saved ------------------------
+    // ---- bug 5: a finished round left on the device (by the page from before) is saved -----------
     const left = { id: "jdcLeftBehind1", darts: allSingles().map(Number), startedAt: Date.now() - 400000, timer: { startedAt: Date.now() - 400000, activeMs: 300000, runningSince: null, lastActivityAt: Date.now() - 100000, pausedBy: "you", pausedAt: Date.now() - 100000 } };
     await page.evaluate((r) => localStorage.setItem("dt_challenge_round", JSON.stringify(r)), left);
     await page.reload();
-    await page.waitForSelector("#resumeBtn:not(.hidden)", { timeout: 10000 });
-    check(/Save the finished round/.test(await text("#resumeBtn")), "bug 5: a finished round left on the device is offered: " + await text("#resumeBtn"));
-    await page.click("#resumeBtn");
+    await page.waitForSelector("#donePanel:not([hidden])", { timeout: 10000 });
+    check(/Saving in/.test(await text("#doneText")), "bug 5: a finished round left on the device becomes the shared round, waiting to be saved: " + await text("#doneText"));
+    await page.click("#saveNowBtn");
     check(await until(async () => (await rounds()).some((g) => g.id === "jdcLeftBehind1"), 8000), "bug 5: it is saved");
+    check(await page.evaluate(() => !localStorage.getItem("dt_challenge_round")), "and the device's copy is gone");
 
     // (The browser's own "disconnected" lines from the offline part are expected.)
     const errs = page.errors.filter((e) => !/ERR_INTERNET_DISCONNECTED/.test(e));
