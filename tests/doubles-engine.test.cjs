@@ -255,3 +255,240 @@ test("old saved sessions read the same as new ones", () => {
   const heat = E.heatByDate([{ startedAtMs: T0, activeMs: 1000 }, { startedAtMs: T0 + 1, activeMs: 500 }]);
   assert.deepEqual(Object.values(heat)[0], { count: 2, totalActiveMs: 1500, bestActiveMs: 500 });
 });
+
+// ---- Board mode ----------------------------------------------------------------------------------
+// Darts the way the page enters them: recordDart / recordTakeout, each record onto the undo steps.
+function bm(u, dart, now = T0 + 3000) {
+  const out = E.recordDart(u, u.activeSession, dart, now);
+  if (out && out.record) E.pushUndo(u, out.record, String(++seq));
+  return out;
+}
+function bmOut(u, darts, now = T0 + 3500) {
+  const out = E.recordTakeout(u, u.activeSession, { seq: ++seq, darts }, now);
+  if (out && out.record) E.pushUndo(u, out.record, String(++seq));
+  return out;
+}
+const visit = (u) => u.activeSession.cam.visit;
+const fixWith = (u, i, label, now = T0 + 4000) => {
+  const v = visit(u);
+  const out = E.fixDart(u, u.activeSession, i, v.darts[i].s, Object.assign({ label }, E.spot(label)), now);
+  if (out.record && out.changed) E.pushUndo(u, out.record, String(++seq));
+  return out;
+};
+
+test("board: camera darts say what they counted as, and make up the visit on the board", () => {
+  const u = fresh();
+  const a = bm(u, single(1));
+  assert.deepEqual(a.change.effect, { kind: "miss", key: "D1", n: 1 });
+  const b = bm(u, dbl(1));
+  assert.deepEqual(b.change.effect, { kind: "hit", key: "D1", n: 2 });
+  bm(u, single(2));
+  assert.equal(visit(u).darts.length, 3);
+  assert.deepEqual(visit(u).darts.map((x) => x.e.kind), ["miss", "hit", "miss"]);
+  assert.equal(u.activeSession.throws.length, 3);
+  assert.deepEqual(u.activeSession.throws.map((t) => t.k), ["D1", "D1", "D2"]);
+  // A 4th dart without a take-out starts the next visit; so does a dart after a take-out.
+  bm(u, single(2));
+  assert.equal(visit(u).darts.length, 1);
+  assert.equal(visit(u).n, 2);
+  bmOut(u, 1);
+  bm(u, dbl(2));
+  assert.equal(visit(u).n, 3);
+});
+
+test("board: fixing a missed dart to a hit scores the visit again, and Undo takes the fix back", () => {
+  const u = fresh();
+  bm(u, single(1)); bm(u, outside(1));
+  assert.equal(cur(u), "D1");
+  const f = fixWith(u, 1, "D1");
+  assert.ok(f.changed);
+  assert.equal(d(u, "D1").completed, true);
+  assert.equal(d(u, "D1").hitDart, 2);
+  assert.equal(life(u, "D1").hits2, 1);
+  assert.equal(cur(u), "D2");
+  assert.deepEqual(visit(u).darts.map((x) => x.e.kind), ["miss", "hit"]);
+  assert.equal(u.activeSession.throws[1].l, "D1");
+  assert.equal(u.activeSession.throws[1].f, 1);
+  const r = E.undoStep(u, T0 + 5000);
+  assert.ok(!r.error, r.error);
+  assert.equal(d(u, "D1").completed, false);
+  assert.equal(life(u, "D1").hits, 0);
+  assert.equal(cur(u), "D1");
+});
+
+test("board: fixing the 3rd dart of a missed visit to a hit takes the miss back", () => {
+  const u = fresh();
+  bm(u, single(1)); bm(u, single(1)); bm(u, outside(1));
+  assert.equal(cur(u), "D2");
+  assert.equal(d(u, "D1").attempts, 1);
+  fixWith(u, 2, "D1");
+  assert.equal(d(u, "D1").attempts, 1);
+  assert.equal(d(u, "D1").completed, true);
+  assert.equal(d(u, "D1").hitDart, 3);
+  assert.equal(life(u, "D1").attempts, 1);
+  assert.equal(life(u, "D1").hits3, 1);
+  assert.equal(cur(u), "D2");
+});
+
+test("board: fixing a hit to a miss, and removing a dart that wasn't one", () => {
+  const u = fresh();
+  bm(u, dbl(1));
+  assert.equal(cur(u), "D2");
+  fixWith(u, 0, "O1");
+  assert.equal(d(u, "D1").completed, false);
+  assert.equal(d(u, "D1").attempts, 0);
+  assert.equal(cur(u), "D1");
+  assert.equal(u.activeSession.cam.darts.length, 1);
+  const v = visit(u);
+  const out = E.fixDart(u, u.activeSession, 0, v.darts[0].s, { remove: true }, T0 + 4100);
+  assert.ok(!out.error);
+  assert.equal(visit(u).darts.length, 0);
+  assert.equal(u.activeSession.cam.darts.length, 0);
+  assert.equal(u.activeSession.throws.length, 0);
+});
+
+test("board: a fixed visit that was pulled out keeps its unseen misses", () => {
+  const u = fresh();
+  bm(u, dbl(1)); // D1 on dart 1, now at D2
+  bm(u, single(2));
+  bmOut(u, 2); // 1 unseen: a miss at D2? no: 2 seen, 1 unseen
+  assert.equal(visit(u).out.unseen, 1);
+  // The unseen dart was the 3rd at D2 (single 2 was the 1st... after the D1 hit, darts at D2: S2, unseen).
+  assert.equal(u.activeSession.cam.darts.length, 2);
+  fixWith(u, 1, "D2"); // the S2 was really D2: hit on dart 1 at D2; the unseen dart is then dart 1 at D3
+  assert.equal(d(u, "D2").completed, true);
+  assert.equal(d(u, "D2").hitDart, 1);
+  assert.equal(cur(u), "D3");
+  assert.equal(u.activeSession.cam.darts.length, 1);
+});
+
+test("board: a tap on the buttons, Undo or a new visit ends the old visit's fixes", () => {
+  const u = fresh();
+  bm(u, single(1));
+  const s1 = visit(u).darts[0].s;
+  bmOut(u, 1);
+  bm(u, single(1)); // a new visit
+  assert.ok(E.fixDart(u, u.activeSession, 0, s1, { label: "D1" }, T0 + 4000).error);
+  const err = E.fixDart(u, u.activeSession, 5, 0, { label: "D1" }, T0 + 4000);
+  assert.ok(err.error);
+});
+
+test("board: a fix can be a stay: the dart after a miss in that double", () => {
+  const u = fresh();
+  bm(u, single(1)); bm(u, single(1)); bm(u, single(1)); // D1 missed, now D2
+  bmOut(u, 3);
+  bm(u, single(1)); // a 4th dart in the 1: stay
+  assert.equal(visit(u).darts[0].e.kind, "stay");
+  fixWith(u, 0, "D1"); // it was in D1: stayed, hit on dart 4
+  assert.equal(d(u, "D1").completed, true);
+  assert.equal(d(u, "D1").attempts, 2);
+  assert.equal(d(u, "D1").extraDarts, 1);
+  assert.equal(visit(u).darts[0].e.kind, "stayhit");
+  assert.equal(visit(u).darts[0].e.n, 4);
+});
+
+test("board: undo goes back up to 10 steps, newest first", () => {
+  const u = fresh();
+  for (let i = 0; i < 12; i += 1) {
+    const rec = log(u, E.planResult(u.activeSession, i % 2 ? "miss" : "hit1"));
+    E.pushUndo(u, rec, "r" + i);
+  }
+  assert.equal(E.undoCount(u), 10);
+  const at0 = E.sessionDarts(u.activeSession.doubles);
+  for (let i = 0; i < 10; i += 1) assert.ok(!E.undoStep(u, T0 + 9000).error);
+  assert.ok(E.undoStep(u, T0 + 9000).error);
+  assert.ok(E.sessionDarts(u.activeSession.doubles) < at0);
+  // The first two steps stay: 1 hit (D1) and 1 miss (D2).
+  assert.equal(d(u, "D1").completed, true);
+  assert.equal(d(u, "D2").attempts, 1);
+  assert.equal(u.lastUndo, null);
+});
+
+test("board: a step written by an older page (lastUndo only) is the one Undo takes back", () => {
+  const u = fresh();
+  E.pushUndo(u, log(u, E.planResult(u.activeSession, "hit1")), "a");
+  E.pushUndo(u, log(u, E.planResult(u.activeSession, "hit1")), "b");
+  // An older page logs a miss at D3 and writes only lastUndo.
+  u.lastUndo = log(u, E.planResult(u.activeSession, "miss"));
+  assert.equal(E.undoCount(u), 1);
+  assert.ok(!E.undoStep(u, T0 + 9000).error);
+  assert.equal(d(u, "D3").attempts, 0);
+  assert.equal(E.undoCount(u), 0);
+});
+
+test("board: the voice says the hit and its dart, a miss, the next double, and the end", () => {
+  const u = fresh();
+  const s0 = E.clone(u.activeSession);
+  assert.equal(E.voiceLine(null, s0), "Throw at D 1.");
+  let before = E.clone(u.activeSession);
+  log(u, E.planResult(u.activeSession, "hit3"));
+  assert.equal(E.voiceLine(before, u.activeSession), "D 1, dart 3. D 2.");
+  before = E.clone(u.activeSession);
+  log(u, E.planResult(u.activeSession, "miss"));
+  assert.equal(E.voiceLine(before, u.activeSession), "Missed D 2. D 3.");
+  before = E.clone(u.activeSession);
+  log(u, E.planStay(u.activeSession, "hit:7"));
+  assert.equal(E.voiceLine(before, u.activeSession), "D 3, dart 7. D 4.");
+  // Nothing new thrown: nothing said.
+  assert.equal(E.voiceLine(E.clone(u.activeSession), u.activeSession), null);
+  // A stay hit from the cameras counts every dart at the double.
+  const v = fresh();
+  bm(v, single(1)); bm(v, single(1)); bm(v, single(1)); bm(v, single(1)); bm(v, single(1));
+  before = E.clone(v.activeSession);
+  const out = bm(v, dbl(1));
+  assert.equal(E.voiceLine(before, v.activeSession, out.change.effect), "D 1, dart 6. D 2.");
+  // The last double.
+  const w = fresh();
+  for (let i = 0; i < 20; i += 1) log(w, E.planResult(w.activeSession, "hit1"));
+  before = E.clone(w.activeSession);
+  log(w, E.planResult(w.activeSession, "hit2"), T0 + 61000);
+  assert.match(E.voiceLine(before, w.activeSession), /^the bull, dart 2\. All 21 done\. 22 darts in 1 minute/);
+});
+
+test("board: the view has the target, the next three, the visit's darts in words, and the 21 doubles", () => {
+  const u = fresh();
+  log(u, E.planResult(u.activeSession, "miss")); // D1 missed
+  bm(u, outside(2));
+  bm(u, single(17)); // next door to the 2
+  const v = E.boardView(u.activeSession);
+  assert.equal(v.target, "D2");
+  assert.deepEqual(v.next, ["D3", "D4", "D5"]);
+  assert.equal(v.dartNo, 3);
+  assert.deepEqual(v.darts.map((x) => [x.read, x.sub, x.kind]), [["Outside", "Just past the D2 wire", "miss"], ["S17", "Next door, in the 17", "miss"]]);
+  assert.equal(v.cells[0].state, "open");
+  assert.equal(v.cells[0].sub, "×1");
+  assert.equal(v.cells[1].state, "current");
+  assert.equal(v.note, "D1 comes back after the bull");
+  bm(u, dbl(2));
+  const w = E.boardView(u.activeSession);
+  assert.equal(w.target, "D3");
+  assert.equal(w.darts[2].sub, "Hit on dart 3");
+  assert.equal(w.cells[1].sub, "3rd");
+  assert.equal(w.visitDone, true);
+});
+
+test("board: spot puts a fixed dart in the right bed, and the saved round keeps the throws", () => {
+  for (const [label, want] of [["D7", "D7"], ["S16", "S16"], ["T20", "T20"]]) {
+    const p = E.spot(label);
+    assert.equal(E.numberAt(p.x, p.y), want.slice(1));
+  }
+  const o = E.spot("O7");
+  assert.ok(Math.hypot(o.x, o.y) > 1);
+  assert.equal(E.numberAt(o.x, o.y), "7");
+  assert.equal(E.numberAt(E.spot("DB").x, E.spot("DB").y), "BULL");
+  const u = fresh();
+  bm(u, single(1));
+  const p = E.historyPayload(u.activeSession, T0 + 9000);
+  assert.equal(p.throws.length, 1);
+  assert.equal(p.throws[0].k, "D1");
+  assert.equal(E.historyPayload(fresh().activeSession, T0).throws, undefined);
+});
+
+test("board: undo records leave the visit (and its snapshot) out, so they stay small", () => {
+  const u = fresh();
+  bm(u, single(1)); bm(u, single(1));
+  const out = bm(u, single(1));
+  assert.ok(out.record);
+  assert.equal(out.record.prevCam.visit, undefined);
+  assert.ok(JSON.stringify(u.undoStack).length < 2000);
+});

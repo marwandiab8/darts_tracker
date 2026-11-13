@@ -245,23 +245,26 @@ service cloud.firestore {
     match /doublesState/{uid} {
       allow read, delete: if signedIn() && request.auth.uid == uid;
       allow create, update: if signedIn() && request.auth.uid == uid
-        && request.resource.data.keys().hasOnly(['uid', 'activeSession', 'lifetime', 'lastUndo', 'updatedAt'])
+        && request.resource.data.keys().hasOnly(['uid', 'activeSession', 'lifetime', 'lastUndo', 'undoStack', 'updatedAt'])
         && request.resource.data.uid == uid
         && request.resource.data.lifetime is map
         && (!('activeSession' in request.resource.data) || request.resource.data.activeSession == null || request.resource.data.activeSession is map)
-        && (!('lastUndo' in request.resource.data) || request.resource.data.lastUndo == null || request.resource.data.lastUndo is map);
+        && (!('lastUndo' in request.resource.data) || request.resource.data.lastUndo == null || request.resource.data.lastUndo is map)
+        && (!('undoStack' in request.resource.data) || (request.resource.data.undoStack is list && request.resource.data.undoStack.size() <= 10));
     }
 
     // Finished Doubles rounds, one per session key. Sessions carried over from the old My Doubles
-    // Progress app keep the fields its versions wrote, and are marked importedFrom.
+    // Progress app keep the fields its versions wrote, and are marked importedFrom. throws: where each
+    // camera dart of the round landed (for the miss map).
     function validDoublesSession(data) {
       return data.keys().hasOnly(['uid', 'startedAtMs', 'localDate', 'endedAtMs', 'activeMs', 'totalDarts', 'extraDarts',
           'perDouble', 'createdAt', 'importedFrom', 'rounds', 'startedAt', 'durationMs', 'dartsUsed', 'endedAt',
-          'lastTarget', 'savedAt', 'totalDartsPlanned'])
+          'lastTarget', 'savedAt', 'totalDartsPlanned', 'throws'])
         && data.uid == request.auth.uid
         && data.startedAtMs is number
         && (!('perDouble' in data) || data.perDouble is map)
-        && (!('perDouble' in data) || data.perDouble.size() <= 21);
+        && (!('perDouble' in data) || data.perDouble.size() <= 21)
+        && (!('throws' in data) || (data.throws is list && data.throws.size() <= 600));
     }
 
     match /doublesSessions/{sessionId} {

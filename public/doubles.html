@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
 <meta name="description" content="Finish every double, D1 to the bull, against the clock. The cameras can enter the darts.">
 <title>Doubles - Darts Tracker</title>
+<link rel="stylesheet" href="doubles-board.css?v=1">
 <style>
   :root {
     --bg: #0b0f17; --muted: #94a3b8; --text: #e5e7eb; --accent: #f59e0b; --blue: #38bdf8;
@@ -107,7 +108,8 @@
         <li>A missed double stays open. After the bull, play goes back round to the earliest open double until all 21 are done.</li>
         <li>The clock counts active time only: pause it for breaks.</li>
         <li>Kept throwing at one double because it felt close? Log it under <strong>Stayed on this double</strong>. Missed a run of doubles, then hit one? Use <strong>Hit a later double</strong>.</li>
-        <li><strong>With the cameras on</strong>, just throw. A dart in the double is a hit on that dart, and three darts without one are a miss. If you stay on a double you just missed, the next darts in that number count for it, and a hit there is logged as "stayed, hit on dart 4" (or 5, 6...). Darts pulled out before the cameras saw all 3 count the unseen ones as misses. Anything wrong: Undo, then tap what really happened.</li>
+        <li><strong>With the cameras on</strong>, just throw. A dart in the double is a hit on that dart, and three darts without one are a miss. If you stay on a double you just missed, the next darts in that number count for it, and a hit there is logged as "stayed, hit on dart 4" (or 5, 6...). Darts pulled out before the cameras saw all 3 count the unseen ones as misses.</li>
+        <li><strong>Board mode</strong> is a full-screen scoreboard to read from the oche. A wrong read: tap the dart, on the board or its box, and pick what it was. Undo goes back up to 10 steps.</li>
       </ul>
     </details>
 
@@ -116,6 +118,7 @@
         <h2 id="sessionHead">Session</h2>
         <div class="row">
           <button id="startBtn" type="button">Start a new session</button>
+          <button id="boardBtn" class="secondary" type="button" title="A full-screen scoreboard to read from the oche">Board mode</button>
         </div>
         <div class="clock">
           <div class="time" id="timer" aria-live="off">0:00</div>
@@ -148,6 +151,9 @@
         <div class="camrow">
           <label class="switch" title="Let the cameras by the board enter your darts (set them up on the Cameras page)">
             <input type="checkbox" id="camToggle"> Camera
+          </label>
+          <label class="switch" title="Say the double, the hits and the misses out loud on this device">
+            <input type="checkbox" id="voiceToggle"> Voice
           </label>
           <span class="muted small" id="camWhere"></span>
         </div>
@@ -224,7 +230,8 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
-<script src="doubles-engine.js?v=1"></script>
+<script src="doubles-engine.js?v=2"></script>
+<script src="doubles-board.js?v=1"></script>
 <script src="board-vision.js?v=9"></script>
 <script src="board-camera.js?v=11"></script>
 <script>
@@ -273,12 +280,18 @@
       u.uid = uid;
       E.ensureLifetime(u);
       if (u.activeSession) E.ensureSession(u.activeSession, Date.now());
+      const before = u.activeSession ? E.clone(u.activeSession) : null;
       const out = change(u, u.activeSession || null, Date.now());
       if (!out) return;
       if (typeof out === "string") { refusal = out; return; }
       record = out;
-      if (out.keys) u.lastUndo = E.clone(out);
+      // Each change that logged visits is one Undo step (up to 10, from any device).
+      if (out.keys) E.pushUndo(u, out, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
       if (out.finishingShot) finished = E.clone(u.activeSession);
+      // What the voice says about it, once, on every device with Voice on.
+      const sess = u.activeSession;
+      const line = sess ? E.voiceLine(before, sess, out.hint) : null;
+      if (line) sess.say = { n: ((sess.say && sess.say.n) || 0) + 1, text: line };
       u.updatedAt = Date.now();
       tx.set(stateRef(), JSON.parse(JSON.stringify(u)));
     });
@@ -329,25 +342,44 @@
   $("laterBtn").onclick = () => manual((s) => E.planLater(s, $("laterDouble").value, Number($("laterDarts").value)))
     .then((r) => { if (r) { $("laterDouble").value = ""; $("laterDarts").value = ""; } }).catch(fail);
 
-  $("undoBtn").onclick = async () => {
+  // Takes back the newest step (up to 10, newest first).
+  async function doUndo() {
     try {
-      const st = model.state || {};
-      const p = st.lastUndo;
-      if (!p) return;
-      let key = null;
+      let key = null, done = false;
       await transact((u, sess, now) => {
-        if (!u.lastUndo || u.lastUndo.startedAtMs !== p.startedAtMs) return "Nothing to undo.";
-        const err = E.undo(u, u.lastUndo, now);
-        if (err) return err;
-        key = u.lastUndo.finishingShot ? u.lastUndo.sessionKey : null;
-        u.lastUndo = null;
+        const r = E.undoStep(u, now);
+        if (r.error) return r.error;
+        key = r.record.finishingShot ? r.record.sessionKey : null;
+        done = true;
         return { undone: true };
       });
       // Undoing the finishing throw takes the saved round back out of history.
       if (key) await sessionsCol().doc(key).delete().catch(() => note("Undone, but the saved session couldn't be removed from history. Finishing again replaces it.", true));
-      note("Undone.");
+      if (done) note("Undone.");
     } catch (e) { fail(e); }
-  };
+  }
+  $("undoBtn").onclick = doUndo;
+
+  // Board mode: a dart of this visit was really something else (or not a dart).
+  async function fixDart(index, seq, fix) {
+    let message = null;
+    try {
+      await transact((u, sess, now) => {
+        message = null;
+        if (!sess) return null;
+        const out = E.fixDart(u, sess, index, seq, fix, now);
+        if (out.error) return out.error;
+        const v = sess.cam.visit;
+        const d = !fix.remove && v && v.darts[index];
+        const w = d ? E.dartWords(d) : null;
+        message = fix.remove ? `Dart ${index + 1} taken out: it wasn't a dart.` : `Fixed dart ${index + 1}: ${w.read}. ${w.sub}.`;
+        const ret = out.changed ? out.record : { fixed: true };
+        if (d && d.e && /hit/.test(d.e.kind)) Object.defineProperty(ret, "hint", { value: d.e, enumerable: false });
+        return ret;
+      });
+      if (message) note(message);
+    } catch (e) { fail(e); }
+  }
 
   $("startBtn").onclick = async () => {
     const a = model.state && model.state.activeSession;
@@ -361,6 +393,7 @@
         u.activeSession = E.defaultSession(now, sessionsCol().doc().id);
         u.activeSession.cam = E.freshCam(sess && sess.cam && sess.cam.seq);
         u.lastUndo = null;
+        u.undoStack = [];
         return { started: true };
       });
       note(camOn() ? "New session. Throw at D1: the cameras are watching." : "New session. Throw at D1.");
@@ -420,19 +453,21 @@
     await transact((u, sess, now) => {
       message = null;
       if (!sess) { message = "Start a session and the cameras will enter your darts."; return null; }
-      let r;
+      let out;
       if (e.type === "dart") {
         const x = Math.round(e.app.x * 10000) / 10000, y = Math.round(e.app.y * 10000) / 10000;
         const label = BoardVision.classify(x, y, BoardVision.APP).label;
-        r = E.cameraDart(sess, { seq: e.seq || 0, label, x, y });
-        if (r && e.uncertain && r.visits) r.message += " It wasn't sure: Undo if that's wrong.";
+        out = E.recordDart(u, sess, { seq: e.seq || 0, label, x, y }, now);
       } else {
-        r = E.cameraTakeout(sess, { seq: e.seq || 0, darts: e.darts || 0 });
+        out = E.recordTakeout(u, sess, { seq: e.seq || 0, darts: e.darts || 0 }, now);
       }
-      if (!r) return null; // already in: another device watching the cameras put it in
+      if (!out) return null; // already in: another device watching the cameras put it in
+      const r = out.change;
       message = r.message;
-      const rec = E.applyChange(u, sess, r, now);
-      return (r.visits && r.visits.length) || r.takeBack ? rec : { cam: true };
+      if (e.type === "dart" && e.uncertain && r.visits) message += " It wasn't sure: tap the dart to fix it.";
+      const ret = out.record || { cam: true };
+      if (r.effect && /hit/.test(r.effect.kind)) Object.defineProperty(ret, "hint", { value: r.effect, enumerable: false });
+      return ret;
     });
     if (message) note(message, /wasn't sure/.test(message));
   }
@@ -452,7 +487,9 @@
     const canLog = !!sess && !sess.timer.isPaused && !finished;
     ["hit1", "hit2", "hit3", "missBtn"].forEach((id) => { $(id).disabled = !canLog; });
     $("pauseBtn").disabled = !sess || finished;
-    $("undoBtn").disabled = !st.lastUndo;
+    const steps = E.undoCount(st);
+    $("undoBtn").disabled = !steps;
+    $("undoBtn").textContent = steps > 1 ? `Undo (${steps})` : "Undo last";
     $("startBtn").textContent = sess && !finished ? "Start over" : "Start a new session";
 
     if (!sess) {
@@ -477,6 +514,7 @@
     renderStay(sess, canLog);
     renderLater(sess, canLog);
     renderBoard(sess, life);
+    renderBoardMode(st, sess);
   }
 
   function renderStay(sess, canLog) {
@@ -568,10 +606,119 @@
       : `<strong>${day}</strong>: no sessions.`;
   });
 
+  // ---- Board mode, the voice, keeping the screen on ----
+  // Board mode and Voice are remembered on each device. Turning Board mode on the first time turns the
+  // voice on too: at the oche you hear the double, each hit and each miss without looking.
+  const boardWanted = () => store.get("dt_doublesBoard", "0") === "1";
+  const voiceWanted = () => store.get("dt_doublesVoice", "0") === "1";
+  function setBoard(on) {
+    if (on && store.get("dt_doublesVoice", "") === "") setVoice(true);
+    store.set("dt_doublesBoard", on ? "1" : "0");
+    render();
+  }
+  function setVoice(on) {
+    store.set("dt_doublesVoice", on ? "1" : "0");
+    $("voiceToggle").checked = on;
+    if (on) warmUpSpeech(); // inside the tap that turned it on
+    render();
+  }
+  $("boardBtn").addEventListener("click", () => setBoard(true));
+  $("voiceToggle").addEventListener("change", (e) => setVoice(e.target.checked));
+
+  // An iPad only speaks after one utterance was started inside a tap (the end of it: touchend or
+  // click), so every tap warms the voice up until something is actually heard (see practice.html).
+  const canSpeak = !!window.speechSynthesis && typeof window.SpeechSynthesisUtterance === "function";
+  let speechReady = false, heardKey = null;
+  function warmUpSpeech() {
+    if (!canSpeak || speechReady || !voiceWanted()) return;
+    try {
+      const synth = window.speechSynthesis;
+      if (synth.paused) synth.resume();
+      const u = new SpeechSynthesisUtterance(" ");
+      u.volume = 0; u.lang = "en-GB";
+      u.onstart = () => { speechReady = true; };
+      u.onend = () => { speechReady = true; };
+      synth.speak(u);
+    } catch (_) { /* no voice here */ }
+  }
+  ["touchend", "pointerup", "click", "keydown"].forEach((type) => window.addEventListener(type, warmUpSpeech, { capture: true, passive: true }));
+  function speak(text) {
+    if (!canSpeak || !voiceWanted()) return;
+    try {
+      const synth = window.speechSynthesis;
+      if (synth.paused) synth.resume();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = "en-GB";
+      u.onstart = () => { speechReady = true; };
+      synth.speak(u);
+    } catch (_) { /* no voice here */ }
+  }
+  // The round carries the latest line (say: { n, text }); each device says each one once. Lines from
+  // before this page opened aren't news.
+  function hearNews(st) {
+    const sess = st && st.activeSession;
+    const key = sess && sess.say ? `${sess.meta && sess.meta.startedAtMs}:${sess.say.n}` : "";
+    if (heardKey === null) { heardKey = key; return; }
+    if (!key || key === heardKey) return;
+    heardKey = key;
+    speak(sess.say.text);
+  }
+
+  // The screen stays on while a round is running in Board mode.
+  let wakeLock = null, wakeTried = 0;
+  function keepAwake(on) {
+    if (!("wakeLock" in navigator)) return;
+    if (!on) { if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; } return; }
+    if (wakeLock || document.visibilityState !== "visible" || Date.now() - wakeTried < 10000) return;
+    wakeTried = Date.now();
+    navigator.wakeLock.request("screen").then((lock) => {
+      wakeLock = lock;
+      lock.addEventListener("release", () => { if (wakeLock === lock) wakeLock = null; });
+    }).catch(() => { /* not allowed right now: tried again in a while */ });
+  }
+
+  const board = window.DoublesBoard ? DoublesBoard.mount(document.body, E, {
+    exit: () => setBoard(false),
+    start: () => $("startBtn").click(),
+    pause: () => $("pauseBtn").click(),
+    voice: () => setVoice(!voiceWanted()),
+    camera: () => { const c = $("camToggle"); c.checked = !c.checked; setCamera(c.checked); render(); },
+    manual: (type) => manual((s) => E.planResult(s, type)).catch(fail),
+    undo: doUndo,
+    fix: fixDart,
+  }) : null;
+
+  function renderBoardMode(st, sess) {
+    if (!board) return;
+    const on = boardWanted() && !!uid;
+    board.show(on);
+    if (!on) { keepAwake(false); return; }
+    const finished = !!sess && E.isFinished(sess);
+    const last = model.history[0];
+    const lastStart = last ? E.sessionStart(last) : null;
+    board.update({
+      view: sess ? E.boardView(sess) : null,
+      paused: !!(sess && sess.timer.isPaused && !finished),
+      camOn: $("camToggle").checked,
+      voiceOn: voiceWanted(),
+      undoCount: E.undoCount(st),
+      note: $("camNote").textContent,
+      noteWarn: $("camNote").classList.contains("warn"),
+      dartsText: sess ? E.dartsLabel(E.sessionDarts(sess.doubles)) : "",
+      doneText: finished ? `${E.dartsSummary(sess.doubles)} in ${E.fmt(E.computeElapsed(sess, Date.now()))}.` : "",
+      idleTitle: last && lastStart && Date.now() - lastStart < 3 * 3600000 && (last.createdAt || 0) > Date.now() - 1800000 ? "Round done" : "",
+      lastRound: last ? `Last round: ${E.dartsLabel(E.sessionTotalDarts(last) || 0)} in ${E.fmt(E.sessionActive(last) || 0)}.` : "",
+    });
+    board.tick(sess ? E.fmt(E.computeElapsed(sess, Date.now())) : "0:00");
+    keepAwake(!!sess && !finished);
+  }
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") render(); });
+
   // ---- loading ----
   function subscribe() {
     unsubs.push(stateRef().onSnapshot((snap) => {
       model.state = snap.exists ? snap.data() : {};
+      hearNews(model.state);
       // A finished round still here means a save was interrupted: save it now.
       const a = model.state.activeSession;
       if (a && E.isFinished(E.ensureSession(E.clone(a), Date.now()))) saveFinished(E.clone(a)).catch(fail);
@@ -608,6 +755,7 @@
   }));
 
   $("sort").value = store.get("dt_doublesSort", "order");
+  $("voiceToggle").checked = voiceWanted();
   $("since").value = store.get("dt_doublesSince", "");
 
   auth.onAuthStateChanged((user) => {
@@ -617,10 +765,11 @@
     clearInterval(tick);
     uid = user ? user.uid : null;
     model = { state: null, history: [], heat: {}, since: null };
+    heardKey = null;
     $("authScreen").classList.toggle("hidden", !!user);
     $("app").classList.toggle("hidden", !user);
     $("userPill").classList.toggle("hidden", !user);
-    if (!user) return;
+    if (!user) { render(); return; }
     $("userName").textContent = user.displayName || user.email || "Signed in";
     subscribe();
     renderHeat();

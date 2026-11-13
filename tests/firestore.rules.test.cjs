@@ -525,6 +525,10 @@ test("a player keeps their own Doubles state, and nobody else can read or change
   await assertFails(setDoc(ref, doublesState({ uid: other })));
   await assertFails(setDoc(ref, doublesState({ extra: 1 })));
   await assertFails(setDoc(ref, doublesState({ lifetime: "lots" })));
+  // Board mode's undo steps: a list of at most 10.
+  await assertSucceeds(setDoc(ref, doublesState({ undoStack: [{ id: "a", keys: {} }, { id: "b", keys: {} }] })));
+  await assertFails(setDoc(ref, doublesState({ undoStack: Array.from({ length: 11 }, (_, i) => ({ id: String(i) })) })));
+  await assertFails(setDoc(ref, doublesState({ undoStack: "many" })));
 });
 
 test("finished Doubles rounds are saved, read and deleted by their owner only", async () => {
@@ -537,6 +541,10 @@ test("finished Doubles rounds are saved, read and deleted by their owner only", 
   await assertFails(setDoc(doc(asUser(me), "doublesSessions", "s2"), doublesSession({ uid: other })));
   await assertFails(setDoc(doc(asUser(me), "doublesSessions", "s3"), doublesSession({ startedAtMs: "today" })));
   await assertFails(setDoc(doc(asUser(me), "doublesSessions", "s4"), doublesSession({ score: 5 })));
+  // Where the camera darts landed.
+  await assertSucceeds(setDoc(doc(asUser(me), "doublesSessions", "s5"), doublesSession({ throws: [{ s: 1, k: "D1", l: "S1", x: 0.1, y: -0.7, t: 1 }] })));
+  await assertFails(setDoc(doc(asUser(me), "doublesSessions", "s6"), doublesSession({ throws: { s: 1 } })));
+  await assertFails(setDoc(doc(asUser(me), "doublesSessions", "s7"), doublesSession({ throws: Array.from({ length: 601 }, (_, i) => ({ s: i })) })));
   await assertSucceeds(deleteDoc(ref));
 });
 

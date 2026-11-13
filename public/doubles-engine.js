@@ -221,11 +221,11 @@
       hits: visits.filter((v) => v.hitDart).length,
       finishingShot,
       prevCursor,
-      prevCam: clone(sessionBefore.cam) || null,
+      prevCam: withoutVisit(sessionBefore.cam) || null,
       sessionKey: sess.meta.sessionKey || null,
       activeMsAtFinish: sess.timer.activeMsAccum || 0,
       // Only needed to rebuild the session if the finished round was already saved and cleared.
-      sessionBefore: finishingShot ? sessionBefore : null,
+      sessionBefore: finishingShot ? Object.assign(sessionBefore, { cam: withoutVisit(sessionBefore.cam) || null }) : null,
     };
   }
   const applyVisits = (u, sess, visits, now) => applyChange(u, sess, { visits }, now);
@@ -344,8 +344,8 @@
     if (dart.seq && dart.seq <= (cam.seq || 0)) return null;
     if (dart.seq) cam.seq = dart.seq;
     const cur = currentKey(sess);
-    if (!cur) return { cam, message: "All doubles are done." };
-    if (sess.timer && sess.timer.isPaused) return { cam, message: `Camera saw ${describe(dart.label)}, but the session is paused.` };
+    if (!cur) return { cam, message: "All doubles are done.", effect: { kind: "ignored" } };
+    if (sess.timer && sess.timer.isPaused) return { cam, message: `Camera saw ${describe(dart.label)}, but the session is paused.`, effect: { kind: "ignored" } };
     if (cam.at !== cur) { cam.at = cur; cam.darts = []; }
     cam.seen = Math.min(3, (cam.seen || 0) + 1);
 
@@ -359,7 +359,7 @@
       cam.darts = [];
       cam.at = null;
       cam.stay = null;
-      return { cam, visits: hitVisits(cur, n), message: `Camera: ${cur} hit on dart ${n}.` };
+      return { cam, visits: hitVisits(cur, n), message: `Camera: ${cur} hit on dart ${n}.`, effect: { kind: "hit", key: cur, n } };
     }
 
     // Still at the double just missed: in its double is a stay hit, and in its number another stay dart.
@@ -370,7 +370,7 @@
           cam.darts = [];
           cam.at = null;
           cam.stay = null;
-          return { cam, takeBack: { key: stay.key, visits: stay.visits }, visits: hitVisits(stay.key, total), message: `Camera: you stayed on ${stay.key} and hit it on dart ${total}.` };
+          return { cam, takeBack: { key: stay.key, visits: stay.visits }, visits: hitVisits(stay.key, total), message: `Camera: you stayed on ${stay.key} and hit it on dart ${total}.`, effect: { kind: "stayhit", key: stay.key, n: total } };
         }
         // Another dart at the stayed-on double: the darts so far at the current one were at it too.
         // Every 3 of them is another missed visit there, its 3 darts extra.
@@ -380,9 +380,9 @@
         const more = Math.floor(stay.darts / 3) - stay.visits;
         if (more > 0) {
           stay.visits += more;
-          return { cam, visits: Array.from({ length: more }, () => ({ key: stay.key, hitDart: null, extra: 3 })), message: `Camera: still on ${stay.key}, ${stay.darts} darts without a hit.` };
+          return { cam, visits: Array.from({ length: more }, () => ({ key: stay.key, hitDart: null, extra: 3 })), message: `Camera: still on ${stay.key}, ${stay.darts} darts without a hit.`, effect: { kind: "stay", key: stay.key, n: stay.darts } };
         }
-        return { cam, message: `Camera: ${describe(dart.label)}, still on ${stay.key} (${stay.darts} darts).` };
+        return { cam, message: `Camera: ${describe(dart.label)}, still on ${stay.key} (${stay.darts} darts).`, effect: { kind: "stay", key: stay.key, n: stay.darts } };
       }
     }
 
@@ -392,9 +392,9 @@
       cam.darts = [];
       cam.at = null;
       cam.stay = { key: cur, darts: 3, visits: 1 };
-      return { cam, visits: [{ key: cur, hitDart: null }], message: `Camera: ${describe(dart.label)}. ${cur} missed with 3 darts.` };
+      return { cam, visits: [{ key: cur, hitDart: null }], message: `Camera: ${describe(dart.label)}. ${cur} missed with 3 darts.`, effect: { kind: "miss", key: cur, n: 3 } };
     }
-    return { cam, message: `Camera: ${describe(dart.label)} (dart ${cam.darts.length} at ${cur}).` };
+    return { cam, message: `Camera: ${describe(dart.label)} (dart ${cam.darts.length} at ${cur}).`, effect: { kind: "miss", key: cur, n: cam.darts.length } };
   }
 
   // Darts pulled out. Darts the cameras didn't see in that visit (a bounce-out, one hidden behind
@@ -439,6 +439,267 @@
     sess.flow.cursorIndex = indexOf(key);
   }
 
+  // ---- Board mode: the visit on the board, fixing a dart, undo steps, the voice -----------------------
+  // Every camera dart of the round is kept in sess.throws ({ s: seq, k: the double it was thrown at,
+  // l: label, x, y, t, f: 1 when fixed by hand }), for the miss map. The darts since the last take-out
+  // (at most 3) are the visit Board mode shows: sess.cam.visit = { n, cp, darts: [{ s, l, x, y, e }],
+  // out }, where cp is the state just before its first dart and e what the dart counted as (the
+  // effect from cameraDart). Fixing one of them puts cp back and scores the visit's darts again with
+  // the same rules, so a fix can do anything the cameras could have done. A tap on the buttons, Undo,
+  // or a new round ends the visit (the darts can't be fixed after that).
+  const MAX_THROWS = 600;
+  const UNDO_STEPS = 10;
+
+  function withoutVisit(cam) {
+    if (!cam) return cam;
+    const c = clone(cam);
+    delete c.visit;
+    return c;
+  }
+
+  function snapshotFor(u, sess) {
+    return { doubles: clone(sess.doubles), cursor: (sess.flow && sess.flow.cursorIndex) || 0, life: clone(u.lifetime.doubles), cam: withoutVisit(sess.cam) || freshCam() };
+  }
+
+  const round4 = (v) => (Number.isFinite(v) ? Math.round(v * 10000) / 10000 : null);
+
+  function addThrow(sess, t) {
+    if (!Array.isArray(sess.throws)) sess.throws = [];
+    sess.throws.push(t);
+    if (sess.throws.length > MAX_THROWS) sess.throws.splice(0, sess.throws.length - MAX_THROWS);
+  }
+
+  // A dart from the cameras: cameraDart(), plus the visit and the throw log. Returns null when it was
+  // already counted, else { change, record } (record: what Undo needs, when visits were logged).
+  function recordDart(u, sess, dart, now) {
+    const r = cameraDart(sess, dart);
+    if (!r) return null;
+    if (r.effect && r.effect.kind !== "ignored") {
+      const prev = r.cam.visit;
+      const visit = !prev || prev.out || prev.darts.length >= 3
+        ? { n: ((prev && prev.n) || 0) + 1, cp: snapshotFor(u, sess), darts: [], out: null }
+        : prev;
+      const x = round4(dart.x), y = round4(dart.y), label = dart.label || "MISS";
+      visit.darts.push({ s: dart.seq || 0, l: label, x, y, e: r.effect });
+      r.cam.visit = visit;
+      addThrow(sess, { s: dart.seq || 0, k: r.effect.key, l: label, x, y, t: now });
+    }
+    const rec = applyChange(u, sess, r, now);
+    return { change: r, record: (r.visits && r.visits.length) || r.takeBack ? rec : null };
+  }
+
+  // Darts pulled out: cameraTakeout(), and the visit ends (it can still be fixed until the next dart).
+  function recordTakeout(u, sess, e, now) {
+    const seen = (sess && sess.cam && sess.cam.seen) || 0;
+    const cur = sess ? currentKey(sess) : null;
+    const r = cameraTakeout(sess, e);
+    if (!r) return null;
+    const unseen = cur && seen > 0 && seen < 3 && !(sess.timer && sess.timer.isPaused) ? 3 - seen : 0;
+    if (r.cam.visit && !r.cam.visit.out) r.cam.visit.out = { darts: (e && e.darts) || 0, unseen };
+    const rec = applyChange(u, sess, r, now);
+    return { change: r, record: r.visits && r.visits.length ? rec : null };
+  }
+
+  // What Undo needs to take a change back, worked out by comparing before and after (for a fix).
+  function diffRecord(u, before, lifeBefore, sess, now) {
+    const keys = {};
+    let hits = 0;
+    for (const k of KEYS) {
+      const a = before.doubles[k] || defaultDouble(), b = sess.doubles[k] || defaultDouble();
+      const la = lifeBefore[k] || defaultLifeDouble(), lb = u.lifetime.doubles[k] || defaultLifeDouble();
+      if (JSON.stringify(a) !== JSON.stringify(b) || JSON.stringify(la) !== JSON.stringify(lb)) {
+        keys[k] = { prevDouble: clone(a), prevLife: clone(la), attemptsAfter: b.attempts || 0 };
+        if (b.completed && !a.completed) hits += 1;
+      }
+    }
+    const finishingShot = isFinished(sess) && !isFinished(before);
+    return {
+      startedAtMs: sess.meta.startedAtMs,
+      keys,
+      hits,
+      finishingShot,
+      prevCursor: (before.flow && before.flow.cursorIndex) || 0,
+      prevCam: withoutVisit(before.cam) || null,
+      sessionKey: sess.meta.sessionKey || null,
+      activeMsAtFinish: sess.timer.activeMsAccum || 0,
+      sessionBefore: finishingShot ? Object.assign(clone(before), { cam: withoutVisit(before.cam) || null }) : null,
+    };
+  }
+
+  // Board mode: dart `index` of this visit (its seq must still be `seq`) was really fix = { label, x, y },
+  // or wasn't a dart at all (fix.remove). Returns { error } or { record, changed }.
+  function fixDart(u, sess, index, seq, fix, now) {
+    const v = sess && sess.cam && sess.cam.visit;
+    const d0 = v && v.darts[index];
+    if (!d0 || (d0.s || 0) !== (seq || 0)) return { error: "That visit can't be changed any more. Use Undo, then tap what happened." };
+    if (isFinished(sess)) return { error: "The round is finished. Use Undo to take the last throw back." };
+    if (sess.timer && sess.timer.isPaused) return { error: "The round is paused. Resume it first." };
+    ensureLifetime(u);
+    const before = clone(sess), lifeBefore = clone(u.lifetime.doubles);
+    const darts = v.darts.map((d) => clone(d));
+    if (fix.remove) darts.splice(index, 1);
+    else Object.assign(darts[index], { l: fix.label, x: round4(fix.x), y: round4(fix.y), f: 1 });
+    // Back to just before the visit's first dart...
+    const seqNow = (sess.cam && sess.cam.seq) || 0;
+    sess.doubles = clone(v.cp.doubles);
+    sess.flow.cursorIndex = v.cp.cursor;
+    u.lifetime.doubles = clone(v.cp.life);
+    sess.cam = Object.assign(freshCam(), clone(v.cp.cam));
+    // ...and through its darts again, as the cameras would have read them.
+    const apply = (r) => { if ((r.visits && r.visits.length) || r.takeBack) applyChange(u, sess, r, now); else sess.cam = r.cam; };
+    for (const d of darts) {
+      const r = cameraDart(sess, { seq: 0, label: d.l, x: Number.isFinite(d.x) ? d.x : NaN, y: Number.isFinite(d.y) ? d.y : NaN });
+      d.e = r.effect;
+      apply(r);
+    }
+    if (v.out) apply(cameraTakeout(sess, { seq: 0, darts: v.out.darts }));
+    sess.cam.seq = Math.max(sess.cam.seq || 0, seqNow);
+    sess.cam.visit = { n: v.n, cp: v.cp, darts, out: v.out || null };
+    // The throw log follows.
+    if (Array.isArray(sess.throws)) {
+      if (fix.remove && seq) sess.throws = sess.throws.filter((t) => t.s !== seq);
+      for (const d of darts) {
+        if (!d.s) continue;
+        const t = sess.throws.find((x) => x.s === d.s);
+        if (t) Object.assign(t, { l: d.l, x: d.x, y: d.y, k: (d.e && d.e.key) || t.k }, d.f ? { f: 1 } : {});
+      }
+    }
+    const record = diffRecord(u, before, lifeBefore, sess, now);
+    return { record, changed: Object.keys(record.keys).length > 0 };
+  }
+
+  // Undo steps: u.undoStack (newest last, at most 10), with u.lastUndo kept as its top for pages from
+  // before Board mode. A record an older page wrote (no id, or not the top) starts the stack again.
+  function undoStackOf(u) {
+    const s = Array.isArray(u.undoStack) ? u.undoStack.slice() : [];
+    const top = s[s.length - 1];
+    if (!u.lastUndo) return [];
+    if (!top || !top.id || top.id !== u.lastUndo.id) return [u.lastUndo];
+    return s;
+  }
+  function pushUndo(u, rec, id) {
+    if (!rec || !rec.keys || !Object.keys(rec.keys).length) return false;
+    const s = undoStackOf(u);
+    s.push(Object.assign(clone(rec), { id: id || String(Date.now()) }));
+    u.undoStack = s.slice(-UNDO_STEPS);
+    u.lastUndo = u.undoStack[u.undoStack.length - 1];
+    return true;
+  }
+  // Takes back the newest step. Returns { error } or { record } (the step taken back).
+  function undoStep(u, now) {
+    const s = undoStackOf(u);
+    const top = s.pop();
+    if (!top) return { error: "Nothing to undo." };
+    const err = undo(u, top, now);
+    if (err) return { error: err };
+    u.undoStack = s;
+    u.lastUndo = s[s.length - 1] || null;
+    return { record: top };
+  }
+  const undoCount = (u) => (u ? undoStackOf(u).length : 0);
+
+  // What the voice says after a change (null: nothing new was thrown). hint = { key, n } when the
+  // change knows the dart a double went in on (a stay hit counts every dart at it).
+  const spokenKey = (key) => (key === "DBULL" ? "the bull" : `D ${key.slice(1)}`);
+  function spokenTime(ms) {
+    const sec = Math.round(Math.max(0, ms) / 1000), m = Math.floor(sec / 60), s = sec % 60;
+    return m ? `${m} minute${m === 1 ? "" : "s"}${s ? ` ${s}` : ""}` : `${s} seconds`;
+  }
+  function voiceLine(before, after, hint) {
+    if (!after) return null;
+    if (!before || !before.meta || before.meta.startedAtMs !== after.meta.startedAtMs) {
+      const k = currentKey(after);
+      return k ? `Throw at ${spokenKey(k)}.` : null;
+    }
+    const parts = [];
+    for (const k of KEYS) {
+      const a = before.doubles[k] || defaultDouble(), b = after.doubles[k] || defaultDouble();
+      const added = (b.attempts || 0) - (a.attempts || 0);
+      if (b.completed && !a.completed) {
+        const n = hint && hint.key === k && hint.n ? hint.n : Math.max(0, added - 1) * 3 + (b.hitDart || 1);
+        parts.push(`${spokenKey(k)}, dart ${n}`);
+      } else if (added > 0 && !b.completed) {
+        parts.push(`Missed ${spokenKey(k)}`);
+      }
+    }
+    if (!parts.length) return null;
+    if (isFinished(after)) parts.push(`All 21 done. ${sessionDarts(after.doubles)} darts in ${spokenTime((after.timer && after.timer.activeMsAccum) || 0)}`);
+    else { const k = currentKey(after); if (k) parts.push(spokenKey(k)); }
+    return parts.join(". ") + ".";
+  }
+
+  // ---- Board mode: what it shows -----------------------------------------------------------------------
+  const BOARD_R = { S: 0.78, T: 0.58, D: 0.95, O: 1.06 };
+  const angleOf = (n) => ((-90 + SEG_ORDER.indexOf(Number(n)) * 18) * Math.PI) / 180;
+  // A point in a bed of the board, for a dart fixed by hand: spot("S7"), spot("D20"), spot("DB"),
+  // spot("SB"), or spot("O7") just outside the wire of the 7.
+  function spot(label) {
+    if (label === "DB") return { x: 0, y: 0 };
+    if (label === "SB") return { x: 0, y: -0.085 };
+    const m = /^([SDTO])(\d{1,2})$/.exec(String(label || ""));
+    if (!m || SEG_ORDER.indexOf(Number(m[2])) === -1) return { x: NaN, y: NaN };
+    const a = angleOf(m[2]), r = BOARD_R[m[1]];
+    return { x: round4(Math.cos(a) * r), y: round4(Math.sin(a) * r) };
+  }
+  function neighbours(n) {
+    const i = SEG_ORDER.indexOf(Number(n));
+    return i === -1 ? [] : [SEG_ORDER[(i + 19) % 20], SEG_ORDER[(i + 1) % 20]];
+  }
+  const ordinal = (n) => `${n}${n % 10 === 1 && n % 100 !== 11 ? "st" : n % 10 === 2 && n % 100 !== 12 ? "nd" : n % 10 === 3 && n % 100 !== 13 ? "rd" : "th"}`;
+
+  // One dart of the visit, in words: { read, sub, kind: hit | miss | stay }.
+  function dartWords(d) {
+    const e = d.e || {}, key = e.key, num = numberOfKey(key);
+    const off = Number.isFinite(d.x) && Number.isFinite(d.y) ? Math.hypot(d.x, d.y) > 1 : d.l === "MISS";
+    const where = Number.isFinite(d.x) && Number.isFinite(d.y) ? numberAt(d.x, d.y) : null;
+    const read = d.l === "MISS" ? (off ? "Outside" : "Miss") : d.l === "DB" ? "Bull" : d.l === "SB" ? "25" : d.l;
+    if (e.kind === "hit") return { read, sub: `Hit on dart ${e.n}`, kind: "hit" };
+    if (e.kind === "stayhit") return { read, sub: `Stayed, hit on dart ${e.n}`, kind: "hit" };
+    if (e.kind === "stay") return { read, sub: `Still on ${key}: ${e.n} darts`, kind: "stay" };
+    let sub = `A miss at ${key}`;
+    if (d.l === "MISS" && where === num && off) sub = `Just past the ${key} wire`;
+    else if (d.l === "MISS" && off) sub = "Off the board";
+    else if (num !== "BULL" && /^[ST]\d/.test(d.l) && d.l.slice(1) === num) sub = d.l[0] === "S" ? "Inside the wire" : "In the treble";
+    else if (num !== "BULL" && where && neighbours(num).map(String).includes(where)) sub = `Next door, in the ${where}`;
+    return { read, sub, kind: "miss" };
+  }
+
+  // Everything Board mode draws, from the round: the target, what's next, this visit's darts and the
+  // 21 doubles.
+  function boardView(sess) {
+    if (!sess) return null;
+    const order = playOrder(sess);
+    const cur = order.length ? KEYS[order[0]] : null;
+    const cam = sess.cam || freshCam();
+    const v = cam.visit || null;
+    const darts = v ? v.darts.map((d, i) => Object.assign({ index: i, s: d.s || 0, label: d.l, x: d.x, y: d.y, key: d.e && d.e.key, fixed: !!d.f }, dartWords(d))) : [];
+    const unseen = v && v.out ? v.out.unseen || 0 : 0;
+    const atCur = cam.at === cur ? (cam.darts || []).length : 0;
+    const curIdx = cur ? indexOf(cur) : -1;
+    const cells = TARGETS.map((t, i) => {
+      const d = sess.doubles[t.key] || defaultDouble();
+      const num = t.key === "DBULL" ? "B" : String(i + 1);
+      if (d.completed) return { key: t.key, num, state: d.attempts > 1 ? "done late" : "done", sub: ordinal(d.hitDart || 1) };
+      if (t.key === cur) return { key: t.key, num, state: "current", sub: d.attempts ? `×${d.attempts}` : "" };
+      if (d.attempts) return { key: t.key, num, state: "open", sub: `×${d.attempts}` };
+      return { key: t.key, num, state: "todo", sub: "" };
+    });
+    const back = order.slice(1).map((i) => KEYS[i]).find((k) => indexOf(k) < curIdx);
+    const done = KEYS.filter((k) => sess.doubles[k] && sess.doubles[k].completed).length;
+    return {
+      target: cur,
+      finished: !cur,
+      next: order.slice(1, 4).map((i) => KEYS[i]),
+      dartNo: Math.min(3, atCur + 1),
+      darts,
+      unseen,
+      visitDone: !!(v && (v.out || v.darts.length >= 3)),
+      cells,
+      done,
+      note: back ? `${back} comes back after the bull` : "",
+    };
+  }
+
   // ---- Saved sessions ----------------------------------------------------------------------------------
   function msToLocalISODate(ms) {
     const d = new Date(ms);
@@ -447,7 +708,7 @@
 
   function historyPayload(sess, now) {
     const doubles = clone(sess.doubles);
-    return {
+    const out = {
       startedAtMs: sess.meta.startedAtMs,
       localDate: msToLocalISODate(sess.meta.startedAtMs),
       endedAtMs: (sess.timer && sess.timer.pauseStartedAtMs) || now,
@@ -456,6 +717,9 @@
       extraDarts: sessionExtra(doubles),
       perDouble: doubles,
     };
+    // Where every camera dart landed, for the miss map.
+    if (Array.isArray(sess.throws) && sess.throws.length) out.throws = clone(sess.throws);
+    return out;
   }
 
   // Sessions saved by every version of the old app: start time, active time and darts, when known.
@@ -513,6 +777,8 @@
     dartsAt, sessionDarts, sessionExtra, dartsLabel, dartsSummary,
     applyChange, applyVisits, undo, planResult, planLater, planStay, hitVisits,
     freshCam, numberAt, doubleOf, cameraDart, cameraTakeout, takeBackMisses, describe,
+    MAX_THROWS, UNDO_STEPS, withoutVisit, recordDart, recordTakeout, fixDart, diffRecord,
+    undoStackOf, pushUndo, undoStep, undoCount, voiceLine, spokenKey, spot, neighbours, dartWords, boardView, ordinal,
     msToLocalISODate, historyPayload, sessionStart, sessionActive, sessionTotalDarts, sessionExtraDarts,
     statsFromSessions, heatByDate, fmt, clone,
   };
