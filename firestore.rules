@@ -17,9 +17,13 @@ service cloud.firestore {
     // sign in, so new sessions are checked for shape and range: a session scores at most
     // 3 darts on each of 21 targets, so 200 is a safe ceiling. complete: false marks one saved part
     // way through (kept out of averages and bests); older sessions have no such field.
+    // throws: every dart of the session in order, misses included (tracker-engine.js throwsFor), at
+    // most 3 on each of 21 numbers; startedAtMs: when its first dart went in.
     function validNewSession(data) {
-      return data.keys().hasOnly(['uid', 'timestamp', 'mode', 'entry', 'total', 'positions', 'durationSec', 'complete'])
+      return data.keys().hasOnly(['uid', 'timestamp', 'mode', 'entry', 'total', 'positions', 'durationSec', 'complete', 'throws', 'startedAtMs'])
         && optionalNumber(data, 'durationSec', 0, 86400)
+        && optionalNumber(data, 'startedAtMs', 0, 9999999999999)
+        && validThrows(data)
         && (!data.keys().hasAny(['complete']) || data.complete is bool)
         && data.keys().hasAll(['uid', 'timestamp', 'mode', 'entry', 'total'])
         && validPositions(data)
@@ -32,9 +36,14 @@ service cloud.firestore {
 
     // Older sessions carry other fields (imports, a missing mode), so an update only has to
     // stay sane and keep the same owner.
+    function validThrows(data) {
+      return !data.keys().hasAny(['throws']) || (data.throws is list && data.throws.size() <= 63);
+    }
+
     function validSessionUpdate(data) {
       return data.uid == request.auth.uid
         && data.keys().size() <= 20
+        && validThrows(data)
         && data.total is number && data.total >= 0 && data.total <= 200
         && data.entry is map && data.entry.size() <= 21
         && validPositions(data);

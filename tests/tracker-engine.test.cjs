@@ -256,3 +256,188 @@ test("bug 1: a dart both tapped and seen doesn't push the rest of the visit into
   assert.equal(row(s, "19"), "SSS");
   assert.equal(E.aimOf(s), "18");
 });
+
+// ---- Phase 2: every dart kept, Board mode, fixing a dart, pace, the recap, the voice, saving -----
+
+test("every dart is kept in order, misses included, with where it landed", () => {
+  const s = E.blank();
+  E.addDart(s, null, { cam: { seq: 1, label: "MISS", x: 1.1, y: 0 } }); // off the board, seen by the cameras
+  E.addDart(s, hit("20", "T", 0, -0.58));
+  E.buttonDart(s, "-");
+  assert.deepEqual(E.dartsOf(s, "20").map((d) => [d.r, d.l, d.src]), [["-", "MISS", "cam"], ["T", "T20", "tap"], ["-", "", "btn"]]);
+  assert.equal(E.dartsOf(s, "20")[0].x, 1.1, "a miss keeps its position");
+  assert.equal(row(s, "20"), "T--", "the entry is unchanged: hits first");
+  const t = E.throwsFor(s);
+  assert.equal(t.length, 3);
+  assert.deepEqual(t[0], { t: "20", r: "-", l: "MISS", src: "cam", x: 1.1, y: 0, seq: 1 });
+});
+
+test("buttons: S/D/T/miss at the number being thrown at; no treble at the bull", () => {
+  const s = E.blank();
+  E.buttonDart(s, "D"); E.buttonDart(s, "S"); E.buttonDart(s, "-");
+  assert.equal(row(s, "20"), "DS-");
+  for (const t of E.TARGETS.slice(1, 20)) for (let k = 0; k < 3; k += 1) E.buttonDart(s, "-");
+  assert.equal(E.aimOf(s), "BULL");
+  assert.equal(E.buttonDart(s, "T"), null);
+  E.buttonDart(s, "D");
+  assert.deepEqual(E.dartsOf(s, "BULL").map((d) => d.l), ["DB"]);
+});
+
+test("dartsOf makes up the darts from the entry when a page without them wrote the session", () => {
+  const s = E.normalize({ entry: { "20": ["T", "S", "-"] }, thrown: { "20": 3 }, positions: { "20": [{ x: 0, y: -0.58 }, null, null] } });
+  const d = E.dartsOf(s, "20");
+  assert.deepEqual(d.map((x) => [x.r, x.src]), [["T", "old"], ["S", "old"], ["-", "old"]]);
+  assert.equal(d[0].x, 0);
+  // A kept list that no longer matches the entry (an old page changed the row) isn't used.
+  s.darts["20"] = [{ r: "D", l: "D20", src: "cam" }, { r: "-", l: "S1", src: "cam" }, { r: "-", l: "", src: "cam" }];
+  assert.equal(E.dartsOf(s, "20")[0].r, "T");
+});
+
+test("fixing a dart scores its number again from its darts, and Undo takes the fix back", () => {
+  const s = E.blank();
+  E.cameraDart(s, hit("20", "S", 0, -0.7), { seq: 1, label: "S20", x: 0, y: -0.7 });
+  E.cameraDart(s, hit("1", "S", 0.2, -0.7), { seq: 2, label: "S1", x: 0.2, y: -0.7 });
+  E.cameraDart(s, hit("20", "S", 0, -0.75), { seq: 3, label: "S20", x: 0, y: -0.75 });
+  assert.equal(row(s, "20"), "SS-");
+  const out = E.fixDart(s, "20", 1, { ring: "T", label: "T20", x: 0.02, y: -0.58 });
+  assert.equal(out.dart.l, "S1");
+  assert.equal(row(s, "20"), "STS", "the fixed dart is a treble, in its place");
+  assert.equal(E.dartsOf(s, "20")[1].f, 1);
+  assert.equal(E.totalOf(s.entry, "standard"), 5);
+  E.undo(s);
+  assert.equal(row(s, "20"), "SS-");
+  assert.equal(E.dartsOf(s, "20")[1].l, "S1");
+});
+
+test("a dart that wasn't a dart can be removed: its number gets the dart back", () => {
+  const s = E.blank();
+  E.cameraDart(s, hit("20", "S"), { seq: 1, label: "S20", x: 0.1, y: -0.4 });
+  E.cameraDart(s, hit("20", "S"), { seq: 2, label: "S20", x: 0.1, y: -0.4 });
+  E.cameraDart(s, null, { seq: 3, label: "MISS", x: 1.2, y: 0 });
+  assert.equal(E.aimOf(s), "19");
+  E.fixDart(s, "20", 2, { remove: true });
+  assert.equal(E.aimOf(s), "20");
+  assert.equal(s.camVisit.seen, 2, "the visit is waiting for its third dart again");
+  E.cameraDart(s, hit("20", "T"), { seq: 4, label: "T20", x: 0, y: -0.58 });
+  assert.equal(row(s, "20"), "SST");
+});
+
+test("Board mode shows the visit's darts, the next numbers, and the finished visit until the next dart", () => {
+  const s = E.blank();
+  E.addDart(s, hit("20", "T", 0, -0.58));
+  let v = E.boardView(s, "standard");
+  assert.equal(v.target, "20");
+  assert.equal(v.dartNo, 2);
+  assert.deepEqual(v.next, ["19", "18", "17"]);
+  assert.deepEqual(v.darts.map((d) => d.read + "|" + d.sub), ["T20|Treble: 3 marks"]);
+  E.addDart(s, hit("5", "S", -0.1, -0.7)); E.addDart(s, null);
+  v = E.boardView(s, "standard");
+  assert.equal(v.target, "19");
+  assert.ok(v.pullOut, "after the third dart: pull your darts out");
+  assert.deepEqual(v.darts.map((d) => d.read + "|" + d.sub), ["T20|Treble: 3 marks", "S5|Next door, in the 5", "Miss|Off the board"]);
+  assert.equal(v.cells[0].state, "h1");
+  assert.equal(v.cells[0].sub, "T––");
+  assert.equal(v.cells[1].state, "current");
+  E.addDart(s, hit("19", "D"));
+  v = E.boardView(s, "standard");
+  assert.ok(!v.pullOut);
+  assert.deepEqual(v.darts.map((d) => d.read), ["D19"]);
+});
+
+test("Board mode with the cameras: unread darts wait for a tap, the pull-out shows the next number fresh", () => {
+  const s = E.blank();
+  E.cameraDart(s, hit("20", "S"), { seq: 1, label: "S20", x: 0.1, y: -0.4 });
+  E.cameraUnreadable(s, { seq: 2 });
+  let v = E.boardView(s, "standard");
+  assert.equal(v.waiting.length, 1, "one dart they couldn't read, waiting for a tap");
+  E.addDart(s, hit("20", "T", 0, -0.58)); // tapped
+  v = E.boardView(s, "standard");
+  assert.equal(v.waiting.length, 0);
+  E.cameraTakeout(s, { seq: 3 });
+  v = E.boardView(s, "standard");
+  assert.equal(v.target, "19");
+  assert.ok(!v.pullOut);
+  assert.equal(v.darts.length, 0, "pulled out: the next number starts empty");
+  assert.deepEqual(E.dartsOf(s, "20").map((d) => d.src), ["cam", "tap", "unseen"]);
+  assert.equal(E.boardView(s, "standard").cells[0].sub, "ST–");
+});
+
+test("pace: after the numbers done, your score against your average and your best at the same point", () => {
+  const h = [
+    { entry: { "20": ["S", "-", "-"], "19": ["S", "S", "-"] }, total: 40, mode: "standard" },
+    { entry: { "20": ["T", "S", "-"], "19": ["S", "-", "-"] }, total: 60, mode: "standard" },
+    { entry: { "20": ["T", "T", "T"], "19": ["T", "T", "T"] }, total: 90, mode: "standard", complete: false }, // partial: not counted
+    { entry: { "20": ["T", "T", "T"] }, total: 99, mode: "single" }, // the other game: not counted
+  ];
+  const s = E.blank();
+  assert.equal(E.pace(s, h, "standard"), null);
+  E.addDart(s, hit("20", "D")); E.addDart(s, null); E.addDart(s, null);
+  const p = E.pace(s, h, "standard");
+  assert.equal(p.k, 1);
+  assert.equal(p.score, 2);
+  assert.equal(p.avg, 2.5);
+  assert.equal(p.pb, 4, "the best session (60) had 4 after the 20");
+  assert.equal(p.pbTotal, 60);
+});
+
+test("the recap: total against your average and best, what went better, the three to practise", () => {
+  const blankish = (over) => Object.assign(E.blankEntry(), over);
+  const h = Array.from({ length: 12 }, () => ({ entry: blankish({ "20": ["S", "-", "-"], "19": ["S", "S", "S"], "BULL": ["-", "-", "-"] }), total: 4, mode: "standard" }));
+  const s = E.blank();
+  for (const t of E.TARGETS) for (let k = 0; k < 3; k += 1) E.addDart(s, t === "20" && k < 2 ? hit("20", "T") : t === "19" ? hit("19", "S") : null);
+  const r = E.recap(s, h, "standard");
+  assert.equal(r.total, 9);
+  assert.equal(r.avg, 4);
+  assert.equal(r.pb, 4);
+  assert.ok(r.newPb);
+  assert.equal(r.trebles, 2);
+  assert.equal(r.hits, 5);
+  assert.equal(r.darts, 63);
+  assert.deepEqual(r.improved.map((x) => x.t), ["20"]);
+  assert.deepEqual(r.practise.map((x) => x.t), ["18", "17", "16"], "never hit: the first three in order");
+});
+
+test("the voice: each dart's word, and a number's third dart says the visit and the total", () => {
+  const s = E.blank();
+  let d = E.addDart(s, hit("20", "T"));
+  assert.equal(E.voiceLine(s, { k: "dart", aim: d.aim, dartNo: d.dartNo }, "standard"), "Treble.");
+  E.addDart(s, hit("20", "S"));
+  d = E.addDart(s, null);
+  assert.equal(E.voiceLine(s, { k: "dart", aim: d.aim, dartNo: d.dartNo }, "standard"), "20: treble, single, miss. 4 in all. Next, 19.");
+  assert.equal(E.voiceLine(s, { k: "dart", aim: "20", dartNo: 3 }, "single"), "20: hit, hit, miss. 2 in all. Next, 19.");
+  const out = E.fixDart(s, "20", 2, { ring: "D", label: "D20" });
+  assert.equal(E.voiceLine(s, { k: "fix", target: out.target, index: out.index }, "standard"), "Fixed: double.");
+});
+
+test("a loaded session gets its darts back from throws", () => {
+  const s = E.blank();
+  E.addDart(s, hit("20", "S")); E.addDart(s, hit("1", "S", 0.2, -0.7)); E.addDart(s, hit("20", "T"));
+  const saved = { id: "x", timestamp: "2026-11-13 18:00", entry: s.entry, throws: E.throwsFor(s) };
+  const t = E.blank();
+  E.load(t, saved);
+  assert.deepEqual(E.dartsOf(t, "20").map((d) => d.l), ["S20", "S1", "T20"]);
+  assert.deepEqual(E.dartsOf(t, "19").map((d) => d.r), ["-", "-", "-"], "no darts saved: made up from the entry");
+});
+
+test("Undo of a fix doesn't bring back a camera visit that has ended since", () => {
+  const s = E.blank();
+  E.cameraDart(s, hit("20", "S"), { seq: 1, label: "S20", x: 0.1, y: -0.4 });
+  E.cameraDart(s, hit("1", "S"), { seq: 2, label: "S1", x: 0.2, y: -0.4 });
+  E.cameraDart(s, hit("20", "S"), { seq: 3, label: "S20", x: 0.1, y: -0.4 });
+  E.fixDart(s, "20", 1, { ring: "D", label: "D20" });
+  E.cameraTakeout(s, { seq: 4 });
+  E.undo(s);
+  assert.equal(s.camVisit, null, "the visit stays over");
+  for (const r of ["T", "-", "S"]) E.buttonDart(s, r);
+  const v = E.boardView(s, "standard");
+  assert.equal(v.shown, "19");
+  assert.deepEqual(v.darts.map((d) => d.read), ["T19", "Miss", "S19"]);
+});
+
+test("the dart the cameras couldn't read waits for a tap, even as the visit's third", () => {
+  const s = E.blank();
+  E.cameraDart(s, hit("20", "S"), { seq: 1, label: "S20", x: 0.1, y: -0.4 });
+  E.cameraDart(s, hit("20", "S"), { seq: 2, label: "S20", x: 0.1, y: -0.4 });
+  E.cameraUnreadable(s, { seq: 3 });
+  assert.equal(E.boardView(s, "standard").waiting.length, 1);
+});

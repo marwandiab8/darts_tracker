@@ -86,6 +86,18 @@ test("a session can say whether it was finished; Save after Load updates it unde
   await assertSucceeds(updateDoc(doc(db, "sessions", "mine-1"), { total: 9, complete: true, entry: entry() }));
 });
 
+test("a session can carry every dart (throws, misses included) and when it started", async () => {
+  const db = asUser(me);
+  const throws = Array.from({ length: 63 }, (_, i) => ({ t: "20", r: i % 2 ? "-" : "S", l: "S20", src: "cam", x: 0.1, y: -0.4, seq: i + 1 }));
+  await assertSucceeds(setDoc(doc(db, "sessions", "tThrows1"), session({ throws, startedAtMs: 1763060000000 })));
+  await assertFails(setDoc(doc(db, "sessions", "tThrows2"), session({ throws: throws.concat(throws.slice(0, 1)) })));
+  await assertFails(setDoc(doc(db, "sessions", "tThrows3"), session({ throws: "lots" })));
+  await assertFails(setDoc(doc(db, "sessions", "tThrows4"), session({ startedAtMs: "now" })));
+  // Loaded, corrected and saved again with its darts.
+  await assertSucceeds(updateDoc(doc(db, "sessions", "mine-1"), { total: 9, entry: entry(), throws: throws.slice(0, 3) }));
+  await assertFails(updateDoc(doc(db, "sessions", "mine-1"), { throws: throws.concat(throws) }));
+});
+
 test("a session with the wrong shape is refused", async () => {
   const db = asUser(me);
   const refused = [

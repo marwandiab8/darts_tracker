@@ -118,6 +118,8 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
   #entryBody tr.current-target td { background: rgba(245,158,11,.12); }
   #entryBody tr.current-target .target-label { color: var(--accent); font-weight: 900; }
 
+  .board-btn-row { display: flex; gap: 10px; margin: 0 0 12px; }
+  .board-btn-row button { flex: 1; min-height: 52px; font-size: 18px; font-weight: 900; border-radius: 14px; background: var(--accent); color: #111; border: 0; cursor: pointer; }
   /* ===== Next Target Banner (big, at-a-distance) ===== */
   .next-target-banner{
     margin: 14px 0 12px;
@@ -400,6 +402,7 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
     th, td { padding-left: 6px; padding-right: 6px; }
   }
 </style>
+  <link rel="stylesheet" href="board-mode.css?v=1">
   <title>Darts Tracker</title>
 </head>
 <body>
@@ -461,6 +464,7 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
           </div>
           <div id="saveNote" class="save-note" aria-live="polite"></div>
           <div id="loadedNote" class="loaded-note"></div>
+          <div class="board-btn-row"><button type="button" id="boardBtn" title="A full-screen scoreboard to read from the oche">Board mode</button></div>
 
           <!-- NEXT TARGET BANNER -->
     <div id="nextTargetBanner" class="next-target-banner" style="display:none;">
@@ -554,7 +558,8 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="practice-timer.js?v=2"></script>
 <script src="live-sync.js?v=1"></script>
-<script src="tracker-engine.js?v=1"></script>
+<script src="tracker-engine.js?v=2"></script>
+<script src="board-mode.js?v=1"></script>
 <script src="board-vision.js?v=9"></script>
 <script src="board-camera.js?v=11"></script>
 
@@ -644,7 +649,7 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
       localStorage.setItem("dt_draft", JSON.stringify(currentEntry));
       localStorage.setItem("dt_draftPos", JSON.stringify(cleanPositions(currentPos, currentEntry)));
       localStorage.setItem("dt_draftThrown", JSON.stringify(cleanThrown(currentThrown)));
-      localStorage.setItem("dt_draftMeta", JSON.stringify({ sid: sessionId, loaded: loadedSession, camVisit }));
+      localStorage.setItem("dt_draftMeta", JSON.stringify({ sid: sessionId, loaded: loadedSession, camVisit, darts: E.cleanDarts(currentDarts), pulled }));
     } catch (_) { /* private mode */ }
   }
 
@@ -671,6 +676,14 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
   let camVisit = E.cleanVisit(__meta.camVisit);
   let sessionId = typeof __meta.sid === "string" ? __meta.sid : null;
   let loadedSession = __meta.loaded && typeof __meta.loaded.id === "string" ? __meta.loaded : null;
+  // Every dart thrown at each number, misses included (Board mode's dart boxes, and saved as throws),
+  // and whether the darts were pulled out since the last one (see tracker-engine.js).
+  let currentDarts = E.cleanDarts(__meta.darts);
+  let pulled = !!__meta.pulled;
+  // The latest thing to say ({ id, text }), shared: every device with Voice on says each line once.
+  let sayLine = null, heardSayId = null, sayPrimed = false;
+  // Board mode (set up further down): the scoreboard, and keeping the screen on while it shows.
+  let board = null, keepAwake = () => {};
   const progressNow = () => E.progress({ entry: currentEntry, thrown: currentThrown });
   function dartsThrownAt(t) { return E.dartsAt({ entry: currentEntry, thrown: currentThrown }, t); }
   function aimTarget() { return E.aimOf({ entry: currentEntry, thrown: currentThrown }); }
@@ -759,6 +772,7 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
       undo: JSON.parse(JSON.stringify(tapStack.slice(-30))), last: lastTap || null, timer: sessionTimer || null, camSeq: trackerCamSeq,
       fixes: JSON.parse(JSON.stringify(camFixes)),
       camVisit: camVisit || null, sid: sessionId || null, loaded: loadedSession || null,
+      darts: E.cleanDarts(currentDarts), pulled: !!pulled, say: sayLine || null,
       total: parseInt(document.getElementById("sessionTotal").textContent || "0", 10),
       sessionDate: document.getElementById("sessionDate").value || "",
       sessionTime: document.getElementById("sessionTime").value || ""
@@ -768,14 +782,32 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
   // ---- The session as the engine sees it, and back ----
   function game() {
     return E.normalize({ entry: currentEntry, positions: currentPos, thrown: currentThrown, undo: tapStack, last: lastTap,
-      camSeq: trackerCamSeq, camVisit, sid: sessionId, loaded: loadedSession });
+      camSeq: trackerCamSeq, camVisit, sid: sessionId, loaded: loadedSession, darts: currentDarts, pulled });
   }
   function setGame(g) {
     currentEntry = g.entry; currentPos = g.positions; currentThrown = g.thrown; tapStack = g.undo; lastTap = g.last;
     if (g.camSeq !== trackerCamSeq) { trackerCamSeq = g.camSeq; saveCamSeq(); }
-    camVisit = g.camVisit; sessionId = g.sid; loadedSession = g.loaded;
+    camVisit = g.camVisit; sessionId = g.sid; loadedSession = g.loaded; currentDarts = g.darts; pulled = g.pulled;
   }
-  const DART_OPS = { tap: 1, cam: 1, row: 1, undo: 1 };
+  const DART_OPS = { tap: 1, cam: 1, row: 1, undo: 1, btn: 1, fix: 1 };
+
+  // What a change sounds like (tracker-engine.js voiceLine): each dart's word, and a number's third
+  // dart says the visit and the running total.
+  function lineFor(op, out, g) {
+    if (!out) return "";
+    const said = (what) => E.voiceLine(g, what, scoreMode);
+    const dart = (d) => (d ? said({ k: "dart", aim: d.aim, dartNo: d.dartNo }) : "");
+    const fill = (f) => (f ? said({ k: "fill", target: f.target }) : "");
+    switch (op.k) {
+      case "tap": case "btn": return dart(out);
+      case "cam": return [fill(out.closed), dart(out.dart)].filter(Boolean).join(" ");
+      case "unread": return fill(out.closed);
+      case "out": return fill(out.filled);
+      case "fix": return said({ k: "fix", target: out.target, index: out.index });
+      case "undo": return "Undone.";
+    }
+    return "";
+  }
 
   // One change, applied to the session here (again, when `replay`: on top of another device's
   // version). Returns what the engine said (the dart, the step undone...).
@@ -788,12 +820,17 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
       case "unread": out = E.cameraUnreadable(g, { seq: op.seq }); break;
       case "out": out = E.cameraTakeout(g, { seq: op.seq }); break;
       case "row": E.ensureSid(g, newSid); out = E.typeRow(g, op.target, op.arr, op.filled); break;
+      case "btn": E.ensureSid(g, newSid); out = E.buttonDart(g, op.ring); break;
+      case "fix": out = E.fixDart(g, op.t, op.i, op.fix); break;
       case "undo": out = E.undo(g); break;
       case "sid": if (!g.sid && !g.loaded) g.sid = op.sid; out = g.sid; break;
       case "clear": E.clear(g); break;
       case "load": E.load(g, op.saved); break;
     }
     setGame(g);
+    const line = lineFor(op, out, g);
+    if (line) sayLine = { id: op.id || ("o" + Date.now().toString(36)), text: line };
+    if (op.k === "clear" || op.k === "load") sayLine = null;
     if (DART_OPS[op.k] && out) practiceActivity();
     if (op.k === "clear" || op.k === "load") { sessionTimer = null; saveSessionTimer(); camFixes = []; }
     if (op.k === "load") {
@@ -818,10 +855,21 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
     drawBoard();
     showLoadedNote();
     scheduleDraftWrite();
+    hearSay();
+    renderBoard();
+  }
+
+  // The latest line, said once on this device (when Voice is on). Lines from before the shared
+  // session arrived aren't news.
+  function hearSay() {
+    if (!sayLine || sayLine.id === heardSayId) return;
+    heardSayId = sayLine.id;
+    speak(sayLine.text);
   }
 
   // A change made on this device: applied now, shared with the others, kept until it's in.
   function runOp(op) {
+    if (!op.id) op.id = "o" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
     const out = applyOp(op, false);
     pendingOps.push({ op, vid: null, refused: false, tries: 0 });
     if (pendingOps.length > 80) pendingOps = pendingOps.slice(-80);
@@ -867,6 +915,10 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
     if (data.fixes !== undefined) camFixes = Array.isArray(data.fixes) ? data.fixes.slice(-6) : [];
     // Written by a page from before these were shared: none.
     camVisit = E.cleanVisit(data.camVisit);
+    currentDarts = E.cleanDarts(data.darts);
+    pulled = !!data.pulled;
+    sayLine = data.say && typeof data.say.id === "string" && typeof data.say.text === "string" ? data.say : null;
+    if (!sayPrimed) { sayPrimed = true; heardSayId = sayLine ? sayLine.id : null; }
     sessionId = typeof data.sid === "string" && data.sid ? data.sid : null;
     loadedSession = data.loaded && typeof data.loaded.id === "string" ? data.loaded : null;
     // Keep date/time in sync (also skip if user is actively editing those fields)
@@ -881,6 +933,8 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
     showLoadedNote();
     setSyncText("Connected", true);
     if (again) scheduleDraftWrite();
+    hearSay();
+    renderBoard();
   }
 
   function startLiveDraft(uid) {
@@ -893,7 +947,7 @@ function normMode(m) { return (m === "single") ? "single" : "standard"; }
         if (first) {
           first = false;
           // No shared session yet: this device's own entry stays, and its changes go up now.
-          if (!v) { migrateDraft(uid); if (pendingOps.length) scheduleDraftWrite(); return; }
+          if (!v) { sayPrimed = true; migrateDraft(uid); if (pendingOps.length) scheduleDraftWrite(); return; }
         }
         adoptDraft(v);
       },
@@ -1416,7 +1470,8 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
     try { __ttsVoices = synth.getVoices() || __ttsVoices; } catch (e) {}
 
     const utterance = buildUtterance(text);
-    utterance.onstart = () => { __ttsUnlocked = true; };
+    let started = false;
+    utterance.onstart = () => { started = true; __ttsUnlocked = true; };
     utterance.onerror = (e) => {
       // Cut off by a newer word: nothing wrong with the voice.
       if (e && (e.error === "interrupted" || e.error === "canceled")) return;
@@ -1437,8 +1492,9 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
     if (allowRetry) {
       __speakRetryTimer = setTimeout(() => {
         if (seq !== __speakSeq) return;
-        if (!synth.speaking && !synth.pending) {
-          // Never started: blocked (an iPad says nothing), so the next tap unlocks it again.
+        if (!started && !synth.speaking && !synth.pending) {
+          // Never started: blocked (an iPad says nothing), so the next tap unlocks it again. (A short
+          // word can be over already: started says it was heard.)
           __ttsUnlocked = false;
           speakNow(text, seq, false);
         }
@@ -1499,9 +1555,7 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
         : `${word.toUpperCase()} ${tLabel}`.trim();
 
     showTapToast(toastTxt);
-
-    // Voice says only the word (as requested)
-    speak(word);
+    // The voice says each dart from the session's shared lines (see hearSay), on every device.
   }
 
   // ---- Cameras -------------------------------------------------------------------------------------
@@ -1732,7 +1786,15 @@ function applyEntryModeUI(){
         applyBoardHit(hit || null); // outside the board: a miss for the number being thrown at
       };
 
-      c.addEventListener("pointerdown", handlePoint);
+      // A tap enters a dart; dragging across the board (scrolling the page) doesn't.
+      let down = null;
+      c.addEventListener("pointerdown", (ev) => { down = { x: ev.clientX, y: ev.clientY, t: Date.now() }; });
+      c.addEventListener("pointerup", (ev) => {
+        const d = down; down = null;
+        if (!d || Math.hypot(ev.clientX - d.x, ev.clientY - d.y) > 12 || Date.now() - d.t > 1500) return;
+        handlePoint(ev);
+      });
+      c.addEventListener("pointercancel", () => { down = null; });
 
       // Buttons (guard against double-binding)
       const undoBtn = document.getElementById("undoTapBtn");
@@ -1985,6 +2047,209 @@ function applyBoardHit(hit){
     tapFeedback(done.counts ? done.ring : "MISS", done.aim);
   }
 
+  // ---- Board mode (board-mode.js): a full-screen scoreboard to read from the oche ----------------
+  // The number to throw at, huge; the board with this visit's darts; three boxes saying what each
+  // dart counted as (tap one to fix it); the 21 numbers; big buttons; pace against your average and
+  // best; and a recap at the end. Remembered on each device; turning it on the first time turns the
+  // voice on too.
+  const BOARD_KEY = "dt_trackerBoard";
+  function boardWanted() { try { return localStorage.getItem("dt_trackerBoard") === "1"; } catch (_) { return false; } }
+  if (window.BoardMode) keepAwake = BoardMode.wakeLock();
+  const tName = (t) => (t === "BULL" ? "Bull" : t);
+  const f1 = (n) => (Math.round(n * 10) / 10).toFixed(1);
+  const totalNum = (s) => (typeof s.total === "number" ? s.total : parseInt(s.total || "0", 10) || 0);
+
+  function setVoice(on) {
+    const vt = document.getElementById("voiceToggle");
+    if (!vt || vt.checked === on) return;
+    vt.checked = on;
+    vt.dispatchEvent(new Event("change"));
+  }
+  function setBoard(on) {
+    try {
+      if (on && localStorage.getItem(__tapVoiceKey) === null) setVoice(true);
+      localStorage.setItem(BOARD_KEY, on ? "1" : "0");
+    } catch (_) { /* private mode */ }
+    renderBoard();
+  }
+  // The saved sessions to compare with (not the one loaded, if one is).
+  const historyFor = () => sessionsAll.filter(s => !(loadedSession && s.id === loadedSession.id));
+
+  function trackerFixOptions(d) {
+    const t = d.target, opts = [];
+    if (t === "BULL") {
+      opts.push({ id: "D", text: "Bullseye: 2 marks", hit: true, cur: d.ring === "D" });
+      opts.push({ id: "S", text: "Outer bull: 1 mark", hit: true, cur: d.ring === "S" });
+    } else {
+      opts.push({ id: "T", text: `Treble ${t}`, hit: true, cur: d.ring === "T" });
+      opts.push({ id: "D", text: `Double ${t}`, hit: true, cur: d.ring === "D" });
+      opts.push({ id: "S", text: `Single ${t}`, hit: true, cur: d.ring === "S" });
+    }
+    opts.push({ id: "-", text: `A miss: not in the ${t === "BULL" ? "bull" : t}`, cur: d.ring === "-" });
+    if (d.src !== "typed") opts.push({ id: "remove", text: "Not a dart: remove it" });
+    return opts;
+  }
+  function trackerFixSub(d) {
+    const at = tName(d.target);
+    if (d.src === "cam") return `The cameras read it as ${d.read === "Miss" ? "a miss" : d.read}, thrown at ${at}. What was it?`;
+    if (d.src === "unseen") return `The cameras didn't see this dart at ${at}, so it counts as a miss. What was it?`;
+    return `Entered as ${d.read === "Miss" ? "a miss" : d.read}, thrown at ${at}. What was it?`;
+  }
+
+  // A dart fixed in Board mode: its number is scored again (tracker-engine.js fixDart). A camera dart
+  // fixed is a note for the cameras to learn from (board-learn.js), like Undo and a tap.
+  function boardFix(index, seq, value) {
+    const v = E.boardView(game(), scoreMode);
+    const d = v.darts[index];
+    if (!d || d.s !== seq || !value) return;
+    const t = d.target;
+    let fix;
+    if (value.remove) fix = { remove: true };
+    else if (value.ring === "-") {
+      if (d.ring === "-") return;
+      fix = { ring: "-", label: "", x: null, y: null };
+    } else {
+      const label = t === "BULL" ? (value.ring === "D" ? "DB" : "SB") : value.ring + t;
+      if (label === d.label && d.ring !== "-") return;
+      const p = Number.isFinite(d.x) && window.BoardMode ? BoardMode.spotIn(label, d.x, d.y) : {};
+      fix = { ring: value.ring, label, x: p.x, y: p.y };
+    }
+    const out = runOp({ k: "fix", t, i: index, fix });
+    if (!out) return;
+    setBoardNote("");
+    tapFeedback(fix.remove || fix.ring === "-" ? "MISS" : fix.ring, t);
+    if (d.src === "cam" && typeof d.s === "number" && !fix.remove && auth.currentUser && window.DartCamera) {
+      tapStack.forEach(st => { if (st.cam && st.cam.seq === d.s) st.cam.noted = true; });
+      const truth = { label: fix.label || "MISS", x: Number.isFinite(fix.x) ? fix.x : null, y: Number.isFinite(fix.y) ? fix.y : null };
+      DartCamera.noteDart(db, auth.currentUser.uid, { seq: d.s, page: "tracker", outcome: "corrected", read: { label: d.label || "MISS", x: Number.isFinite(d.x) ? d.x : null, y: Number.isFinite(d.y) ? d.y : null }, truth });
+      scheduleDraftWrite();
+    }
+  }
+  // Single / Double / Treble / Miss: a dart at the number being thrown at.
+  function boardButton(ring) {
+    if (!aimTarget()) {
+      tapFeedback("FULL");
+      setBoardNote("All 21 numbers have their three darts. Save the session, or Undo.");
+      renderBoard();
+      return;
+    }
+    const done = runOp({ k: "btn", ring });
+    if (!done) return;
+    setBoardNote("");
+    camFixes = [];
+    tapFeedback(done.counts ? done.ring : "MISS", done.aim);
+  }
+  function togglePause() {
+    if (!sessionTimer) return;
+    const now = Date.now();
+    if (T.isPaused(sessionTimer, now)) T.resume(sessionTimer, now); else T.pause(sessionTimer, now);
+    saveSessionTimer();
+    runOp({ k: "timer", timer: deepClone(sessionTimer) });
+  }
+
+  // Under the dart count: how it's going against your average and your best at the same point.
+  function paceHtml(g, hist) {
+    const p = E.pace(g, hist, scoreMode);
+    if (!p) {
+      const list = E.countingSessions(hist, scoreMode);
+      if (!list.length) return "";
+      const totals = list.map(totalNum);
+      return `<span class="m">Your best</span> ${Math.max(...totals)} <span class="m">· average</span> ${f1(totals.reduce((a, b) => a + b, 0) / totals.length)}`;
+    }
+    const cls = p.pb != null && p.score >= p.pb ? "up" : p.avg != null && p.score < p.avg ? "down" : "";
+    return `<span class="m">After ${tName(p.after)}:</span> <b class="${cls}">${p.score}</b>` +
+      (p.avg != null ? ` <span class="m">· avg</span> ${f1(p.avg)}` : "") +
+      (p.pb != null ? ` <span class="m">· PB pace</span> ${p.pb}` : "");
+  }
+  // The end of the session: the total, against your average and best, what went better than usual
+  // and the three numbers to practise.
+  function recapModel(g, hist) {
+    const r = E.recap(g, hist, scoreMode);
+    const pct = (x) => Math.round(x * 100) + "%";
+    let sub;
+    if (loadedSession) sub = `The session from ${loadedSession.timestamp || loadedSession.date}.`;
+    else if (r.newPb) sub = `A new best! It was ${r.pb}.`;
+    else if (r.avg != null) { const d = r.total - r.avg; sub = `${f1(Math.abs(d))} ${d >= 0 ? "above" : "below"} your average of ${f1(r.avg)} · best ${r.pb}`; }
+    else sub = "Your first session in this game.";
+    const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+    let html = `<p><b>${r.hits} of ${r.darts}</b> darts hit (${pct(r.hitPct)})${scoreMode === "single" ? "" : ` · ${plural(r.trebles, "treble")} · ${plural(r.doubles, "double")}`}.</p>`;
+    if (r.improved.length) html += `<p class="m">Better than usual</p><div class="tags">${r.improved.map(x => `<span class="tag good">${tName(x.t)}: ${x.score} <span class="m">(usually ${f1(x.avg)})</span></span>`).join("")}</div>`;
+    html += `<p class="m">Practise next: the lowest hit rate lately</p><div class="tags">${r.practise.map(x => `<span class="tag work">${tName(x.t)} · ${pct(x.pct)}</span>`).join("")}</div>`;
+    return {
+      doneBig: String(r.total), doneText: sub, doneHtml: html,
+      doneActions: [{ act: "save", text: loadedSession ? "Save the changes" : "Save the session", primary: true }, { act: "undo", text: "Undo the last dart" }],
+    };
+  }
+
+  board = window.BoardMode ? BoardMode.mount(document.body, {
+    id: "boardMode",
+    modeLabel: "Tracker",
+    heroAria: "The number to throw at",
+    stripAria: "The 21 numbers",
+    pad: [{ man: "S", text: "Single" }, { man: "D", text: "Double" }, { man: "T", text: "Treble" }, { man: "-", text: "Miss", cls: "m" }],
+    doneBig: "Done",
+    big: (t) => (t === "BULL" ? "BULL" : t || ""),
+    longTarget: (t) => t === "BULL",
+    lit: (v) => (!v.target ? [] : v.target === "BULL" ? [{ n: "BULL", beds: "BI" }] : [{ n: Number(v.target), beds: "DT", tint: true }]),
+    curNote: "what it is now",
+    fixOptions: trackerFixOptions,
+    fixSub: trackerFixSub,
+    fixValue: (id) => (id === "remove" ? { remove: true } : { ring: id }),
+  }, {
+    exit: () => setBoard(false),
+    start: () => {},
+    pause: togglePause,
+    voice: () => setVoice(!tapVoiceEnabled),
+    camera: () => {
+      const c = document.getElementById("cameraToggle");
+      c.checked = !c.checked;
+      c.dispatchEvent(new Event("change"));
+      renderBoard();
+    },
+    manual: boardButton,
+    undo: () => document.getElementById("undoTapBtn").click(),
+    fix: boardFix,
+    save: () => document.getElementById("saveBtn").click(),
+    boardTap: (x, y) => {
+      const h = BoardVision.classify(x, y, BoardVision.APP);
+      applyBoardHit(h.target ? { target: h.target, ring: h.ring, x, y } : null);
+    },
+  }) : null;
+  if (board) board.el.classList.add("taps");
+
+  function renderBoard() {
+    if (!board) return;
+    const on = boardWanted() && !!auth.currentUser;
+    board.show(on);
+    if (!on) { keepAwake(false); return; }
+    const g = game();
+    const v = E.boardView(g, scoreMode);
+    const hist = historyFor();
+    const p = E.progress(g);
+    const now = Date.now();
+    const paused = !!sessionTimer && !v.finished && T.isPaused(sessionTimer, now);
+    const saveEl = document.getElementById("saveNote"), boardEl = document.getElementById("boardNote"), camEl = document.getElementById("camNote");
+    const saveShown = saveEl.textContent && now - saveNoteAt < 30000;
+    const note = saveShown ? saveEl.textContent : boardEl.textContent || camEl.textContent;
+    const warn = saveShown ? saveEl.classList.contains("warn") : !boardEl.textContent && camEl.classList.contains("warn");
+    const model = {
+      view: v, paused, camOn: document.getElementById("cameraToggle").checked, voiceOn: tapVoiceEnabled,
+      undoCount: tapStack.length, note, noteWarn: warn,
+      dartsText: p.darts ? `${p.darts} dart${p.darts === 1 ? "" : "s"}` : "",
+      modeLabel: scoreMode === "single" ? "Tracker · singles" : "Tracker · standard scoring",
+      info: v.finished ? "" : paceHtml(g, hist),
+      pad: v.target === "BULL" ? [{ man: "S", text: "Outer bull" }, { man: "D", text: "Bullseye" }, { man: "T", text: "Treble", disabled: true }] : null,
+      pauseOff: !sessionTimer,
+    };
+    if (v.finished) Object.assign(model, recapModel(g, hist));
+    board.update(model);
+    board.tick(T.format(sessionTimer ? T.elapsedMs(sessionTimer, now) : 0));
+    keepAwake(!v.finished);
+  }
+  document.getElementById("boardBtn").addEventListener("click", () => setBoard(true));
+  setInterval(() => { if (board && boardWanted() && document.visibilityState !== "hidden") renderBoard(); }, 500);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") renderBoard(); });
+
   auth.onAuthStateChanged(user => {
     if(user) {
       document.getElementById("authScreen").style.display = "none";
@@ -2008,8 +2273,10 @@ function applyBoardHit(hit){
       let camWanted = false;
       try { camWanted = localStorage.getItem(CAMERA_KEY) === "1"; } catch (_) { camWanted = false; }
       if (camToggle && camWanted && !boardCam) { camToggle.checked = true; setTrackerCamera(true); }
+      renderBoard();
     } else {
       stopListeners();
+      renderBoard();
       document.getElementById("appInterface").style.display = "none";
       document.getElementById("authScreen").style.display = "block";
     }
@@ -2126,11 +2393,14 @@ document.getElementById("signInBtn").onclick = () => auth.signInWithPopup(new fi
   const SAVE_TIMEOUT_MS = 15000;
   let saving = false;
 
+  let saveNoteAt = 0;
   function saveNote(text, warn) {
     const el = document.getElementById("saveNote");
     if (!el) return;
+    saveNoteAt = text ? Date.now() : 0;
     el.textContent = text || "";
     el.classList.toggle("warn", !!warn);
+    renderBoard();
   }
   function hideSavePanel() { const p = document.getElementById("savePanel"); if (p) p.hidden = true; }
 
@@ -2181,6 +2451,8 @@ document.getElementById("signInBtn").onclick = () => auth.signInWithPopup(new fi
         const ref = db.collection("sessions").doc(loadedSession.id);
         const data = { mode: scoreMode, entry: currentEntry, total, complete: !!complete,
           positions: positions || firebase.firestore.FieldValue.delete() };
+        const throws = E.throwsFor(game());
+        if (throws.some(d => d.src !== "old")) data.throws = throws;
         if (!(date === loadedSession.date && time === loadedSession.time)) data.timestamp = date + " " + time;
         else shownDate = loadedSession.date || date;
         await timeout(ref.update(data));
@@ -2199,6 +2471,10 @@ document.getElementById("signInBtn").onclick = () => auth.signInWithPopup(new fi
         const data = { uid: user.uid, timestamp: stampDate + " " + stampTime, mode: scoreMode, entry: currentEntry, total, complete: !!complete };
         if (durationSec > 0) data.durationSec = durationSec;
         if (positions) data.positions = positions;
+        // Every dart, misses included, with where it landed (tracker-engine.js throwsFor).
+        const throws = E.throwsFor(game());
+        if (throws.some(d => d.src !== "old")) data.throws = throws;
+        if (sessionTimer && sessionTimer.startedAt > 0) data.startedAtMs = sessionTimer.startedAt;
         await timeout(ref.set(data));
       }
       const what = loadedSession ? "Updated" : "Saved";

@@ -3,7 +3,7 @@
 Finish every double, D1 to D20 and then the bull, against the clock (`doubles.html`). It was the separate "My Doubles Progress" app; its 177 rounds were imported on 2026-11-12 (marked `importedFrom: "mydoublesprogress"`), and the rules are the old app's, unchanged.
 
 - **Rules and data:** `public/doubles-engine.js` (no DOM; its header explains the rules and the saved shapes). Tests: `tests/doubles-engine.test.cjs`.
-- **The page:** `public/doubles.html`. **Board mode:** `public/doubles-board.js` + `public/doubles-board.css`.
+- **The page:** `public/doubles.html`. **Board mode:** `public/doubles-board.js` (the Doubles parts) on the shared Board mode kit `public/board-mode.js` + `public/board-mode.css` (the board drawing, dart boxes, fix sheet, strip, buttons, voice warm-up and wake lock), which the tracker uses too.
 - **Time Left:** each new finished round is sent once by `syncDoublesSessionToTimeLeft` (`functions/index.js`); imported rounds are skipped.
 
 ## Board mode
