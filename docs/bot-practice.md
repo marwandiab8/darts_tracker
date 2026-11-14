@@ -53,7 +53,7 @@ A full-screen scoreboard to read from the oche, on the shared Board mode kit (`p
 - **Big buttons:** Missed the board, Edit my last visit, and Bot's turn / Enter / Finish game when they apply. A tap on the board enters a dart where you tapped.
 - **Pulling your darts out after your winning double finishes the game**: no walk to the iPad to tap Finish. When the bot checks out, the game still waits (so a misread winning double of yours can be corrected with Edit my last visit).
 - **Moments:** a 180, a ton-plus finish, game shot and the nine-dart watch (a 501 leg still on for nine darts after six) fill the screen for about two seconds (a tap skips it), on every device in Board mode.
-- **The caller** says "You require 81" after the bot's visit when you have a finish on (with two players, "Sam, you require 81"). It is the browser's voice: the recorded clips cover only 140 to 180, Bust, No score and Game shot (making "You require" clips needs the Piper voice, which isn't installed here).
+- **The caller** says "You require 81" after the bot's visit when you have a finish on. Against the bot it is a recorded clip in the same voice as the 140-180 calls (`audio/calls/require-1.wav` to `require-170.wav`, each fetched when the finish comes on); with two players the name comes first ("Sam, you require 81"), so the browser's voice says it. If a clip can't load, the browser's voice says the line instead.
 - **The match report** at the end (here and on the game-over card): each side's 3-dart average, first-9 average, checkout (darts thrown with a finish on, and the one that won), highest finish, 60+/100+/140+/180s and darts; a histogram of your visit scores; where your darts went; and your average against your last 10 games.
 
 ## On more than one device

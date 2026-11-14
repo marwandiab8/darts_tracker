@@ -434,7 +434,7 @@
      Cache-Control: no-cache (a real, previously-seen failure mode - see docs/bot-practice.md) is
      still forced to fetch the matching engine instead of silently pairing a new page with a stale
      one, which throws inside announce()'s catch-all and looks like "no sound at all". -->
-<script src="practice-engine.js?v=8"></script>
+<script src="practice-engine.js?v=9"></script>
 <script src="board-mode.js?v=4"></script>
 <script src="practice-timer.js?v=2"></script>
 <script src="live-sync.js?v=1"></script>
@@ -730,7 +730,11 @@
       // The next thrower with a finish on: "You require 81" (with two players, their name first).
       const next = game.turn;
       const need = !game.winner && next !== visit.who && (versus() || next === "player") && typeof E.requireLine === "function" ? E.requireLine(game, next) : "";
-      if (need) segs.push({ text: (versus() ? firstWord(nameOf(next)) + ", y" + need.slice(1) : need) + ".", rate: 0.95, pitch: 1, volume: 1, clip: null, plain: true });
+      // Alone it is the recorded call (fetched now, while the score is said); with two players the
+      // name comes first, so the browser's voice says it.
+      const needClip = need && !versus() && typeof E.requireClip === "function" ? E.requireClip(game.remaining[next]) : null;
+      if (needClip && audioCtx && audioCtx.state === "running") loadClip(needClip);
+      if (need) segs.push({ text: (versus() ? firstWord(nameOf(next)) + ", y" + need.slice(1) : need) + ".", rate: 0.95, pitch: 1, volume: 1, clip: needClip, plain: true });
       // One after another (the score, then "Game shot!"), and abandoned if a newer call starts.
       for (const seg of segs) {
         if (token !== announceToken || settings.mute) return;

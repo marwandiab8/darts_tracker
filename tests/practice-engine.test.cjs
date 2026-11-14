@@ -1151,6 +1151,16 @@ test("cleanHold keeps only well-formed events", () => {
     assert.equal(E.requireLine(g, "player"), "You require 81");
     g.remaining.player = 169;
     assert.equal(E.requireLine(g, "player"), "", "no finish from 169");
+    assert.equal(E.requireClip(81), "audio/calls/require-81.wav");
+    assert.equal(E.requireText(81), "You require eighty one.");
+    assert.equal(E.requireText(121), "You require one hundred and twenty one.");
+    for (const bad of [0, 171, 81.5, undefined]) assert.equal(E.requireClip(bad), null, String(bad));
+    const fs = require("node:fs"), path = require("node:path");
+    for (let n = 1; n <= E.REQUIRE_MAX; n++) {
+      const c = E.requireClip(n);
+      assert.ok(fs.existsSync(path.join(__dirname, "..", "public", c)), c + " is missing from public/");
+      assert.ok(!E.ALL_CLIP_FILES.includes(c), c + " is fetched when needed, not on the first tap");
+    }
     const h = E.createGame({ kind: "x01", startScore: 201, first: "player" });
     play3(h, ["T20", "S20", "MISS"]);
     play3(h, ["S1", "S1", "S1"]);

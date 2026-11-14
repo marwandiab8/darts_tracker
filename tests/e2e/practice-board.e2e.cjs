@@ -1,7 +1,7 @@
 // The bot game's Board mode (practice.html + board-mode.js): the scoreboard read from the oche, on an
 // iPad with the cameras. Each dart's box says what it scored; tapping a dart fixes it (the visit is
 // thrown again); the bot's visit stays on the board until your first dart; Undo goes back across
-// visits (the bot's visit comes off); a 180 fills the screen; "You require 81" is said; pulling your
+// visits (the bot's visit comes off); a 180 fills the screen; "You require 81" is played (the recorded clip); pulling your
 // darts out after the winning double finishes the game (no tap); the game is saved with its visits;
 // the match report shows; a reload keeps Board mode.
 const H = require("./harness.cjs");
@@ -25,6 +25,8 @@ const { check, failed } = H.checker();
     const at = (label) => (label === "MISS" ? { x: 0, y: -1.1 } : E.aimPoint(label.slice(1), label[0]));
     const camDart = async (label) => { const p = at(label); await station.send(H.dart(label, p.x, p.y)); await H.sleep(900); };
     const said = () => ipad.evaluate(() => window.__said.slice());
+    const fetched = []; // the recorded "You require N" clips the page asked for
+    ipad.on("request", (r) => { const m = r.url().match(/audio\/calls\/(require-\d+)\.wav/); if (m) fetched.push(m[1]); });
     const bm = () => ipad.evaluate(() => {
       const b = document.getElementById("boardMode");
       const q = (sel) => b.querySelector(sel);
@@ -103,7 +105,11 @@ const { check, failed } = H.checker();
     const greq = E.createGame({ kind: "x01", startScore: 201, first: "bot" });
     greq.remaining.player = 81;
     await inject(greq);
-    check(await until(async () => (await said()).includes("You require 81."), 12000), "after the bot's visit: \"You require 81.\" (" + (await said()).slice(-2).join(" | ") + ")");
+    // The recorded clip: fetched, and then not said by the browser's voice (which only speaks the line
+    // when the clip can't play).
+    check(await until(async () => fetched.includes("require-81"), 12000), "after the bot's visit: the recorded \"You require 81\" is fetched (" + fetched.join(", ") + ")");
+    await H.sleep(2500);
+    check(!(await said()).includes("You require 81."), "and played, not said by the browser's voice (" + (await said()).slice(-2).join(" | ") + ")");
     b = await bm();
     check(/You require 81/.test(b.next) && /T19\s*D12/.test(b.next), "and the route on the board: " + b.next);
 

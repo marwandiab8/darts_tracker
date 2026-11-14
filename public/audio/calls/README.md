@@ -2,7 +2,14 @@
 
 These 44 clips are the fixed set of "big call" phrases (`FIXED_CLIPS`/`clipForScore` in
 `public/practice-engine.js`): every x01 score from 140 to 180, plus "Bust", "No score" and
-"GAME SHOT!". Everything else (a normal return, a "ton", Cricket's marks-and-points combinations)
+"GAME SHOT!".
+
+The bot game also has `require-1.wav` to `require-170.wav` ("You require eighty one.",
+`requireClip`/`requireText`), in the same voice, said when you have a finish on. They are fetched one
+at a time when needed, not with the 44 on the first tap. `scripts/make-require-clips.cjs` records them
+(Piper and the voice live in `~/.local/share/piper-tts` on the laptop; see the script's header).
+
+Everything else (a normal return, a "ton", Cricket's marks-and-points combinations)
 still uses the browser's own voice, because those have far too many distinct possible phrases to
 record one-by-one.
 

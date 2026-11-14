@@ -1032,6 +1032,17 @@
     return "You require " + rem;
   }
 
+  // The recorded "You require N" (the same Piper voice as the big calls, see
+  // public/audio/calls/README.md and scripts/make-require-clips.cjs) for 1-170, or null. Not in
+  // ALL_CLIP_FILES: they are fetched one at a time when a finish comes on, not all on the first tap.
+  const REQUIRE_MAX = 170;
+  function requireClip(rem) {
+    return Number.isInteger(rem) && rem >= 1 && rem <= REQUIRE_MAX ? `audio/calls/require-${rem}.wav` : null;
+  }
+  function requireText(rem) {
+    return "You require " + sayNumber(rem) + ".";
+  }
+
   // Fix dart i of the visit in progress (the winning dart too, before the game is finished): the visit
   // is thrown again from that dart with the dart where it really landed. Darts after a bust or a
   // checkout no longer count. Returns { dropped } or { error }.
@@ -1254,6 +1265,9 @@
     dartWords,
     visitView,
     requireLine,
+    requireClip,
+    requireText,
+    REQUIRE_MAX,
     fixVisitDart,
     stepBack,
     momentFor,
