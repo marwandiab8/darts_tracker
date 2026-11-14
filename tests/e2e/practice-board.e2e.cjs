@@ -86,6 +86,21 @@ const { check, failed } = H.checker();
     const botVisit = st.game.visits[1];
     check(botVisit && botVisit.who === "bot" && new RegExp("Club bot (scored|bust)").test(b.info), "your turn again: the bot's visit is on the board: " + b.info + " | " + b.slots.join(" / "));
     check(b.cells.length === 2, "the strip has both visits: " + b.cells.join(" / "));
+    // A tap right on one of the bot's darts (still on the board) is a tap on the board: your dart goes
+    // in there. (Before Nov 14, 2026 those markers were buttons with nothing to do, and ate the tap.)
+    const botSpot = await ipad.evaluate(() => {
+      const svg = document.querySelector("#boardMode .bm-board svg"), c = svg.querySelector(".bm-dart circle:last-of-type");
+      const r = svg.getBoundingClientRect(), size = Math.min(r.width, r.height);
+      const x = Number(c.getAttribute("cx")), y = Number(c.getAttribute("cy"));
+      return { fixable: !!svg.querySelector(".bm-dart[data-i]"), px: r.left + (r.width - size) / 2 + ((x + 1.25) / 2.5) * size, py: r.top + (r.height - size) / 2 + ((y + 1.25) / 2.5) * size };
+    });
+    check(!botSpot.fixable, "the bot's darts on the board are plain markers, not buttons");
+    await ipad.mouse.click(botSpot.px, botSpot.py);
+    st = await until(async () => { const g = await liveGame(); return g && g.game.visitDarts.length === 1 ? g : null; }) || await liveGame();
+    check(st.game.visitDarts.length === 1 && st.game.turn === "player", "a tap on one of the bot's dart markers enters your dart there: " + st.game.visitDarts.join(" "));
+    await ipad.click("#boardMode [data-act=undo]");
+    st = await until(async () => { const g = await liveGame(); return g && g.game.visitDarts.length === 0 && g.game.visits.length === 2 ? g : null; }) || await liveGame();
+    check(st.game.visitDarts.length === 0 && st.game.visits.length === 2, "Undo takes that dart back");
     await ipad.click("#boardMode [data-act=undo]");
     st = await until(async () => { const g = await liveGame(); return g && g.game.visits.length === 0 && g.game.visitDarts.length === 2 ? g : null; }) || await liveGame();
     check(st.game.visits.length === 0 && st.game.visitDarts.join(" ") === "T19 S20" && st.game.remaining.bot === 201, "Undo: the bot's visit comes off, yours is open again without its last dart (" + st.game.visitDarts.join(" ") + ")");

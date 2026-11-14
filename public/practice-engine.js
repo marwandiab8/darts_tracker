@@ -252,7 +252,7 @@
       darts: { player: [], bot: [] },
       undo: [],
     };
-    if (options && options.bot) { game.botModel = BOT_MODEL; game.bot = botFor(options.bot); }
+    if (options && options.bot) { game.botModel = CALIB[options.botModel] ? options.botModel : BOT_MODEL; game.bot = botFor(options.bot); }
     if (options && options.bullUp && typeof options.bullUp === "object") game.bullUp = JSON.parse(JSON.stringify(options.bullUp));
     if (kind === "x01") {
       const wanted = Number(options && options.startScore);
@@ -670,7 +670,7 @@
   // bot it was started with, and a bull-up already decided, come along.
   const gameOptions = (game) => {
     const o = { kind: game.kind, startScore: game.startScore, doubleOut: game.doubleOut, first: game.first };
-    if (game.botModel === BOT_MODEL && game.bot) o.bot = Object.assign({}, game.bot);
+    if (CALIB[game.botModel] && game.bot) { o.bot = Object.assign({}, game.bot); o.botModel = game.botModel; }
     if (game.bullUp) o.bullUp = JSON.parse(JSON.stringify(game.bullUp));
     return o;
   };
@@ -836,17 +836,23 @@
 
 
 
-  // --- the bot on a real board (model 2, games from Nov 2026) -----------------------------------------
+  // --- the bot on a real board (model 2 from Nov 13, model 3 from Nov 14, 2026) ------------------------
   // The first bot threw on the app's drawn board, whose treble and double rings are wider than a real
-  // board's, so its doubles went in far too often. Model 2 throws in real-board units (millimetres
-  // over the 170 mm radius) and maps the dart to the drawn board ring by ring (realToApp, as the
+  // board's, so its doubles went in far too often. Model 2 threw in real-board units (millimetres
+  // over the 170 mm radius) and mapped the dart to the drawn board ring by ring (realToApp, as the
   // cameras do), so it scores what that dart would score on a real board and the dots still line up.
-  // Two spreads: one for scoring darts, one for doubles (a style is the ratio between them), chosen
-  // from a table measured by simulating 700 legs of 501 at each spread (scripts in the commit notes),
-  // so a level plays at its average. A game keeps its model (game.botModel) and the bot it was
-  // started with (game.bot), so a page still on the old code mid-game isn't mixed with this one for
-  // new games, and every device throws the same darts.
-  const BOT_MODEL = 2;
+  // Its table was wrong, though: Beginner (30) played at about 43, Casual (42) at 51 and Club (53)
+  // at 60, and its standard style was tighter at a double than at a treble (0.85 of the spread),
+  // which no real player is - so every level finished far more than its label said.
+  // Model 3 keeps the real board and fixes both: one spread for every dart (the double ring is just
+  // narrow: a 60-average hits about 23% of its darts at a double, a pro about 40%, as real players
+  // do), one dart in ten flies loose (2.5 times the spread: the stray into the 5 or off the board),
+  // and its table was measured with this file's own game (scripts/calibrate-bot.cjs, 3000 legs of
+  // 501 at each spread, the average as the game reports it). A style scales the spread at a double.
+  // A game keeps its model (game.botModel) and the bot it was started with (game.bot), so a game
+  // started under model 2 goes on with model 2's table, and every device throws the same darts.
+  const BOT_MODEL = 3;
+  const TAIL = { p: 0.1, k: 2.5 };
   const MM = { bullIn: 6.35, bullOut: 15.9, tripleIn: 99, tripleOut: 107, doubleIn: 162, edge: 170 };
   const RING_KEYS = ["bullIn", "bullOut", "tripleIn", "tripleOut", "doubleIn", "edge"];
   const REAL = {};
@@ -887,28 +893,45 @@
   // The levels' 3-dart averages, and the styles (the double spread over the scoring spread).
   const LEVEL_AVG = { beginner: 30, casual: 42, club: 53, league: 72, pro: 95 };
   const STYLES = [
-    { id: "standard", name: "Standard", f: 0.85, blurb: "Scores and finishes like most players at its level." },
-    { id: "grinder", name: "Steady grinder", f: 0.6, blurb: "Smaller scores, but rarely misses a double." },
+    { id: "standard", name: "Standard", f: 1, blurb: "Scores and finishes like most players at its level." },
+    { id: "grinder", name: "Steady grinder", f: 0.8, blurb: "Smaller scores, but tighter on the doubles." },
     { id: "scorer", name: "Heavy scorer", f: 1.25, blurb: "Big scores, weak on the doubles." },
   ];
   const styleById = (id) => STYLES.find((st) => st.id === id) || STYLES[0];
-  // [scoring spread, 3-dart average, checkout rate] per style, measured (see above).
-  const CALIB = {"0.6":[[0.04,101.6,0.669],[0.045,95.3,0.621],[0.05,89.2,0.569],[0.055,84.2,0.536],[0.06,79.3,0.49],[0.065,74.1,0.45],[0.07,69.6,0.416],[0.075,65.7,0.398],[0.08,62.6,0.401],[0.085,58.4,0.351],[0.09,56.2,0.339],[0.095,52.1,0.315],[0.1,49.0,0.299],[0.11,44.3,0.268],[0.12,39.2,0.237],[0.13,35.0,0.216],[0.14,31.5,0.198],[0.16,26.3,0.17],[0.18,20.5,0.14],[0.2,17.3,0.121],[0.24,12.6,0.092],[0.28,9.3,0.069]],"0.85":[[0.035,105.2,0.57],[0.04,97.6,0.51],[0.045,91.1,0.463],[0.05,84.7,0.418],[0.055,79.5,0.39],[0.06,73.9,0.356],[0.065,68.5,0.329],[0.07,65.0,0.304],[0.075,59.8,0.287],[0.08,55.9,0.261],[0.085,51.1,0.248],[0.09,47.4,0.223],[0.095,43.1,0.202],[0.1,41.5,0.206],[0.11,35.7,0.182],[0.12,29.8,0.153],[0.13,25.6,0.136],[0.14,22.7,0.125],[0.16,17.7,0.104],[0.18,13.5,0.083],[0.2,10.7,0.07],[0.24,8.3,0.053],[0.28,6.2,0.035]],"1.25":[[0.035,97.8,0.397],[0.04,90.5,0.356],[0.045,83.1,0.316],[0.05,74.3,0.268],[0.055,69.5,0.258],[0.06,62.5,0.23],[0.065,57.3,0.214],[0.07,52.4,0.195],[0.075,47.1,0.178],[0.08,41.6,0.161],[0.085,36.9,0.145],[0.09,34.5,0.136],[0.1,27.2,0.115],[0.11,21.7,0.097],[0.12,18.6,0.086],[0.14,12.9,0.065],[0.16,9.9,0.052],[0.2,6.6,0.033],[0.24,5.4,0.022]]};
-  // The spreads for a bot that averages `target` with this style: { s, d, avg, checkout }.
-  function botParams(target, styleId) {
-    const st = styleById(styleId);
-    const rows = CALIB[String(st.f)];
+  // The spread at a double over the spread at everything else, per style and model.
+  const STYLE_F = { 2: { standard: 0.85, grinder: 0.6, scorer: 1.25 }, 3: { standard: 1, grinder: 0.8, scorer: 1.25 } };
+  // Per model and style ratio: [spread, 3-dart average, share of darts at a double that go in], from
+  // the widest spread's average down. Model 2's rows are kept for games started under it.
+  const CALIB = {};
+  CALIB[3] = {"1":[[0.025,117.3,0.614],[0.03,107.3,0.534],[0.035,99.4,0.468],[0.04,91.8,0.42],[0.045,85.6,0.382],[0.05,80.1,0.347],[0.055,74.9,0.313],[0.06,70.2,0.283],[0.065,65.8,0.259],[0.07,61.5,0.233],[0.075,58.9,0.228],[0.08,55.4,0.206],[0.085,52.2,0.187],[0.09,49.5,0.175],[0.095,47.2,0.166],[0.1,44.6,0.15],[0.11,40.2,0.129],[0.12,37.1,0.117],[0.13,33.7,0.101],[0.14,31.6,0.092],[0.16,27,0.072],[0.18,23.6,0.057],[0.2,21,0.048],[0.24,16.7,0.034],[0.28,13.8,0.026]],"0.8":[[0.025,120.1,0.715],[0.03,109.8,0.63],[0.035,101.9,0.561],[0.04,94.5,0.499],[0.045,88.2,0.454],[0.05,82.5,0.411],[0.055,77.3,0.377],[0.06,73.1,0.352],[0.065,69.2,0.326],[0.07,64.6,0.298],[0.075,61.1,0.273],[0.08,58.4,0.263],[0.085,55.3,0.245],[0.09,52.1,0.224],[0.095,49.7,0.207],[0.1,47.6,0.202],[0.11,43.9,0.178],[0.12,40.5,0.158],[0.13,37.6,0.141],[0.14,35.1,0.128],[0.16,30.9,0.104],[0.18,27.7,0.087],[0.2,25.2,0.073],[0.24,20.6,0.053],[0.28,17.1,0.04]],"1.25":[[0.025,114.1,0.506],[0.03,103.9,0.43],[0.035,95.3,0.374],[0.04,88.3,0.334],[0.045,81.9,0.3],[0.05,76.7,0.283],[0.055,70.2,0.238],[0.06,65.4,0.211],[0.065,61.6,0.195],[0.07,58,0.184],[0.075,54,0.165],[0.08,51.2,0.155],[0.085,46.9,0.134],[0.09,44.4,0.125],[0.095,42.2,0.118],[0.1,39.7,0.107],[0.11,35.9,0.095],[0.12,32,0.08],[0.13,29.2,0.07],[0.14,26.5,0.061],[0.16,22.4,0.047],[0.18,19.6,0.039],[0.2,16.9,0.032],[0.24,13.2,0.022],[0.28,11.4,0.017]]};
+  CALIB[2] = {"0.6":[[0.04,101.6,0.669],[0.045,95.3,0.621],[0.05,89.2,0.569],[0.055,84.2,0.536],[0.06,79.3,0.49],[0.065,74.1,0.45],[0.07,69.6,0.416],[0.075,65.7,0.398],[0.08,62.6,0.401],[0.085,58.4,0.351],[0.09,56.2,0.339],[0.095,52.1,0.315],[0.1,49.0,0.299],[0.11,44.3,0.268],[0.12,39.2,0.237],[0.13,35.0,0.216],[0.14,31.5,0.198],[0.16,26.3,0.17],[0.18,20.5,0.14],[0.2,17.3,0.121],[0.24,12.6,0.092],[0.28,9.3,0.069]],"0.85":[[0.035,105.2,0.57],[0.04,97.6,0.51],[0.045,91.1,0.463],[0.05,84.7,0.418],[0.055,79.5,0.39],[0.06,73.9,0.356],[0.065,68.5,0.329],[0.07,65.0,0.304],[0.075,59.8,0.287],[0.08,55.9,0.261],[0.085,51.1,0.248],[0.09,47.4,0.223],[0.095,43.1,0.202],[0.1,41.5,0.206],[0.11,35.7,0.182],[0.12,29.8,0.153],[0.13,25.6,0.136],[0.14,22.7,0.125],[0.16,17.7,0.104],[0.18,13.5,0.083],[0.2,10.7,0.07],[0.24,8.3,0.053],[0.28,6.2,0.035]],"1.25":[[0.035,97.8,0.397],[0.04,90.5,0.356],[0.045,83.1,0.316],[0.05,74.3,0.268],[0.055,69.5,0.258],[0.06,62.5,0.23],[0.065,57.3,0.214],[0.07,52.4,0.195],[0.075,47.1,0.178],[0.08,41.6,0.161],[0.085,36.9,0.145],[0.09,34.5,0.136],[0.1,27.2,0.115],[0.11,21.7,0.097],[0.12,18.6,0.086],[0.14,12.9,0.065],[0.16,9.9,0.052],[0.2,6.6,0.033],[0.24,5.4,0.022]]};
+  // The spreads for a bot that averages `target` with this style (under this model, the current one
+  // unless a game says otherwise): { s, d, avg, checkout }. checkout is the share of its darts at a
+  // double that go in.
+  function botParams(target, styleId, model) {
+    const m = CALIB[model] ? model : BOT_MODEL;
+    const f = STYLE_F[m][styleById(styleId).id];
+    const rows = CALIB[m][String(f)];
     const t = Math.max(rows[rows.length - 1][1], Math.min(rows[0][1], Number(target) || 53));
     for (let i = 0; i < rows.length - 1; i += 1) {
       const a = rows[i], b = rows[i + 1];
       if (t <= a[1] && t >= b[1]) {
         const k = a[1] === b[1] ? 0 : (a[1] - t) / (a[1] - b[1]);
         const sp = a[0] + k * (b[0] - a[0]);
-        return { s: sp, d: sp * st.f, avg: t, checkout: a[2] + k * (b[2] - a[2]) };
+        return { s: sp, d: sp * f, avg: t, checkout: a[2] + k * (b[2] - a[2]) };
       }
     }
     const last = rows[rows.length - 1];
-    return { s: last[0], d: last[0] * st.f, avg: last[1], checkout: last[2] };
+    return { s: last[0], d: last[0] * f, avg: last[1], checkout: last[2] };
+  }
+  // A dart thrown at { target, ring } on the real board with spread s (d at a double) and, under
+  // model 3, the loose dart (TAIL), mapped to the drawn board. The calibration script uses it too.
+  function spreadThrow(aim, s, d, model, rng) {
+    let sigma = aim.ring === "D" ? d : s;
+    if (model >= 3 && rng() < TAIL.p) sigma *= TAIL.k;
+    const c = aimReal(aim.target, aim.ring);
+    const app = realToApp({ x: c.x + gaussian(rng) * sigma, y: c.y + gaussian(rng) * sigma });
+    return { x: round3(app.x), y: round3(app.y) };
   }
   // The bot a game is started with: { level, target, style }. level is a rank id, "custom" (its
   // average set by hand) or "ladder".
@@ -924,16 +947,12 @@
     for (const [id, avg] of Object.entries(LEVEL_AVG)) { const g = Math.abs(avg - target); if (g < gap) { gap = g; best = id; } }
     return best;
   }
-  // Where the bot's dart lands when it aims at { target, ring }: model 2 on a real board, or the first
-  // bot (rankId) for a game started before.
+  // Where the bot's dart lands when it aims at { target, ring }: on the real board under the game's
+  // model (2 or 3), or the first bot (rankId) for a game started before.
   function botThrowAt(game, aim, rankId, rng) {
-    if (!game || game.botModel !== BOT_MODEL || !game.bot) return botThrow(aim, rankId, rng);
-    const p = botParams(game.bot.target, game.bot.style);
-    const sigma = aim.ring === "D" ? p.d : p.s;
-    const c = aimReal(aim.target, aim.ring);
-    const real = { x: c.x + gaussian(rng) * sigma, y: c.y + gaussian(rng) * sigma };
-    const app = realToApp(real);
-    return { x: round3(app.x), y: round3(app.y) };
+    if (!game || !CALIB[game.botModel] || !game.bot) return botThrow(aim, rankId, rng);
+    const p = botParams(game.bot.target, game.bot.style, game.botModel);
+    return spreadThrow(aim, p.s, p.d, game.botModel, rng);
   }
   // The bot's next dart in this game.
   function botDart(game, rankId, rng) { return botThrowAt(game, botAim(game), rankId, rng); }
@@ -1260,7 +1279,7 @@
     heatGrid,
     heatStats,
     cleanDarts,
-    BOT_MODEL, LEVEL_AVG, STYLES, CALIB, botParams, botFor, nearestRank, botThrowAt, botDart, realToApp, appToReal, aimReal,
+    BOT_MODEL, TAIL, LEVEL_AVG, STYLES, STYLE_F, CALIB, botParams, spreadThrow, botFor, nearestRank, botThrowAt, botDart, realToApp, appToReal, aimReal,
     LADDER, ladderState, startBullUp, bullUpOn, bullUpThrow, mmFromCentre,
     dartWords,
     visitView,

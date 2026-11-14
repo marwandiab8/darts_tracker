@@ -1006,7 +1006,8 @@
       const l = ladderNow();
       return "You're on the step at " + l.target + " (" + l.wins + " won, " + l.losses + " lost at this step). Win 2 of 3 to move up 3." + (l.best ? " Highest average beaten: " + l.best + "." : "");
     }
-    return E.rankById(settings.rank).blurb + " Averages about " + E.LEVEL_AVG[settings.rank] + ".";
+    const p = E.botParams(E.LEVEL_AVG[settings.rank], settings.botStyle);
+    return E.rankById(settings.rank).blurb + " Averages about " + E.LEVEL_AVG[settings.rank] + " and checks out with about " + Math.round(p.checkout * 100) + "% of its darts at a double.";
   }
   // What the bot is called: "Club bot", "58-average bot", "Ladder bot (55)".
   function botTitle(bot) {

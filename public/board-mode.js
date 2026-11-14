@@ -134,9 +134,16 @@
       const col = d.kind === "hit" ? "var(--bm-hit)" : d.kind === "stay" ? "var(--accent)" : d.kind === "spare" ? "var(--bm-num)" : "var(--bm-miss)";
       const r = o.small ? 0.03 : 0.055;
       if (o.small) { s += `<circle cx="${x}" cy="${y}" r="${r}" fill="${col}" fill-opacity=".8"/>`; return; }
+      const marker = `<circle cx="${x}" cy="${y}" r="${r}" fill="${col}" stroke="var(--bg)" stroke-width=".018"/>`
+        + `<text x="${x + 0.085}" y="${y - 0.075}" font-size=".09" font-weight="900" fill="#fff" stroke="var(--bg)" stroke-width=".025" paint-order="stroke">${d.index + 1}</text>`;
+      // A dart that can't be fixed here (the last visit's, kept on the board until the next dart lands)
+      // is just a marker: a tap on it is a tap on the board under it. Before Nov 14, 2026 those darts
+      // had the same button and 0.11-radius hit disc as the visit in progress, and botFixOptions gave
+      // them no options, so a tap near one of the bot's darts (on the double you were about to tap,
+      // say, when correcting a visit after the bot checked out) did nothing at all.
+      if (d.fixable === false) { s += `<g class="bm-dart still" pointer-events="none">${marker}</g>`; return; }
       s += `<g class="bm-dart" data-i="${d.index}" role="button" tabindex="0" aria-label="Dart ${d.index + 1}: ${esc(d.read)}. Tap to fix.">`;
-      s += `<circle cx="${x}" cy="${y}" r=".11" fill="transparent"/><circle cx="${x}" cy="${y}" r="${r}" fill="${col}" stroke="var(--bg)" stroke-width=".018"/>`;
-      s += `<text x="${x + 0.085}" y="${y - 0.075}" font-size=".09" font-weight="900" fill="#fff" stroke="var(--bg)" stroke-width=".025" paint-order="stroke">${d.index + 1}</text></g>`;
+      s += `<circle cx="${x}" cy="${y}" r=".11" fill="transparent"/>${marker}</g>`;
     });
     return s + "</svg>";
   }
@@ -232,12 +239,14 @@
     const big = cfg.big || ((t) => (t == null ? "" : String(t)));
     let model = null, sig = "", fixing = null, doneSig = "", padSig = "";
 
+    // Whether a dart of the view can be fixed here (cfg.fixOptions gives it options).
+    const fixable = (d, v) => !!(d && cfg.fixOptions && (cfg.fixOptions(d, v) || []).length);
     function openFix(i) {
       const v = model && model.view;
       const d = v && v.darts[i];
-      if (!d || !cfg.fixOptions) return;
+      if (!d || !cfg.fixOptions) return false;
       const opts = cfg.fixOptions(d, v);
-      if (!opts || !opts.length) return; // this dart can't be fixed here
+      if (!opts || !opts.length) return false; // this dart can't be fixed here
       fixing = { index: i, seq: d.s };
       ref.sheetTitle.textContent = `Dart ${i + 1}`;
       ref.sheetSub.textContent = cfg.fixSub ? cfg.fixSub(d, v) : `The cameras read it as ${d.read}. What was it?`;
@@ -246,6 +255,7 @@
       show(ref.sheet, true);
       const first = ref.opts.querySelector("button");
       if (first) first.focus();
+      return true;
     }
     function numbersPicker() {
       ref.sheetSub.textContent = "Which number did it land in?";
@@ -290,8 +300,10 @@
       }
       if (e.target === ref.sheet) { closeFix(); return; }
       const dart = e.target.closest("[data-i]");
-      if (dart) { openFix(Number(dart.dataset.i)); return; }
-      // A tap on the board itself (not on a dart): where it landed, in board radii (y down).
+      if (dart && openFix(Number(dart.dataset.i))) return;
+      if (dart && !dart.closest(".bm-board")) return; // a dart box that can't be fixed now
+      // A tap on the board itself (or on a dart there that can't be fixed): where it landed, in
+      // board radii (y down).
       const svg = h.boardTap && e.target.closest(".bm-board svg");
       if (svg) {
         const r = svg.getBoundingClientRect(), size = Math.min(r.width, r.height);
@@ -391,7 +403,7 @@
         ref.opp.innerHTML = m.oppHtml || "";
         show(ref.opp, !!m.oppHtml);
         ref.label.className = "bm-label" + (v.labelClass ? " " + v.labelClass : "");
-        ref.board.innerHTML = boardSvg(cfg.lit ? cfg.lit(v) : [], v.darts);
+        ref.board.innerHTML = boardSvg(cfg.lit ? cfg.lit(v) : [], v.darts.map((d) => Object.assign({}, d, { fixable: fixable(d, v) })));
         ref.slots.innerHTML = slotsHtml(v, m);
         ref.cells.style.setProperty("--bm-cols", String(Math.max(1, v.cols || v.cells.length || 21)));
         ref.cells.innerHTML = v.cells.map((c) => `<div class="bm-cell ${esc(c.state)}" title="${esc(c.title || c.key)}">${esc(c.num)}${c.sub ? `<small>${esc(c.sub)}</small>` : ""}</div>`).join("");

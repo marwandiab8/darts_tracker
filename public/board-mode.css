@@ -92,6 +92,7 @@ body.bm-open { overflow: hidden; }
 .bm-board { grid-area: board; min-height: 0; display: grid; place-items: center; }
 .bm-board svg { width: 100%; height: 100%; max-width: 100%; display: block; font-family: system-ui, -apple-system, sans-serif; }
 .bm-dart { cursor: pointer; outline: none; }
+.bm-dart.still { cursor: default; } /* the last visit's dart, kept on the board: not a button */
 .bm.taps .bm-board svg { cursor: crosshair; }
 
 /* Dart slots */
