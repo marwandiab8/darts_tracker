@@ -23,7 +23,8 @@
 //   curNote      what marks the option the dart is now ("what the cameras saw")
 //   pickRing     "Another number" asks for the ring as well (where every bed scores)
 // Also in the model: oppHtml (the other side's score, beside the target); in the view: nextLabel
-// (the chips' label, "Next" by default, shown as they are), labelClass, cols (the strip's columns),
+// (the chips' label, "Next" by default, shown as they are), labelClass, targetClass ("you" | "bot": the
+// big number's colour), nextClass ("co": the chips are a checkout, shown big and green), cols (the strip's columns),
 // capHtml (the strip's caption, in place of "n of 21 done"). board.moment({ big, sub, kind, who })
 // shows a big moment full screen for a couple of seconds (a tap skips it).
 // handlers: exit(), start(), pause(), voice(), camera(), manual(man), undo(),
@@ -170,8 +171,8 @@
       <div class="bm-opp" data-ref="opp" hidden></div>
       <div class="bm-count" data-ref="count"></div>
       <div class="bm-info" data-ref="info"></div>
-      <div class="bm-next" data-ref="next"></div>
     </div>
+    <div class="bm-next" data-ref="next"></div>
   </section>
   <div class="bm-done" data-ref="done" hidden>
     <div class="bm-done-big" data-ref="doneBig">${esc(cfg.doneBig || "Done")}</div>
@@ -403,6 +404,12 @@
         ref.opp.innerHTML = m.oppHtml || "";
         show(ref.opp, !!m.oppHtml);
         ref.label.className = "bm-label" + (v.labelClass ? " " + v.labelClass : "");
+        // The thrower's colour on the big number too (the bot game: green for you, blue for the bot), so
+        // whose turn it is reads from the oche without the label.
+        ref.target.classList.toggle("you", v.targetClass === "you");
+        ref.target.classList.toggle("bot", v.targetClass === "bot");
+        ref.next.classList.toggle("co", v.nextClass === "co");
+        ref.hero.classList.toggle("co", v.nextClass === "co"); // landscape and phones give the route its own row
         ref.board.innerHTML = boardSvg(cfg.lit ? cfg.lit(v) : [], v.darts.map((d) => Object.assign({}, d, { fixable: fixable(d, v) })));
         ref.slots.innerHTML = slotsHtml(v, m);
         ref.cells.style.setProperty("--bm-cols", String(Math.max(1, v.cols || v.cells.length || 21)));

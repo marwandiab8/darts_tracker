@@ -34,6 +34,8 @@ const { check, failed } = H.checker();
         shown: !b.hidden, label: q("[data-ref=label]").textContent, target: q(".bm-target").textContent,
         count: q("[data-ref=count]").textContent, info: q("[data-ref=info]").textContent, opp: q("[data-ref=opp]").textContent,
         next: q("[data-ref=next]").textContent,
+        targetClass: q(".bm-target").className.replace("bm-target", "").trim(), nextCo: q("[data-ref=next]").classList.contains("co"),
+        targetColor: getComputedStyle(q(".bm-target")).color, chipPx: (() => { const c = q("[data-ref=next] span"); return c ? parseFloat(getComputedStyle(c).fontSize) : 0; })(),
         slots: [...b.querySelectorAll(".bm-slot")].map((s) => s.querySelector(".r").textContent + "|" + s.querySelector(".s").textContent),
         cells: [...b.querySelectorAll(".bm-cell")].map((c) => c.textContent),
         moment: q("[data-ref=moment]").hidden ? "" : q("[data-ref=moment]").textContent,
@@ -59,6 +61,7 @@ const { check, failed } = H.checker();
     let b = await until(async () => { const x = await bm(); return x.target === "201" ? x : null; }, 10000) || await bm();
     check(b.target === "201" && /Your throw/i.test(b.label) && /Dart 1/.test(b.count), "the game on the board: 201, your throw, dart 1: " + b.label + " " + b.target);
     check(/Club bot\s*201/.test(b.opp), "the bot's score beside it: " + b.opp);
+    check(b.targetClass === "you" && b.targetColor === "rgb(34, 197, 94)", "your throw: the big number is green: " + b.targetClass + " " + b.targetColor);
     await until(async () => /watching the board/i.test(await ipad.$eval("#camStatus", (e) => e.textContent)), 15000);
 
     // ---- camera darts: what each scored, the visit's total and what it leaves ------------------------
@@ -127,6 +130,8 @@ const { check, failed } = H.checker();
     check(!(await said()).includes("You require 81."), "and played, not said by the browser's voice (" + (await said()).slice(-2).join(" | ") + ")");
     b = await bm();
     check(/You require 81/.test(b.next) && /T19\s*D12/.test(b.next), "and the route on the board: " + b.next);
+    check(b.nextCo && b.chipPx >= 34, "the route is the big green kind (" + b.chipPx + "px chips)");
+    check(b.targetClass === "you", "and the 81 is green, your throw: " + b.targetClass);
 
     // ---- the winning double, then the pull-out finishes the game ------------------------------------
     const gwin = E.createGame({ kind: "x01", startScore: 201, first: "player" });

@@ -1,5 +1,5 @@
 // The bot game's bot and match settings (practice.html): a bot with its average set by hand and a
-// style, played on a real board (model 2, kept with the game); a bull-up for who throws first (the
+// style, played on a real board (the current bot model, kept with the game); a bull-up for who throws first (the
 // closer starts); a leg of a match saved with the match's id, its number and first-to; and the
 // ladder's step worked out from saved ladder games.
 const H = require("./harness.cjs");
@@ -47,7 +47,7 @@ const { check, failed } = H.checker();
     // ---- a match with a bull-up ----------------------------------------------------------------
     await page.click("#startBtn");
     let st = await until(async () => { const g = await liveGame(); return g && g.game && g.game.bullUp ? g : null; }, 10000);
-    check(st && st.game.botModel === E.BOT_MODEL && st.game.bot.target === 60 && st.game.bot.style === "grinder" && st.game.bot.level === "custom", "the game keeps its bot: model 2, 60, a grinder");
+    check(st && st.game.botModel === E.BOT_MODEL && st.game.bot.target === 60 && st.game.bot.style === "grinder" && st.game.bot.level === "custom", "the game keeps its bot: the current model, 60, a grinder");
     check(/Bull-up/.test(await page.$eval("#status", (e) => e.textContent)), "the status asks for a dart at the bull: " + await page.$eval("#status", (e) => e.textContent));
     await tapBoard({ x: 0.02, y: 0 });
     st = await until(async () => { const g = await liveGame(); return g && g.game.bullUp && g.game.bullUp.done ? g : null; }, 10000);
@@ -68,7 +68,7 @@ const { check, failed } = H.checker();
     await page.click("#nextBtn");
     const rec = await until(() => station.read("botGames", gameId), 10000);
     check(rec && rec.result === "won" && rec.matchId === st.series.id && rec.leg === 1 && rec.legsToWin === 2, "the leg is saved with the match: " + JSON.stringify(rec && { matchId: rec.matchId, leg: rec.leg, legsToWin: rec.legsToWin }));
-    check(rec && rec.botModel === 2 && rec.botTarget === 60 && rec.botStyle === "grinder" && rec.rank === "club" && !rec.ladder, "and the bot: model 2, 60, a grinder (rank: the nearest level)");
+    check(rec && rec.botModel === E.BOT_MODEL && rec.botTarget === 60 && rec.botStyle === "grinder" && rec.rank === "club" && !rec.ladder, "and the bot: the current model, 60, a grinder (rank: the nearest level)");
     check(/Match:\s*You 1 - 0/.test(await page.$eval("#overSeries", (e) => e.textContent)), "the match score: " + await page.$eval("#overSeries", (e) => e.textContent));
     check(page.errors.length === 0, "no page errors: " + page.errors.join(" | "));
   } catch (error) {

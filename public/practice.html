@@ -2664,6 +2664,8 @@
       target: x01 ? rem : rem,
       finished: reviewing,
       label, labelClass,
+      targetClass: !reviewing && !game.winner && !botWonWaiting() ? labelClass : "",
+      nextClass: route ? "co" : "",
       countHtml: reviewing ? "" : game.visitDone ? (game.winner ? "Game shot" : "Visit done") : `Dart ${game.visitDarts.length + 1} <span>of 3</span>`,
       next: routeLabels, nextLabel,
       litLabel: route ? route[0].label : setup ? setup.dart.label : x01 && !game.visitDone ? "T20" : "",
@@ -2679,7 +2681,7 @@
     // The bull-up: one dart each at the bull, before the first leg.
     if (bullUpWaiting() || (game.bullUp && game.bullUp.done && !game.visits.length && !game.visitDarts.length && game.turn === "bot" && botBusy)) {
       const bu = game.bullUp, side = (k, who) => (bu[who] ? [{ index: k, s: "bu" + who + bu[who].mm, x: bu[who].x, y: bu[who].y, read: who === "player" ? "You" : "Bot", sub: bu[who].mm + " mm from the centre", kind: who === "player" ? "hit" : "stay" }] : []);
-      Object.assign(view, { target: "Bull", label: "Bull-up", labelClass: "over", countHtml: bu.player ? (bu.done ? "" : "The bot's dart") : "One dart at the bull", next: [], nextLabel: "", litLabel: "BULLUP", darts: side(0, "player").concat(side(1, "bot")), visitDone: !!bu.player });
+      Object.assign(view, { target: "Bull", label: "Bull-up", labelClass: "over", countHtml: bu.player ? (bu.done ? "" : "The bot's dart") : "One dart at the bull", next: [], nextLabel: "", nextClass: "", targetClass: "", litLabel: "BULLUP", darts: side(0, "player").concat(side(1, "bot")), visitDone: !!bu.player });
       info = "";
     }
     const pass = botWonWaiting() ? "Finish game" : editing ? "Save change" : game.winner ? "Finish game" : settings.confirm ? "Enter" : versus() ? "Next player" : "Bot's turn";
