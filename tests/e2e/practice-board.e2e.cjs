@@ -44,9 +44,9 @@ const { check, failed } = H.checker();
       };
     });
     let n = 0;
-    const inject = async (game) => {
+    const inject = async (game, over) => {
       const gameId = "e2eboard" + (n += 1) + Date.now().toString(36);
-      const state = { v: 1, gameId, game, editing: null, startedAt: Date.now() - 60000, settings: JSON.parse(settings), match: { human: false, names: { player: "You", bot: "Club bot" }, opponentEmail: "" },
+      const state = { v: 1, gameId, game, editing: null, startedAt: Date.now() - 60000, settings: Object.assign(JSON.parse(settings), over || {}), match: { human: false, names: { player: "You", bot: "Club bot" }, opponentEmail: "" },
         series: null, timer: null, camSeq: 0, camDarts: [], msg: "", over: null };
       await station.env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), "liveGames", uid), { uid, vid: "inj" + Date.now().toString(36) + n, parent: "", by: "e2e-injector", at: Date.now(), phase: "play", rev: 1, state: JSON.stringify(state) }));
       await until(async () => (await liveGame()) && (await ipad.evaluate((id) => document.getElementById("boardMode").textContent.length > 0, gameId)), 10000);
@@ -132,6 +132,24 @@ const { check, failed } = H.checker();
     check(/You require 81/.test(b.next) && /T19\s*D12/.test(b.next), "and the route on the board: " + b.next);
     check(b.nextCo && b.chipPx >= 34, "the route is the big green kind (" + b.chipPx + "px chips)");
     check(b.targetClass === "you", "and the 81 is green, your throw: " + b.targetClass);
+
+    // ---- cricket: the marks board (who closed what), and what each dart did ----------------------------
+    const gck = E.createGame({ kind: "cricket", first: "player" });
+    for (const v of [["T20", "S20", "S19"], ["T20", "S19", "MISS"]]) { for (const l of v) E.throwDart(gck, at(l)); E.endVisit(gck); }
+    await inject(gck, { kind: "cricket" });
+    await until(async () => /watching the board/i.test(await ipad.$eval("#camStatus", (e) => e.textContent)), 15000);
+    const ckCells = () => ipad.evaluate(() => [...document.querySelectorAll("#boardMode .bm-cell")].map((c) => c.textContent + (c.classList.contains("ck-closed") ? "*" : "")).join(" "));
+    let cells = await until(async () => { const c = await ckCells(); return /Bull/.test(c) ? c : null; }) || await ckCells();
+    check(cells.replace(/\s+/g, " ").trim() === "You ⊗* / 20* 19 18 17 16 15 Bull Bot ⊗* /", "cricket: the marks board, both closed the 20s (faded), one mark each on 19: " + JSON.stringify(cells));
+    b = await bm();
+    check(b.slots.join(" / ") === "T20|3 marks, closed / S19|1 mark / Miss|0", "the bot's visit stays on the board, each dart saying what it did: " + b.slots.join(" / "));
+    check(/Club bot\s*4\s*marks/.test(b.info) && /Your throw · points/i.test(b.label) && b.target === "20" && b.targetClass === "you", "its line, and your 20 points in green: " + b.info + " | " + b.label + " " + b.target);
+    check(/Close\s*19/i.test(b.next), "the number to go for: " + b.next);
+    await camDart("T19");
+    b = await bm();
+    check(b.slots[0] === "T19|2 marks, closed · +19" && b.target === "39", "T19 closes 19 and scores 19 on the bot's open 19: " + b.slots[0] + " / " + b.target);
+    cells = await ckCells();
+    check(cells.startsWith("You ⊗* ⊗ "), "and the marks board has it: " + JSON.stringify(cells));
 
     // ---- the winning double, then the pull-out finishes the game ------------------------------------
     const gwin = E.createGame({ kind: "x01", startScore: 201, first: "player" });

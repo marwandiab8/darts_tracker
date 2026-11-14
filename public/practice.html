@@ -2459,6 +2459,7 @@
     if (!label || label === "MISS") return [];
     if (label === "DB") return [{ n: "BULL", beds: "I" }];
     if (label === "SB") return [{ n: "BULL", beds: "B" }];
+    if (label === "BULL") return [{ n: "BULL", beds: "BI", tint: true }];
     return [{ n: Number(label.slice(1)), beds: label[0], tint: true }];
   };
   function setBotBoard(on) {
@@ -2468,7 +2469,7 @@
   }
   // Which visit's darts are on the board: the one in progress; before its first dart, the last one.
   function shownVisit() {
-    if (!game || game.kind !== "x01") return null;
+    if (!game) return null;
     if (game.visitDarts.length || game.visitDone || !game.visits.length) return { view: E.visitView(game), index: game.visits.length, current: true };
     const index = game.visits.length - 1;
     return { view: E.visitView(game, game.visits[index]), index, current: false };
@@ -2489,9 +2490,12 @@
     const m = /^([SDT])(\d+)$/.exec(d.label || "");
     if (m) {
       const n = m[2];
-      [["T", "Treble"], ["D", "Double"], ["S", "Single"]].forEach(([r, w]) => opts.push({ id: r + n, text: `${w} ${n}: ${Number(n) * (r === "T" ? 3 : r === "D" ? 2 : 1)}`, hit: true, cur: d.label === r + n }));
+      const cricket = game.kind === "cricket", inPlay = cricket && E.CRICKET_NUMBERS.includes(Number(n));
+      const worth = (k) => (cricket ? (inPlay ? `${k} mark${k === 1 ? "" : "s"}` : "nothing") : String(Number(n) * k));
+      [["T", "Treble", 3], ["D", "Double", 2], ["S", "Single", 1]].forEach(([r, w, k]) => opts.push({ id: r + n, text: `${w} ${n}: ${worth(k)}`, hit: true, cur: d.label === r + n }));
     } else if (d.label === "SB" || d.label === "DB") {
-      opts.push({ id: "DB", text: "Bullseye: 50", hit: true, cur: d.label === "DB" }, { id: "SB", text: "Outer bull: 25", hit: true, cur: d.label === "SB" });
+      const cricket = game.kind === "cricket";
+      opts.push({ id: "DB", text: cricket ? "Bullseye: 2 marks" : "Bullseye: 50", hit: true, cur: d.label === "DB" }, { id: "SB", text: cricket ? "Outer bull: 1 mark" : "Outer bull: 25", hit: true, cur: d.label === "SB" });
     }
     opts.push({ id: "MISS", text: "Missed the board", cur: d.label === "MISS" && d.read !== "Not seen" });
     opts.push({ id: "other", text: "Another number" });
@@ -2619,11 +2623,13 @@
     botBoard.show(on);
     if (!on) { keepAwake(false); return; }
     if (!game) {
+      botBoard.el.classList.remove("ck");
       botBoard.update({ view: null, voiceOn: !settings.mute, camOn: !!settings.camera, idleTitle: "A game against the bot", lastRound: "" });
       keepAwake(false);
       return;
     }
     const x01 = game.kind === "x01";
+    botBoard.el.classList.toggle("ck", !x01); // cricket: the marks board in the strip (board-mode.css)
     const thrower = botWonWaiting() ? "bot" : game.turn;
     const other = thrower === "player" ? "bot" : "player";
     const s = E.summarize(game);
@@ -2635,30 +2641,50 @@
     const setup = x01 && !game.visitDone && !route && rem <= 230 ? E.setupShot(rem, dartsLeft, game.doubleOut) : null;
     let label, labelClass;
     if (reviewing) { label = over && over.result === "won" ? (versus() ? nameOf("player") + " won" : "You won") : over && over.result === "lost" ? (versus() ? nameOf("bot") + " won" : "The bot won") : "Game over"; labelClass = "over"; }
-    else if (botWonWaiting()) { label = "The bot checked out"; labelClass = "bot"; }
+    else if (botWonWaiting()) { label = x01 ? "The bot checked out" : "The bot closed it out"; labelClass = "bot"; }
     else if (game.winner) { label = (versus() ? nameOf(game.winner) : "You") + " won the game"; labelClass = "you"; }
     else if (versus()) { label = nameOf(thrower) + " to throw"; labelClass = thrower === "player" ? "you" : "bot"; }
     else { label = thrower === "player" ? "Your throw" : "Bot throwing"; labelClass = thrower === "player" ? "you" : "bot"; }
+    if (!x01 && !reviewing && (labelClass === "you" || labelClass === "bot") && !game.winner) label += " · points"; // the big number is points in cricket
     // The visit's line: what the darts on the board did.
     let info = "";
+    const marksLine = (marks, points) => `<b>${marks}</b> <span class="m">${marks === 1 ? "mark" : "marks"}</span>` + (points ? ` <span class="m">·</span> <b class="up">+${points}</b>` : "");
     if (sv && !sv.current && sv.view.who !== thrower && !reviewing) {
-      const v = sv.view;
-      info = `<span class="m">${esc(nameOf(v.who))} ${v.bust ? "bust" : "scored"}</span> <b>${v.bust ? "" : v.scored}</b> <span class="m">· leaves</span> ${v.left}`;
+      const v = sv.view, rec = game.visits[sv.index] || {};
+      info = x01 ? `<span class="m">${esc(nameOf(v.who))} ${v.bust ? "bust" : "scored"}</span> <b>${v.bust ? "" : v.scored}</b> <span class="m">· leaves</span> ${v.left}`
+        : `<span class="m">${esc(nameOf(v.who))}</span> ${marksLine(rec.marks || 0, rec.points || 0)}`;
     } else if (sv && sv.view.darts.length) {
       const v = sv.view;
-      info = v.bust ? `<b class="down">Bust</b> <span class="m">· back to</span> ${game.remaining[v.who]}` : `<b>${v.scored}</b> <span class="m">this visit · leaves</span> <b>${v.left}</b>`;
+      info = !x01 ? marksLine(game.visitMarks || 0, game.visitPoints || 0) + ` <span class="m">this visit</span>`
+        : v.bust ? `<b class="down">Bust</b> <span class="m">· back to</span> ${game.remaining[v.who]}` : `<b>${v.scored}</b> <span class="m">this visit · leaves</span> <b>${v.left}</b>`;
     } else if (x01 && thrower === "player" && !versus()) {
       info = s.player.avg ? `<span class="m">Your average</span> ${fmt1(s.player.avg)}` : "";
     }
-    const routeLabels = (route || (setup ? setup.darts : [])).map((d) => short(d.label));
-    const nextLabel = route ? (dartsLeft === 3 && !game.visitDarts.length ? "You require " + rem + ":" : "Checkout") : setup ? "Set up · leaves " + setup.leaves : "";
+    // Cricket: the number to throw at (your first open number, else one the other side still has open).
+    const ckAim = !x01 && !game.winner && !game.visitDone ? E.cricketAim(game, thrower) : null;
+    const ckLit = ckAim ? (ckAim.target === "BULL" ? "BULL" : "T" + ckAim.target) : "";
+    const routeLabels = x01 ? (route || (setup ? setup.darts : [])).map((d) => short(d.label)) : ckAim ? [ckAim.target === "BULL" ? "Bull" : ckAim.target] : [];
+    const nextLabel = x01 ? (route ? (dartsLeft === 3 && !game.visitDarts.length ? "You require " + rem + ":" : "Checkout") : setup ? "Set up · leaves " + setup.leaves : "") : ckAim ? (game.marks[thrower][ckAim.target === "BULL" ? 25 : Number(ckAim.target)] < 3 ? "Close" : "Score on") : "";
+    // The strip: in cricket the marks board (your marks, the numbers, the other side's marks), else the last visits.
+    const ckCells = [];
+    if (!x01) {
+      const sym = (n) => (n >= 3 ? "⊗" : n === 2 ? "×" : n === 1 ? "/" : "");
+      const row = (who, cls) => {
+        ckCells.push({ key: "ck-" + who, num: who === "player" ? (versus() ? firstWord(nameOf("player")).slice(0, 6) : "You") : versus() ? firstWord(nameOf("bot")).slice(0, 6) : "Bot", state: "ck-who " + cls, title: nameOf(who) });
+        for (const n of E.CRICKET_NUMBERS) ckCells.push({ key: "ck-" + who + n, num: sym(game.marks[who][n]), state: `ck-mark ${cls} m${game.marks[who][n]}` + (game.marks.player[n] >= 3 && game.marks.bot[n] >= 3 ? " ck-closed" : ""), title: `${nameOf(who)}: ${game.marks[who][n]} on ${n === 25 ? "the bull" : n}` });
+      };
+      row("player", "ck-you");
+      ckCells.push({ key: "ck-nums", num: "", state: "ck-num", title: "" });
+      for (const n of E.CRICKET_NUMBERS) ckCells.push({ key: "ck-n" + n, num: n === 25 ? "Bull" : String(n), state: "ck-num" + (game.marks.player[n] >= 3 && game.marks.bot[n] >= 3 ? " ck-closed" : "") + (ckAim && thrower === "player" && String(n === 25 ? "BULL" : n) === ckAim.target ? " ck-aim" : ""), title: n === 25 ? "The bull" : String(n) });
+      row("bot", "ck-bot");
+    }
     const recent = game.visits.slice(-12).map((v) => ({
       key: String(v.round) + v.who, num: x01 ? (v.bust ? "Bust" : String(v.scored)) : String(v.marks || 0),
       state: (v.who === "player" ? "vis-p" : "vis-b") + (x01 && !v.bust && v.scored >= 100 ? " hi" : "") + (v.bust ? " vis-bust" : ""),
       sub: v.who === "player" ? (versus() ? firstWord(nameOf("player")).slice(0, 6) : "You") : versus() ? firstWord(nameOf("bot")).slice(0, 6) : "Bot",
       title: nameOf(v.who) + ", round " + v.round,
     }));
-    const avgs = x01 ? `${esc(nameOf("player"))} ${fmt1(s.player.avg)} · ${esc(nameOf("bot"))} ${fmt1(s.bot.avg)}` : "";
+    const avgs = x01 ? `${esc(nameOf("player"))} ${fmt1(s.player.avg)} · ${esc(nameOf("bot"))} ${fmt1(s.bot.avg)}` : `marks per round: ${esc(nameOf("player"))} ${fmt1(s.player.avg)} · ${esc(nameOf("bot"))} ${fmt1(s.bot.avg)}`;
     const seriesLine = series ? ` · ${esc(nameOf("player"))} ${series.wins.player}–${series.wins.bot} ${esc(nameOf("bot"))}` : "";
     const view = {
       target: x01 ? rem : rem,
@@ -2668,13 +2694,13 @@
       nextClass: route ? "co" : "",
       countHtml: reviewing ? "" : game.visitDone ? (game.winner ? "Game shot" : "Visit done") : `Dart ${game.visitDarts.length + 1} <span>of 3</span>`,
       next: routeLabels, nextLabel,
-      litLabel: route ? route[0].label : setup ? setup.dart.label : x01 && !game.visitDone ? "T20" : "",
+      litLabel: route ? route[0].label : setup ? setup.dart.label : x01 ? (!game.visitDone ? "T20" : "") : ckLit,
       dartNo: Math.min(3, game.visitDarts.length + 1),
       darts,
       waiting: humanTurn() && camHold.wait ? Array.from({ length: Math.min(3 - game.visitDarts.length, camHold.wait) }, () => ({ read: "Not read", sub: "Tap where it landed" })) : [],
       unseen: 0,
       visitDone: !sv || !sv.current || game.visitDone || !humanTurn() || botBusy,
-      cells: recent, cols: 12,
+      cells: x01 ? recent : ckCells, cols: x01 ? 12 : 8,
       capHtml: `<strong>Round ${game.round}</strong>${avgs ? " · " + avgs : ""}${seriesLine}`,
       note: "",
     };
@@ -2696,7 +2722,7 @@
       noteWarn: !!camWarn,
       dartsText: x01 ? game.startScore + (game.doubleOut ? "" : " straight") : "Cricket",
       modeLabel: versus() ? nameOf("player") + " v " + nameOf("bot") : "Against the " + botTitle(),
-      oppHtml: `<span class="who">${esc(nameOf(other))}</span><span class="sc">${x01 ? game.remaining[other] : game.points[other]}</span><span class="sub">${x01 && s[other].avg ? "avg " + fmt1(s[other].avg) : ""}</span>`,
+      oppHtml: `<span class="who">${esc(nameOf(other))}</span><span class="sc">${x01 ? game.remaining[other] : game.points[other]}</span><span class="sub">${x01 ? (s[other].avg ? "avg " + fmt1(s[other].avg) : "") : "points"}</span>`,
       info,
       pad: [
         { man: "miss", text: "Missed the board", disabled: !(humanTurn() && !game.visitDone && !botBusy && !game.winner), hidden: keypadActive() },

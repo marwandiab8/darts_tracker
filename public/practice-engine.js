@@ -1015,6 +1015,38 @@
     return { label, points: pts, read, sub: String(pts), kind: pts >= 40 ? "hit" : "stay" };
   }
 
+  // Cricket: what each dart of a visit did - marks on its number (and whether that closed it), points,
+  // or nothing - replayed from the first visit, since a dart's worth depends on everything before it.
+  // visit: a recorded visit, or none for the visit in progress.
+  function cricketDartEffects(game, visit) {
+    const marks = { player: emptyMarks(), bot: emptyMarks() };
+    const run = (who, labels) => labels.map((label) => {
+      const m = /^([SDT])(\d+)$/.exec(label || "");
+      const n = label === "SB" || label === "DB" ? 25 : m ? Number(m[2]) : 0;
+      if (!CRICKET_NUMBERS.includes(n)) return { number: 0, marks: 0, points: 0, closed: false };
+      const mult = label === "SB" ? 1 : label === "DB" ? 2 : { S: 1, D: 2, T: 3 }[m[1]];
+      let k = 0, points = 0;
+      for (let i = 0; i < mult; i += 1) {
+        if (marks[who][n] < 3) { marks[who][n] += 1; k += 1; }
+        else if (marks[other(who)][n] < 3) points += n;
+      }
+      return { number: n, marks: k, points, closed: k > 0 && marks[who][n] === 3 };
+    });
+    for (const v of game.visits || []) {
+      const eff = run(v.who, v.darts || []);
+      if (v === visit) return eff;
+    }
+    return run(game.turn, game.visitDarts || []);
+  }
+  function cricketWords(label, e) {
+    const read = label === "MISS" ? "Miss" : label === "DB" ? "Bull" : label === "SB" ? "25" : label;
+    const parts = [];
+    if (e.marks) parts.push(e.marks + (e.marks === 1 ? " mark" : " marks") + (e.closed ? ", closed" : ""));
+    if (e.points) parts.push("+" + e.points);
+    const sub = parts.length ? parts.join(" · ") : label === "MISS" ? "0" : e.number ? "Closed" : "No score";
+    return { label, points: e.points, read, sub, kind: parts.length ? "hit" : "miss" };
+  }
+
   // A visit's darts for Board mode: who threw them, each dart's box, the total, and what's left.
   // From the visit in progress, or a finished visit (visit object).
   function visitView(game, visit) {
@@ -1032,8 +1064,9 @@
       else if (visit.input && visit.input.pts) pos = visit.input.pts;
     }
     let left = start;
+    const effects = game.kind === "cricket" ? cricketDartEffects(game, visit) : null;
     const darts = labels.map((label, i) => {
-      const w = game.kind === "x01" ? dartWords(label, left, doubleOut) : { label, points: 0, read: label === "MISS" ? "Miss" : label, sub: "", kind: label === "MISS" ? "miss" : "hit" };
+      const w = game.kind === "x01" ? dartWords(label, left, doubleOut) : cricketWords(label, effects[i] || { number: 0, marks: 0, points: 0 });
       if (game.kind === "x01" && w.sub !== "Bust") left -= w.points;
       const p = pos[i];
       return Object.assign(w, { index: i, x: p && Number.isFinite(p.x) ? p.x : undefined, y: p && Number.isFinite(p.y) ? p.y : undefined });
@@ -1111,8 +1144,13 @@
   // The big moment a finished visit makes, or null: a 180, a ton-plus finish, game shot, a high
   // finish, the nine-dart watch (a 501 leg still on for nine darts after six).
   function momentFor(game, visit) {
-    if (!game || !visit || game.kind !== "x01") return null;
+    if (!game || !visit) return null;
     const won = game.winner === visit.who && game.visits[game.visits.length - 1] === visit;
+    if (game.kind === "cricket") {
+      if (won) return { kind: "win", big: "Game", sub: "All closed, " + (visit.points ? "+" + visit.points + " and " : "") + game.points[visit.who] + " points", who: visit.who };
+      if ((visit.marks || 0) >= 9) return { kind: "marks", big: "9 marks", sub: "Nine marks in one visit!", who: visit.who };
+      return null;
+    }
     if (won && visit.scored >= 100) return { kind: "finish", big: String(visit.scored), sub: "Ton-plus finish!", who: visit.who };
     if (won) return { kind: "win", big: "Game shot", sub: visit.scored + " checkout", who: visit.who };
     const mine = game.visits.filter((v) => v.who === visit.who);
@@ -1246,6 +1284,8 @@
     rankById,
     botThrow,
     botAim,
+    cricketAim,
+    cricketDartEffects,
     checkoutRoute,
     fewestDarts,
     setupShot,

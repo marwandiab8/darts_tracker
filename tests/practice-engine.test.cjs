@@ -317,6 +317,34 @@ test("cricket undo and summary", () => {
   assert.equal(summary.player.avg, 6, "six marks with three darts is 6 per round");
 });
 
+test("cricket in Board mode: each dart says what it did, marks, closed, points or nothing", () => {
+  const game = E.createGame({ kind: "cricket" });
+  visit(game, ["S20", "T20", "S14"]); // 1 mark, then 2 marks closing 20 and 20 points, then nothing
+  let v = E.visitView(game, game.visits[0]);
+  assert.deepEqual(v.darts.map((d) => d.read + "|" + d.sub + "|" + d.kind), ["S20|1 mark|hit", "T20|2 marks, closed · +20|hit", "S14|No score|miss"]);
+  visit(game, ["T20", "T20", "MISS"]); // the bot closes 20, then 60 nothing (both closed)
+  v = E.visitView(game, game.visits[1]);
+  assert.deepEqual(v.darts.map((d) => d.sub), ["3 marks, closed", "Closed", "0"]);
+  throwLabel(game, "DB"); // the visit in progress
+  v = E.visitView(game);
+  assert.deepEqual(v.darts.map((d) => d.read + "|" + d.sub), ["Bull|2 marks"]);
+  assert.equal(game.marks.player[25], 2, "the replay leaves the game alone");
+});
+
+test("cricket moments: nine marks in a visit, and the game", () => {
+  const game = E.createGame({ kind: "cricket" });
+  visit(game, ["T20", "T19", "T18"]);
+  assert.equal(E.momentFor(game, game.visits[0]).big, "9 marks");
+  const plain = E.createGame({ kind: "cricket" });
+  visit(plain, ["T20", "S19", "MISS"]);
+  assert.equal(E.momentFor(plain, plain.visits[0]), null);
+  const win = E.createGame({ kind: "cricket" });
+  for (const n of [20, 19, 18, 17, 16, 25]) win.marks.player[n] = 3;
+  visit(win, ["T15"]); // closes the last number: the game
+  assert.equal(win.winner, "player");
+  assert.equal(E.momentFor(win, win.visits[win.visits.length - 1]).kind, "win");
+});
+
 // --- the bots ----------------------------------------------------------------------------------
 
 // The bot plays both sides of the board, so it is only the "bot" half that a test reads.
