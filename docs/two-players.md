@@ -27,6 +27,8 @@ Because anyone with a Google account can sign in to the app, the function is del
 
 Emails are sent from your Gmail account with an app password. Nothing is sent until this is done, and the game is marked "Email is not set up yet".
 
+**Done on Nov 15, 2026:** the app password was already stored, but `SMTP_USER` and `MAIL_FROM` were blank, so every game until then was marked `not-configured` (those games are never emailed later: the email goes when a game is saved). Both now send from the owner's Gmail, and a test result arrived. When `functions/index.js` has someone's unfinished changes, deploy the email function from a clean `git worktree` of the committed code (with the `.env` copied in), so only it changes.
+
 1. In your Google account, turn on 2-Step Verification, then create an app password at https://myaccount.google.com/apppasswords (a 16-character password).
 2. Store it as a secret. The command asks for the value, so it is never written in a file or a chat:
 
