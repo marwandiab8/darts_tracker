@@ -549,3 +549,74 @@ test("the owner's new Doubles round is sent once; rounds carried over from the o
     for (const key of Object.keys(env)) { if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key]; }
   }
 });
+
+// --- a first-to-N match: one email for all its games ----------------------------------------------------
+
+const matchGame = (leg, result, overrides = {}) => versusGame({ matchId: "m1", leg, legsToWin: 3, result, timestamp: "2026-11-15 20:0" + leg, durationSec: 300, ...overrides });
+const firstTo3 = [
+  matchGame(1, "won", { playerAvg: 60 }),
+  matchGame(2, "lost", { playerAvg: 45, log: [{ w: "p", t: "26" }, { w: "o", t: "140" }] }),
+  matchGame(3, "won", { playerAvg: 54 }),
+  matchGame(4, "won", { playerAvg: 53 }),
+];
+
+test("a match's email has the match score, each player over the whole match, and every game", () => {
+  const mail = _test.buildMatchEmail(firstTo3, "https://dartstracker2026.web.app");
+  assert.equal(mail.subject, "Darts: Alex beat Sam 3-1 (first to 3, 501)");
+  assert.match(mail.text, /^Alex won the match 3-1!/);
+  assert.match(mail.text, /First to 3 · 4 games · 501 · 2026-11-15 20:01 · 20 min/);
+  assert.match(mail.text, /Alex: 3 won, 3-dart average 53\.0, 160 darts, best visit 180/);
+  assert.match(mail.text, /Sam: 1 won, 3-dart average 48\.1, 156 darts, best visit 140/);
+  assert.match(mail.text, /Game 1: Alex won \(14 rounds, 5 min\)/);
+  assert.match(mail.text, /Game 2: Sam won/);
+  assert.match(mail.text, /Game 4: Alex won/);
+  assert.match(mail.text, /Visit by visit:\n {2}1\. Alex 26 · Sam 140/);
+  assert.equal((mail.html.match(/<h3/g) || []).length, 4, "a section for each game");
+  assert.match(mail.html, /Games won/);
+});
+
+test("in a match, only the game that decides it sends, once, with every game in order", async () => {
+  let sentWith = null;
+  const send = async (games) => { sentWith = games; return okSend(); };
+  for (let i = 0; i < 3; i += 1) {
+    const ref = fakeRef();
+    const status = await _test.processVersusGame({ game: firstTo3[i], ref, ownerUid: "owner-1", countRecent: async () => 0, send, loadMatch: async () => firstTo3.slice(0, i + 1) });
+    assert.equal(status, "in-match", "game " + (i + 1));
+    assert.equal(ref.updates[0].emailStatus, "in-match");
+  }
+  assert.equal(sentWith, null, "nothing is sent before the match is decided");
+  // Game 3's email decision only counts games up to game 3, even when game 4 is already saved.
+  assert.equal(await _test.processVersusGame({ game: firstTo3[2], ref: fakeRef(), ownerUid: "owner-1", countRecent: async () => 0, send, loadMatch: async () => firstTo3 }), "in-match");
+  const ref = fakeRef();
+  assert.equal(await _test.processVersusGame({ game: firstTo3[3], ref, ownerUid: "owner-1", countRecent: async () => 0, send, loadMatch: async () => firstTo3.slice().reverse() }), "sent");
+  assert.deepEqual(sentWith.map((g) => g.leg), [1, 2, 3, 4]);
+  assert.equal(ref.updates[0].emailStatus, "sent");
+});
+
+test("a match stopped partway sends the games played; one stopped in its first game sends nothing", async () => {
+  const stopped = [matchGame(1, "won"), matchGame(2, "abandoned")];
+  let sentWith = null;
+  const send = async (games) => { sentWith = games; return okSend(); };
+  assert.equal(await _test.processVersusGame({ game: stopped[1], ref: fakeRef(), ownerUid: "owner-1", countRecent: async () => 0, send, loadMatch: async () => stopped }), "sent");
+  assert.equal(sentWith.length, 2);
+  const mail = _test.buildMatchEmail(stopped);
+  assert.equal(mail.subject, "Darts: Alex 1-0 Sam, match not finished");
+  assert.match(mail.text, /^Match not finished: Alex 1-0 Sam!/);
+  assert.match(mail.text, /One game was stopped before the end; it is not counted\./);
+  const none = [matchGame(1, "abandoned")];
+  assert.equal(await _test.processVersusGame({ game: none[0], ref: fakeRef(), ownerUid: "owner-1", countRecent: async () => 0, send, loadMatch: async () => none }), "unfinished");
+  const ref = fakeRef();
+  assert.equal(await _test.processVersusGame({ game: firstTo3[3], ref, ownerUid: "owner-1", countRecent: async () => 0, send, loadMatch: async () => { throw new Error("offline"); } }), "failed");
+  assert.equal(ref.updates[0].emailStatus, "failed");
+});
+
+test("a match goes to each player as one email; a single game still sends on its own", async () => {
+  const transport = fakeTransport();
+  const result = await _test.sendVersusResults({ game: firstTo3[3], games: firstTo3, config: mailConfig, transport });
+  assert.equal(result.status, "sent");
+  assert.deepEqual(transport.sent.map((m) => m.to), ["alex@example.com", "sam@example.org"]);
+  assert.ok(transport.sent.every((m) => m.subject === "Darts: Alex beat Sam 3-1 (first to 3, 501)"));
+  let sends = 0;
+  assert.equal(await _test.processVersusGame({ game: versusGame(), ref: fakeRef(), ownerUid: "owner-1", countRecent: async () => 0, send: async (games) => { sends += 1; assert.equal(games, null); return okSend(); }, loadMatch: async () => { throw new Error("not called for a single game"); } }), "sent");
+  assert.equal(sends, 1);
+});

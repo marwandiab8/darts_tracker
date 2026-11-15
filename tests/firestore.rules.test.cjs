@@ -379,6 +379,11 @@ test("two-player games with the wrong shape are refused, and cricket has no star
   await assertSucceeds(addDoc(collection(db, "versusGames"), cricket));
   await assertFails(addDoc(collection(db, "versusGames"), versusGame({ kind: "cricket" })));
   await assertSucceeds(addDoc(collection(db, "versusGames"), versusGame({ result: "abandoned", playerDarts: [], opponentDarts: [] })));
+  // A game of a first-to-N match carries the match's id, its number and the target (one email per match).
+  await assertSucceeds(addDoc(collection(db, "versusGames"), versusGame({ matchId: "mabc123", leg: 2, legsToWin: 3 })));
+  for (const bad of [{ matchId: "x" }, { matchId: 5 }, { leg: 0 }, { leg: 1.5 }, { leg: 31 }, { legsToWin: 12 }, { legsToWin: "3" }]) {
+    await assertFails(addDoc(collection(db, "versusGames"), versusGame(Object.assign({ matchId: "mabc123", leg: 1, legsToWin: 3 }, bad))));
+  }
 });
 
 test("a saved two-player game cannot be edited, so the email status is only ever set by the server", async () => {

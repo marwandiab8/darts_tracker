@@ -590,14 +590,110 @@ function buildVersusEmail(game, appUrl = "") {
   return { subject: cleanString(subject, 150), text, html };
 }
 
+// --- a first-to-N match: one email for all its games ------------------------------------------------
+// Each game of a match is saved with the match's id (matchId), its number (leg) and how many games win it
+// (legsToWin). Nothing is sent for a game that doesn't decide the match; the game that decides it (or one
+// stopped partway, which ends the match) sends one email with every game in it.
+const playedGame = (g) => g && (g.result === "won" || g.result === "lost");
+const legOf = (g) => cleanNumber(g && g.leg, 1, 30, 1);
+
+// The match as it stood after `game`: its games up to and including that one, in order, and the score.
+function matchSoFar(games, game) {
+  const upTo = legOf(game);
+  const list = (Array.isArray(games) ? games : []).filter((g) => g && (!Number.isInteger(g.leg) || !Number.isInteger(game.leg) || g.leg <= upTo))
+    .sort((a, b) => legOf(a) - legOf(b) || String(a.timestamp || "").localeCompare(String(b.timestamp || "")));
+  const wins = [0, 0];
+  for (const g of list) { if (g.result === "won") wins[0] += 1; else if (g.result === "lost") wins[1] += 1; }
+  const target = cleanNumber(game.legsToWin, 1, 11, 1);
+  return { games: list, played: list.filter(playedGame), wins, target, decided: wins[0] >= target || wins[1] >= target };
+}
+
+function buildMatchEmail(games, appUrl = "") {
+  const last = games[games.length - 1] || {};
+  const { played, wins, target, decided } = matchSoFar(games, last);
+  const names = [cleanString(last.playerName, 60) || "Player 1", cleanString(last.opponentName, 60) || "Player 2"];
+  const infos = played.map(versusSummary);
+  const kind = infos[0] ? infos[0].kind : "x01";
+  const gameName = infos[0] ? infos[0].gameName : "501";
+  const averageName = kind === "cricket" ? "Marks per round" : "3-dart average";
+  const scoreName = kind === "cricket" ? "Points" : "Left";
+  const lead = wins[0] >= wins[1] ? 0 : 1;
+  const winner = decided ? names[lead] : null, loser = decided ? names[1 - lead] : null;
+  const score = `${wins[lead]}-${wins[1 - lead]}`;
+  const headline = decided ? `${winner} won the match ${score}` : `Match not finished: ${names[0]} ${wins[0]}-${wins[1]} ${names[1]}`;
+  const subject = decided ? `Darts: ${winner} beat ${loser} ${score} (first to ${target}, ${gameName})` : `Darts: ${names[0]} ${wins[0]}-${wins[1]} ${names[1]}, match not finished`;
+  const seconds = played.reduce((sum, g) => sum + cleanNumber(g.durationSec, 0, 86400, 0), 0);
+  const minutes = seconds ? Math.max(1, Math.round(seconds / 60)) : 0;
+  const date = cleanString((games[0] || {}).timestamp, 20);
+  const facts = [`First to ${target}`, `${played.length} ${played.length === 1 ? "game" : "games"}`, gameName, date, minutes ? `${minutes} min` : ""].filter(Boolean).join(" · ");
+  // Each player over the whole match: games won, the average over all their darts, darts, best visit.
+  const totals = [0, 1].map((side) => {
+    let darts = 0, weighted = 0, best = 0;
+    played.forEach((g, i) => {
+      const n = Array.isArray(side ? g.opponentDarts : g.playerDarts) ? Math.min((side ? g.opponentDarts : g.playerDarts).length, 600) : 0;
+      const avg = Number(side ? g.opponentAvg : g.playerAvg);
+      if (Number.isFinite(avg) && n) { weighted += avg * n; darts += n; }
+      best = Math.max(best, infos[i].best[side] || 0);
+    });
+    return { name: names[side], won: wins[side], average: darts ? (Math.round((weighted / darts) * 10) / 10).toFixed(1) : "-", darts, best };
+  });
+  const stopped = games.length - played.length;
+
+  const lines = [`${headline}!`, facts, ""];
+  totals.forEach((t) => lines.push(`${t.name}: ${t.won} won, ${averageName.toLowerCase()} ${t.average}, ${t.darts} darts${kind === "x01" && t.best ? `, best visit ${t.best}` : ""}`));
+  infos.forEach((info, i) => {
+    const mins = info.durationSec ? Math.max(1, Math.round(info.durationSec / 60)) : 0;
+    lines.push("", `Game ${i + 1}: ${info.winner} won` + ([info.rounds ? `${info.rounds} rounds` : "", mins ? `${mins} min` : ""].filter(Boolean).length ? ` (${[info.rounds ? `${info.rounds} rounds` : "", mins ? `${mins} min` : ""].filter(Boolean).join(", ")})` : ""));
+    info.rows.forEach((row, side) => lines.push(`  ${row.name}: ${averageName.toLowerCase()} ${row.average}, ${row.darts} darts, ${scoreName.toLowerCase()} ${row.score}${kind === "x01" && info.best[side] ? `, best visit ${info.best[side]}` : ""}`));
+    if (info.visitRounds.length) {
+      lines.push("  Visit by visit:");
+      info.visitRounds.forEach((pair, k) => lines.push(`  ${k + 1}. ${info.names[0]} ${pair[0] ? pair[0].text : "-"} · ${info.names[1]} ${pair[1] ? pair[1].text : "-"}`));
+    }
+  });
+  if (stopped) lines.push("", stopped === 1 ? "One game was stopped before the end; it is not counted." : `${stopped} games were stopped before the end; they are not counted.`);
+  if (appUrl) lines.push("", `Play again: ${appUrl}/practice.html`);
+  const text = lines.join("\n");
+
+  const cell = (value, extra = "") => `<td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;${extra}">${escapeHtml(value)}</td>`;
+  const head = (value) => `<th style="padding:6px 10px;text-align:left;color:#6b7280;font-size:12px;border-bottom:2px solid #e5e7eb">${escapeHtml(value)}</th>`;
+  const table = (rows) => `<table style="border-collapse:collapse;width:100%">${rows}</table>`;
+  const matchRows = `<tr>${head("Player")}${head("Games won")}${head(averageName)}${head("Darts")}${kind === "x01" ? head("Best visit") : ""}</tr>`
+    + totals.map((t) => `<tr>${cell(t.name, "font-weight:700")}${cell(t.won)}${cell(t.average)}${cell(t.darts)}${kind === "x01" ? cell(t.best || "-") : ""}</tr>`).join("");
+  const gameSections = infos.map((info, i) => {
+    const mins = info.durationSec ? Math.max(1, Math.round(info.durationSec / 60)) : 0;
+    const gameFacts = [info.rounds ? `${info.rounds} rounds` : "", mins ? `${mins} min` : ""].filter(Boolean).join(" · ");
+    const stats = `<tr>${head("Player")}${head(averageName)}${head("Darts")}${head(scoreName)}${kind === "x01" ? head("Best visit") : ""}</tr>`
+      + info.rows.map((row, side) => `<tr>${cell(row.name, "font-weight:700")}${cell(row.average)}${cell(row.darts)}${cell(row.score)}${kind === "x01" ? cell(info.best[side] || "-") : ""}</tr>`).join("");
+    const visits = info.visitRounds.length
+      ? `<p style="margin:10px 0 4px;color:#6b7280;font-size:13px">Visit by visit</p>` + table(`<tr>${head("Round")}${head(info.names[0])}${head(info.names[1])}</tr>` + info.visitRounds.map((pair, k) => `<tr>${cell(k + 1)}${cell(pair[0] ? pair[0].text : "-")}${cell(pair[1] ? pair[1].text : "-")}</tr>`).join(""))
+      : "";
+    return `<h3 style="margin:24px 0 2px;font-size:16px">Game ${i + 1}: ${escapeHtml(info.winner)} won</h3>`
+      + (gameFacts ? `<p style="margin:0 0 8px;color:#6b7280;font-size:13px">${escapeHtml(gameFacts)}</p>` : "")
+      + table(stats) + visits;
+  }).join("");
+  const html = [
+    `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:560px;margin:auto;color:#111827">`,
+    `<h2 style="margin:0 0 4px">${escapeHtml(headline)}!</h2>`,
+    `<p style="margin:0 0 16px;color:#6b7280">${escapeHtml(facts)}</p>`,
+    table(matchRows),
+    gameSections,
+    stopped ? `<p style="margin-top:16px;color:#6b7280">${escapeHtml(stopped === 1 ? "One game was stopped before the end; it is not counted." : `${stopped} games were stopped before the end; they are not counted.`)}</p>` : "",
+    appUrl ? `<p style="margin-top:20px"><a href="${escapeHtml(appUrl)}/practice.html">Play again</a></p>` : "",
+    `</div>`,
+  ].join("");
+  return { subject: cleanString(subject, 150), text, html };
+}
+
 // Send the result to both players, each in a message of their own so the addresses are not shared.
 // Returns { status, sent } where status is "sent", "unfinished", "not-configured" or "failed".
-async function sendVersusResults({ game, config, transport, appUrl }) {
-  if (game.result === "abandoned") return { status: "unfinished", sent: [] };
+// games: for a match, all its games so far (this one last), sent as one email.
+async function sendVersusResults({ game, games, config, transport, appUrl }) {
+  const match = Array.isArray(games) && games.length > 0;
+  if (match ? !games.some(playedGame) : game.result === "abandoned") return { status: "unfinished", sent: [] };
   if (!config.user || !config.pass) return { status: "not-configured", sent: [] };
   const recipients = versusRecipients(game);
   if (recipients.length < 1) return { status: "failed", sent: [], error: "No valid email address." };
-  const message = buildVersusEmail(game, appUrl);
+  const message = match ? buildMatchEmail(games, appUrl) : buildVersusEmail(game, appUrl);
   const sent = [];
   try {
     for (const person of recipients) {
@@ -762,7 +858,8 @@ exports.syncDoublesSessionToTimeLeft = onDocumentWritten(
 
 // What happens when a two-player game is saved: who may have it emailed, the daily cap, the send, and
 // the status written back to the game. `countRecent` and `send` are passed in so it can be tested.
-async function processVersusGame({ game, ref, ownerUid, countRecent, send }) {
+// loadMatch: reads the match's games (for a game with a matchId); send(games) sends the email.
+async function processVersusGame({ game, ref, ownerUid, countRecent, send, loadMatch }) {
   if (game.emailStatus) return "already-done";
   const finish = async (fields) => {
     try {
@@ -776,7 +873,27 @@ async function processVersusGame({ game, ref, ownerUid, countRecent, send }) {
     await finish({ emailStatus: "not-allowed" });
     return "not-allowed";
   }
-  if (game.result === "abandoned") {
+  let games = null;
+  if (game.matchId && loadMatch) {
+    try {
+      games = await loadMatch();
+    } catch (error) {
+      logger.warn("versus email: the match could not be read", { message: String((error && error.message) || error).slice(0, 200) });
+      await finish({ emailStatus: "failed", emailError: "The match's games could not be read." });
+      return "failed";
+    }
+    const standing = matchSoFar(games, game);
+    games = standing.games;
+    // Not the game that decided the match, and the match goes on: the email waits for the match.
+    if (!standing.decided && game.result !== "abandoned") {
+      await finish({ emailStatus: "in-match" });
+      return "in-match";
+    }
+    if (!standing.played.length) {
+      await finish({ emailStatus: "unfinished" });
+      return "unfinished";
+    }
+  } else if (game.result === "abandoned") {
     await finish({ emailStatus: "unfinished" });
     return "unfinished";
   }
@@ -788,8 +905,8 @@ async function processVersusGame({ game, ref, ownerUid, countRecent, send }) {
   } catch (error) {
     logger.warn("versus email daily count failed", { message: String((error && error.message) || error).slice(0, 200) });
   }
-  const result = await send();
-  logger.info("versus email finished", { path: ref.path, status: result.status, recipients: result.sent.length });
+  const result = await send(games);
+  logger.info("versus email finished", { path: ref.path, status: result.status, recipients: result.sent.length, games: games ? games.length : 1 });
   const update = { emailStatus: result.status };
   if (result.status === "sent") update.emailedAt = admin.firestore.FieldValue.serverTimestamp();
   if (result.error) update.emailError = result.error;
@@ -821,11 +938,16 @@ exports.emailVersusGameResults = onDocumentCreated(
         const recent = await admin.firestore().collection("versusGames").where("emailedAt", ">=", since).count().get();
         return recent.data().count;
       },
-      send: async () => {
+      loadMatch: async () => {
+        const game = snapshot.data() || {};
+        const found = await admin.firestore().collection("versusGames").where("uid", "==", game.uid).where("matchId", "==", game.matchId).get();
+        return found.docs.map((doc) => doc.data());
+      },
+      send: async (games) => {
         const transport = config.user && config.pass
           ? nodemailer.createTransport({ host: SMTP_HOST.value() || "smtp.gmail.com", port, secure: port === 465, auth: { user: config.user, pass: config.pass } })
           : null;
-        return sendVersusResults({ game: snapshot.data() || {}, config, transport, appUrl });
+        return sendVersusResults({ game: snapshot.data() || {}, games, config, transport, appUrl });
       },
     });
     return null;
@@ -883,7 +1005,9 @@ exports.backfillDartsPracticeSummariesToTimeLeft = onRequest(
 
 module.exports._test = {
   authorizeBackfill,
+  buildMatchEmail,
   buildVersusEmail,
+  matchSoFar,
   escapeHtml,
   forwardDoublesSession,
   forwardOwnerDocument,

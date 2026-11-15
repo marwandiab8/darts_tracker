@@ -143,7 +143,8 @@ service cloud.firestore {
     function validVersusGame(data) {
       return data.keys().hasOnly(['uid', 'timestamp', 'kind', 'startScore', 'doubleOut', 'first', 'result',
           'durationSec', 'rounds', 'playerName', 'playerEmail', 'opponentName', 'opponentEmail',
-          'playerAvg', 'opponentAvg', 'playerScore', 'opponentScore', 'playerDarts', 'opponentDarts', 'log'])
+          'playerAvg', 'opponentAvg', 'playerScore', 'opponentScore', 'playerDarts', 'opponentDarts', 'log',
+          'matchId', 'leg', 'legsToWin'])
         && data.keys().hasAll(['uid', 'timestamp', 'kind', 'result', 'playerName', 'playerEmail', 'opponentName',
           'opponentEmail', 'playerDarts', 'opponentDarts'])
         && data.uid == request.auth.uid
@@ -168,7 +169,12 @@ service cloud.firestore {
         && optionalNumber(data, 'playerAvg', 0, 300)
         && optionalNumber(data, 'opponentAvg', 0, 300)
         && optionalNumber(data, 'playerScore', 0, 100000)
-        && optionalNumber(data, 'opponentScore', 0, 100000);
+        && optionalNumber(data, 'opponentScore', 0, 100000)
+        // A game of a first-to-N match: the match's id, which game it was, and how many games win it (the
+        // result email waits for the match and covers all its games).
+        && (!data.keys().hasAny(['matchId']) || (data.matchId is string && data.matchId.size() >= 4 && data.matchId.size() <= 40))
+        && (!data.keys().hasAny(['leg']) || (data.leg is int && data.leg >= 1 && data.leg <= 30))
+        && (!data.keys().hasAny(['legsToWin']) || (data.legsToWin is int && data.legsToWin >= 1 && data.legsToWin <= 11));
     }
 
     // A finished JDC Challenge round, exactly as challenge.html saves it (public/challenge-engine.js

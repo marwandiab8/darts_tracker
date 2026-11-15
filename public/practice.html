@@ -2276,7 +2276,8 @@
   }
 
   // A game between two people. The result is from the first player's side, as in a game against the bot.
-  function buildVersusRecord(result) {
+  // ser: the match this game was part of (finishGame passes it, since quitting mid-match clears `series`).
+  function buildVersusRecord(result, ser = series) {
     const s = E.summarize(game);
     const record = {
       uid: user.uid, timestamp: localStamp(startedAt), kind: game.kind, first: game.first, result,
@@ -2286,17 +2287,21 @@
       playerDarts: game.darts.player.map(dartRecord), opponentDarts: game.darts.bot.map(dartRecord), log: visitLog(),
     };
     if (game.kind === "x01") { record.startScore = game.startScore; record.doubleOut = game.doubleOut; }
+    // A game of a first-to-N match: the server emails the whole match, once, when it is decided or stopped.
+    if (ser && ser.id) { record.matchId = String(ser.id).slice(0, 40); record.leg = Math.max(1, Math.min(30, ser.gamesPlayed + (result === "abandoned" ? 1 : 0))); record.legsToWin = ser.target; }
     return record;
   }
 
   // The server emails the result and writes how that went onto the saved game; this shows it.
   function watchEmail(ref, record) {
     const note = $("emailNote");
-    if (record.result === "abandoned") { note.className = "saved"; note.textContent = "Unfinished games are not emailed."; return; }
-    note.className = "saved"; note.textContent = "Emailing the result to " + record.playerEmail + " and " + record.opponentEmail + "…";
+    const inMatch = !!record.matchId;
+    if (record.result === "abandoned" && !inMatch) { note.className = "saved"; note.textContent = "Unfinished games are not emailed."; return; }
+    note.className = "saved"; note.textContent = inMatch ? "Saved…" : "Emailing the result to " + record.playerEmail + " and " + record.opponentEmail + "…";
     let stop = () => {}, settled = false;
     const messages = {
-      sent: ["ok", "Result emailed to " + record.playerEmail + " and " + record.opponentEmail + "."],
+      sent: ["ok", (inMatch ? "The match, every game of it, emailed to " : "Result emailed to ") + record.playerEmail + " and " + record.opponentEmail + "."],
+      "in-match": ["", "Saved. One email with every game goes to both of you when the match is over."],
       "not-configured": ["", "Saved. Email is not set up yet, so nothing was sent."],
       "not-allowed": ["", "Saved. Emails are only sent for the account that owns this app."],
       "rate-limited": ["bad", "Saved. The daily email limit was reached, so nothing was sent."],
@@ -2368,6 +2373,7 @@
     reviewing = true;
     // Series bookkeeping: quitting mid-game ends the whole series, not just the one game - there
     // is no sensible score to carry forward from a game nobody finished.
+    const endedSeries = series; // for the record: a quit game still belongs to its match
     if (series && result === "abandoned") {
       series = null; store.remove(SERIES_KEY);
     } else if (series) {
@@ -2379,7 +2385,7 @@
     pushLive(); // the game-over screen on the other devices too (they don't save it again)
     $("emailNote").textContent = ""; $("emailNote").className = "saved";
     showOver(true);
-    if (versus()) saveRecord(buildVersusRecord(result), "versusGames", gameId);
+    if (versus()) saveRecord(buildVersusRecord(result, endedSeries), "versusGames", gameId);
     else saveRecord(buildRecord(result), "botGames", gameId);
   }
 

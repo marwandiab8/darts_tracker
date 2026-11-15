@@ -45,10 +45,10 @@ const { check, failed } = H.checker();
       };
     });
     let n = 0;
-    const inject = async (game, over, matchOver) => {
+    const inject = async (game, over, matchOver, seriesState) => {
       const gameId = "e2eboard" + (n += 1) + Date.now().toString(36);
       const state = { v: 1, gameId, game, editing: null, startedAt: Date.now() - 60000, settings: Object.assign(JSON.parse(settings), over || {}), match: matchOver || { human: false, names: { player: "You", bot: "Club bot" }, opponentEmail: "" },
-        series: null, timer: null, camSeq: 0, camDarts: [], msg: "", over: null };
+        series: seriesState || null, timer: null, camSeq: 0, camDarts: [], msg: "", over: null };
       await station.env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), "liveGames", uid), { uid, vid: "inj" + Date.now().toString(36) + n, parent: "", by: "e2e-injector", at: Date.now(), phase: "play", rev: 1, state: JSON.stringify(state) }));
       await until(async () => (await liveGame()) && (await ipad.evaluate((id) => document.getElementById("boardMode").textContent.length > 0, gameId)), 10000);
       await H.sleep(1500);
@@ -184,6 +184,18 @@ const { check, failed } = H.checker();
     check(rec && Array.isArray(rec.visits) && rec.visits.length === 1 && rec.visits[0].d[0] === "D20" && rec.visits[0].s === 40, "saved with its visits: " + JSON.stringify(rec && rec.visits));
     b = await until(async () => { const x = await bm(); return x.done ? x : null; }, 6000) || await bm();
     check(/You won/.test(b.done) && /3-dart average/.test(b.done) && /Checkout\s*100% \(1\/1\)/.test(b.done), "the match report: " + b.done.slice(0, 200));
+
+    // ---- two players, game 3 of a first-to-3 match: saved with the match (one email per match) -------
+    const gm = E.createGame({ kind: "x01", startScore: 201, first: "player" });
+    gm.remaining.player = 40; gm.visitStart = 40;
+    const mGame = await inject(gm, { opponent: "human", oppEmail: "p2@example.com", seriesTarget: 3 }, { human: true, names: { player: "Marwan", bot: "Ash" }, opponentEmail: "p2@example.com" },
+      { target: 3, wins: { player: 1, bot: 1 }, gamesPlayed: 2, nextFirst: "player", id: "mtest12345" });
+    await until(async () => /watching the board/i.test(await ipad.$eval("#camStatus", (e) => e.textContent)), 15000);
+    await camDart("D20");
+    await station.send({ type: "takeout", darts: 1 }); await H.sleep(1500);
+    const vrec = await until(() => station.read("versusGames", mGame), 10000);
+    check(vrec && vrec.result === "won" && vrec.matchId === "mtest12345" && vrec.leg === 3 && vrec.legsToWin === 3,
+      "a match game is saved (the rules take it) with the match's id, its number and the target: " + JSON.stringify(vrec && { result: vrec.result, matchId: vrec.matchId, leg: vrec.leg, legsToWin: vrec.legsToWin }));
 
     // ---- a reload keeps Board mode ----------------------------------------------------------------
     await ipad.reload();
