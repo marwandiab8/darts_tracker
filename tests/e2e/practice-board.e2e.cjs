@@ -16,7 +16,8 @@ const { check, failed } = H.checker();
   try {
     const settings = JSON.stringify({ kind: "x01", startScore: 201, doubleOut: true, rank: "club", first: "player", entry: "board", confirm: false, camera: true, mute: false, opponent: "bot" });
     const ipad = await H.device(browser, "ipad", { viewport: { width: 820, height: 1180 }, storage: { dt_practice_settings: settings, dt_practiceBoard: "1" } });
-    ipad.on("dialog", (d) => d.accept());
+    let promptAnswer = ""; // what a prompt (the other player's name) is answered with
+    ipad.on("dialog", (d) => (d.type() === "prompt" ? d.accept(promptAnswer) : d.accept()));
     await ipad.goto(`http://127.0.0.1:${H.PORT}/practice.html`);
     const uid = await H.signIn(ipad);
     station = await H.makeStation(uid);
@@ -44,9 +45,9 @@ const { check, failed } = H.checker();
       };
     });
     let n = 0;
-    const inject = async (game, over) => {
+    const inject = async (game, over, matchOver) => {
       const gameId = "e2eboard" + (n += 1) + Date.now().toString(36);
-      const state = { v: 1, gameId, game, editing: null, startedAt: Date.now() - 60000, settings: Object.assign(JSON.parse(settings), over || {}), match: { human: false, names: { player: "You", bot: "Club bot" }, opponentEmail: "" },
+      const state = { v: 1, gameId, game, editing: null, startedAt: Date.now() - 60000, settings: Object.assign(JSON.parse(settings), over || {}), match: matchOver || { human: false, names: { player: "You", bot: "Club bot" }, opponentEmail: "" },
         series: null, timer: null, camSeq: 0, camDarts: [], msg: "", over: null };
       await station.env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), "liveGames", uid), { uid, vid: "inj" + Date.now().toString(36) + n, parent: "", by: "e2e-injector", at: Date.now(), phase: "play", rev: 1, state: JSON.stringify(state) }));
       await until(async () => (await liveGame()) && (await ipad.evaluate((id) => document.getElementById("boardMode").textContent.length > 0, gameId)), 10000);
@@ -150,6 +151,24 @@ const { check, failed } = H.checker();
     check(b.slots[0] === "T19|2 marks, closed · +19" && b.target === "39", "T19 closes 19 and scores 19 on the bot's open 19: " + b.slots[0] + " / " + b.target);
     cells = await ckCells();
     check(cells.startsWith("You ⊗* ⊗ "), "and the marks board has it: " + JSON.stringify(cells));
+
+    // ---- two players: the other player's name, added during the game -------------------------------
+    const gvs = E.createGame({ kind: "x01", startScore: 201, first: "player" });
+    await inject(gvs, { opponent: "human", oppEmail: "p2@example.com" }, { human: true, names: { player: "Marwan", bot: "P2" }, opponentEmail: "p2@example.com" });
+    b = await bm();
+    check(/P2/.test(b.opp) && (await ipad.$("#boardMode [data-act=rename]")) !== null, "two players: Edit name by the other player's score: " + b.opp);
+    promptAnswer = "Ashtrower";
+    await ipad.click("#boardMode [data-act=rename]");
+    st = await until(async () => { const g = await liveGame(); return g && g.match.names.bot === "Ashtrower" ? g : null; }) || await liveGame();
+    check(st.match.names.bot === "Ashtrower", "named from Board mode, in the shared game: " + st.match.names.bot);
+    b = await until(async () => { const x = await bm(); return /Ashtrower/.test(x.opp) ? x : null; }) || await bm();
+    check(/Ashtrower/.test(b.opp), "and on the board: " + b.opp);
+    promptAnswer = "Marwan"; // the same as yours: told apart
+    await ipad.evaluate(() => document.querySelector("#scoreboard .side.bot .name-btn, .side.bot .name-btn").click());
+    st = await until(async () => { const g = await liveGame(); return g && g.match.names.bot === "Marwan 2" ? g : null; }) || await liveGame();
+    check(st.match.names.bot === "Marwan 2", "renamed from the scoreboard; your own name gets a 2: " + st.match.names.bot);
+    const kept = await ipad.evaluate(() => JSON.parse(localStorage.getItem("dt_practice_settings")).oppName);
+    check(kept === "Marwan 2", "and kept for the next game: " + kept);
 
     // ---- the winning double, then the pull-out finishes the game ------------------------------------
     const gwin = E.createGame({ kind: "x01", startScore: 201, first: "player" });

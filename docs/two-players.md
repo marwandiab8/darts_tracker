@@ -4,7 +4,9 @@ On `practice.html`, "Play against: Another player" is for two people sharing one
 
 ## Adding a player
 
-You type the other player's email address (their name is optional). The email is required: the game cannot start without a valid one, and it cannot be your own. The first player is whoever is signed in, and their email is the one on the Google account. Names are used everywhere the bot's name would be, and if both are the same the second gets a "2".
+You type the other player's email address (their name is optional). The email is required: the game cannot start without a valid one, and it cannot be your own.
+
+The name can also be added or changed during a game (since Nov 14, 2026): **Edit name** under the other player's score, or by their score in Board mode, asks for it. Without one, the name is made from their email address ("ashtrower@..." plays as "Ashtrower"). The new name is used at once on every device showing the game, called out, saved with the game and put in its email, and kept as "Their name" for the next game. Your own name gets a "2" added if typed for them. Once a game is over it can't be renamed: the record is already saved, and saved games are never changed. The first player is whoever is signed in, and their email is the one on the Google account. Names are used everywhere the bot's name would be, and if both are the same the second gets a "2".
 
 Playing works as it does against the bot, with these differences:
 

@@ -67,6 +67,7 @@
   .side.turn { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
   .side.bot.turn { border-color: var(--bot); box-shadow: 0 0 0 1px var(--bot) inset; }
   .side .who { font-weight: 800; font-size: 14px; color: var(--muted); overflow-wrap: anywhere; }
+  .side .name-btn { min-height: 32px; padding: 4px 12px; margin-top: 6px; font-size: 12px; border-radius: 999px; }
   .side .big { font-size: clamp(38px, 9vw, 60px); font-weight: 950; line-height: 1.05; color: var(--accent); }
   .side.bot .big { color: var(--bot); }
   .side .small { font-size: 13px; color: var(--muted); }
@@ -255,7 +256,7 @@
           <div class="form-grid">
             <div>
               <label for="oppName">Their name</label>
-              <input type="text" id="oppName" maxlength="40" autocomplete="off" placeholder="Optional">
+              <input type="text" id="oppName" maxlength="40" autocomplete="off" placeholder="Optional (or Edit name in the game)">
             </div>
             <div>
               <label for="oppEmail">Their email address (needed)</label>
@@ -478,6 +479,26 @@
   let match = { human: false, names: { player: "You", bot: "Bot" }, opponentEmail: "" };
   const versus = () => match.human;
   const nameOf = (who) => match.names[who];
+  // The other player's name, added or changed during a game (before one, it's "Their name" on the setup).
+  // It goes into this game's record and its email, the games after it, and every device showing the game.
+  // Not once the game is over: the record is already saved, and saved games are never changed.
+  function renameOpponent() {
+    if (!game || !versus() || reviewing) return;
+    const now = nameOf("bot");
+    const typed = window.prompt("The other player's name", now);
+    if (typed == null) return;
+    let name = String(typed).trim().slice(0, 40);
+    if (!name) return;
+    if (name.toLowerCase() === String(nameOf("player")).toLowerCase()) name += " 2";
+    if (name === now) return;
+    match = Object.assign({}, match, { names: Object.assign({}, match.names, { bot: name }) });
+    settings.oppName = name;
+    store.set(SETTINGS_KEY, settings);
+    if ($("oppName")) $("oppName").value = name;
+    lastMessage = "The other player is " + name + " now.";
+    persistGame();
+    render();
+  }
   // Whether the phone is in a person's hands: always your turn, and both turns with another player.
   const humanTurn = () => !!game && (game.turn === "player" || versus());
   // The bot has just checked out. The game waits here rather than ending, so that a dart of yours the
@@ -1472,6 +1493,14 @@
     } else {
       side.append(el("div", "big", String(game.points[who])));
       side.append(el("div", "small", "Points · " + (s.darts ? s.avg.toFixed(1) : "-") + " marks/round"));
+    }
+    // The other player's name can be added or changed here (under the score, so the two scores stay level).
+    if (who === "bot" && versus() && !reviewing) {
+      const b = el("button", "secondary name-btn", "Edit name");
+      b.type = "button";
+      b.setAttribute("aria-label", "Change the other player's name, " + nameOf("bot"));
+      b.addEventListener("click", renameOpponent);
+      side.append(b);
     }
     return side;
   }
@@ -2604,6 +2633,7 @@
     again: () => $("againBtn").click(),
     next: () => $("nextGameBtn").click(),
     change: () => { setBotBoard(false); $("changeBtn").click(); },
+    rename: renameOpponent,
   }) : null;
   if (botBoard) botBoard.el.classList.add("taps");
 
@@ -2722,7 +2752,7 @@
       noteWarn: !!camWarn,
       dartsText: x01 ? game.startScore + (game.doubleOut ? "" : " straight") : "Cricket",
       modeLabel: versus() ? nameOf("player") + " v " + nameOf("bot") : "Against the " + botTitle(),
-      oppHtml: `<span class="who">${esc(nameOf(other))}</span><span class="sc">${x01 ? game.remaining[other] : game.points[other]}</span><span class="sub">${x01 ? (s[other].avg ? "avg " + fmt1(s[other].avg) : "") : "points"}</span>`,
+      oppHtml: `<span class="who">${esc(nameOf(other))}</span>${other === "bot" && versus() && !reviewing ? `<button type="button" class="bm-rename" data-act="rename" aria-label="Change the other player's name, ${esc(nameOf("bot"))}">Edit name</button>` : ""}<span class="sc">${x01 ? game.remaining[other] : game.points[other]}</span><span class="sub">${x01 ? (s[other].avg ? "avg " + fmt1(s[other].avg) : "") : "points"}</span>`,
       info,
       pad: [
         { man: "miss", text: "Missed the board", disabled: !(humanTurn() && !game.visitDone && !botBusy && !game.winner), hidden: keypadActive() },

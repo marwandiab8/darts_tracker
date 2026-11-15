@@ -158,6 +158,8 @@ body.bm-open { overflow: hidden; }
 .bm-opp .who { font-size: 15px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
 .bm-opp .sc { font-size: 44px; font-weight: 900; line-height: 1; font-variant-numeric: tabular-nums; }
 .bm-opp .sub { font-size: 15px; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* Two players: the other player's name can be changed from here (practice.html renameOpponent). */
+.bm .bm-opp .bm-rename { min-height: 36px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--bm-line); color: var(--muted); font-size: 14px; font-weight: 700; }
 .bm-label.you { color: var(--bm-hit-ink); font-size: 20px; }
 .bm-label.bot { color: #7dd3fc; font-size: 20px; }
 .bm-label.over { color: var(--accent); }
