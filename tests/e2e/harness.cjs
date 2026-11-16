@@ -59,7 +59,31 @@ async function startServer() {
   return server;
 }
 
-const launch = () => chromium.launch({ executablePath: CHROME, headless: true });
+// `args`: extra Chrome switches (a pretend camera, for the camera station's own test).
+const launch = (args = []) => chromium.launch({ executablePath: CHROME, headless: true, args });
+
+// Switches that give Chrome one camera showing the video in `file` (Y4M), with no permission prompt.
+const fakeCamera = (file) => ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream", `--use-file-for-fake-video-capture=${file}`];
+
+// A Y4M video (YUV 4:2:0) of the same RGBA picture `frames` times: what a camera fixed on the
+// board shows.
+function y4m(image, frames = 4, fps = 10) {
+  const { width: w, height: h, data } = image, cw = w >> 1, ch = h >> 1;
+  const Y = Buffer.alloc(w * h), U = Buffer.alloc(cw * ch), V = Buffer.alloc(cw * ch);
+  for (let i = 0; i < w * h; i += 1) Y[i] = Math.round(0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2]);
+  for (let y = 0; y < ch; y += 1) {
+    for (let x = 0; x < cw; x += 1) {
+      let r = 0, g = 0, b = 0;
+      for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) { const i = ((y * 2 + dy) * w + x * 2 + dx) * 4; r += data[i]; g += data[i + 1]; b += data[i + 2]; }
+      r /= 4; g /= 4; b /= 4;
+      U[y * cw + x] = Math.max(0, Math.min(255, Math.round(-0.168736 * r - 0.331264 * g + 0.5 * b + 128)));
+      V[y * cw + x] = Math.max(0, Math.min(255, Math.round(0.5 * r - 0.418688 * g - 0.081312 * b + 128)));
+    }
+  }
+  const parts = [Buffer.from(`YUV4MPEG2 W${w} H${h} F${fps}:1 Ip A1:1 C420jpeg\n`)];
+  for (let k = 0; k < frames; k += 1) parts.push(Buffer.from("FRAME\n"), Y, U, V);
+  return Buffer.concat(parts);
+}
 
 async function device(browser, name, { viewport, storage } = {}) {
   const context = await browser.newContext({ viewport: viewport || { width: 1280, height: 900 } });
@@ -138,4 +162,4 @@ function checker() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-module.exports = { REPO, PORT, PROJECT, startServer, launch, device, signIn, makeStation, dart, spot, checker, sleep };
+module.exports = { REPO, PORT, PROJECT, startServer, launch, fakeCamera, y4m, device, signIn, makeStation, dart, spot, checker, sleep };

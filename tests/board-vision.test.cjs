@@ -159,6 +159,95 @@ test("matching the board copes with darts in it, and with a camera that moved", 
   assert.equal(V.refineCalibration(snapped, blank), null);
 });
 
+// ---- finding the board with nothing tapped ----------------------------------------------------------
+
+test("the board is found with nothing tapped, from either side, straight on, and through a bent lens", () => {
+  const cams = [
+    ["from the left", { pos: { x: -190, y: -70, z: 380 }, width: 1280, height: 720, hfov: 84 }],
+    ["from the right, bent lens", { pos: { x: 175, y: -55, z: 400 }, width: 1280, height: 720, hfov: 80, bend: -0.12 }],
+    ["straight on", { pos: { x: 0, y: 0, z: 520 }, width: 1280, height: 720, hfov: 70 }],
+    ["very much from the side, and rolled", { pos: { x: -330, y: -40, z: 300 }, width: 1280, height: 720, hfov: 84, roll: 10 }],
+  ];
+  for (const [name, spec] of cams) {
+    const cam = S.camera(spec), still = stillOf(cam, [], { smooth: 2 });
+    const rough = V.findBoard(still);
+    assert.ok(rough, `${name}: found`);
+    assert.ok(worstOff(cam, rough) < 4, `${name}: the rough find is ${worstOff(cam, rough).toFixed(1)} mm off`);
+    const cal = V.autoCalibrate(still);
+    assert.ok(cal && cal.auto, `${name}: calibrated`);
+    assert.ok(worstOff(cam, cal) < 0.6, `${name}: ${worstOff(cam, cal).toFixed(2)} mm off`);
+    assert.ok(cal.refined.edges > 300 && cal.refined.shift === 0, `${name}: ${cal.refined.edges} edges`);
+    // Its five points are where the board has them, so the pages can show and reuse them.
+    V.CAL_POINTS.forEach((pt, i) => {
+      const real = cam.project({ x: pt.x * S.R, y: pt.y * S.R, z: 0 });
+      assert.ok(Math.hypot(cal.points[i].x - real.x, cal.points[i].y - real.y) < 2, `${name}: point ${pt.short}`);
+    });
+  }
+});
+
+test("finding the board copes with darts in it (one in the bull), dim and warm light, and part of it out of the picture", () => {
+  const spec = { pos: { x: 175, y: -55, z: 400 }, width: 1280, height: 720, hfov: 80 };
+  const cam = S.camera(spec);
+  const darts = [{ at: { x: 1, y: 2 }, lean: { x: 0.05, y: -0.3 } }, { at: { x: -12, y: -98 }, lean: { x: -0.1, y: -0.2 } }, { at: { x: 40, y: 60 }, lean: { x: 0.1, y: -0.3 } }];
+  const withDarts = V.autoCalibrate(stillOf(cam, darts, { smooth: 2 }));
+  assert.ok(withDarts && worstOff(cam, withDarts) < 0.8, "three darts in the board, one in the bull");
+  const full = { crop: { sx: 0, sy: 0, sw: 1280, sh: 720 }, width: 1280, height: 720 };
+  const dim = S.renderer(cam, full, { noise: 3, seed: 5, smooth: 2 })([], { gain: 0.4 });
+  const dimCal = V.autoCalibrate(dim);
+  assert.ok(dimCal && worstOff(cam, dimCal) < 0.8, "a dim picture");
+  const warm = stillOf(cam, [], { smooth: 2 });
+  for (let i = 0; i < warm.data.length; i += 4) { warm.data[i + 1] *= 0.82; warm.data[i + 2] *= 0.55; }
+  const warmCal = V.autoCalibrate(warm);
+  assert.ok(warmCal && worstOff(cam, warmCal) < 0.8, "warm light");
+  const aside = S.camera({ pos: { x: -170, y: -60, z: 420 }, look: { x: -110, y: 40, z: 0 }, width: 1280, height: 720, hfov: 62 });
+  const part = V.autoCalibrate(stillOf(aside, [], { smooth: 2 }));
+  assert.ok(part && worstOff(aside, part) < 0.8, "part of the number ring out of the picture");
+});
+
+test("no board, no calibration: a blank picture, random colours, and a board too small to trust", () => {
+  const blank = { data: new Uint8ClampedArray(1280 * 720 * 4).fill(40), width: 1280, height: 720 };
+  assert.equal(V.findBoard(blank), null);
+  assert.equal(V.autoCalibrate(blank), null);
+  const random = S.rng(3), noise = { data: new Uint8ClampedArray(640 * 360 * 4), width: 640, height: 360 };
+  for (let i = 0; i < noise.data.length; i += 1) noise.data[i] = random() * 255;
+  assert.equal(V.autoCalibrate(noise), null);
+  assert.equal(V.findBoard(null), null);
+  // Half the board hidden (someone standing in front of it): too little to go on.
+  const cam = S.camera({ pos: { x: 175, y: -55, z: 400 }, width: 1280, height: 720, hfov: 80 });
+  const hidden = stillOf(cam, [], { smooth: 2 });
+  const middle = cam.project({ x: 0, y: 0, z: 0 });
+  for (let y = 0; y < 720; y += 1) for (let x = Math.round(middle.x - 40); x < 1280; x += 1) { const i = (y * 1280 + x) * 4; hidden.data[i] = 70; hidden.data[i + 1] = 60; hidden.data[i + 2] = 55; }
+  assert.equal(V.autoCalibrate(hidden), null, "half hidden");
+});
+
+test("which way up: the 20 is the red piece nearest the top, or nearest where the calibration before had it", () => {
+  // A camera fixed upside down sees the 3 at the top. Nothing in the colours can tell (they repeat
+  // every two numbers), so found from nothing it is wrong by half a turn; with the calibration
+  // from before to say where the 20 was, it is right.
+  const cam = S.camera({ pos: { x: -170, y: -60, z: 420 }, width: 1280, height: 720, hfov: 78, roll: 180 });
+  const still = stillOf(cam, [], { smooth: 2 });
+  const before = S.tapCalibration(cam, 6, S.rng(3));
+  const blind = V.autoCalibrate(still);
+  assert.ok(blind && worstOff(cam, blind) > 100, "the wrong way up without a hint");
+  const hinted = V.autoCalibrate(still, { hint: before });
+  assert.ok(hinted && worstOff(cam, hinted) < 0.6, "right with where the 20 was");
+  near(V.shiftBetween(before, hinted), worstOff(cam, before), 1.5, "how far the old calibration was off");
+});
+
+test("two cameras in one picture (OBS side by side): each half finds its own board", () => {
+  const specs = [{ pos: { x: -170, y: -60, z: 420 }, width: 640, height: 720, hfov: 60 }, { pos: { x: 170, y: -60, z: 420 }, width: 640, height: 720, hfov: 60 }];
+  const cams = specs.map((spec) => S.camera(spec));
+  const halves = cams.map((cam, i) => S.renderer(cam, { crop: { sx: 0, sy: 0, sw: 640, sh: 720 }, width: 640, height: 720 }, { noise: 3, seed: 5 + i, smooth: 2 })([]));
+  const both = { data: new Uint8ClampedArray(1280 * 720 * 4), width: 1280, height: 720 };
+  for (let y = 0; y < 720; y += 1) halves.forEach((half, i) => both.data.set(half.data.subarray(y * 640 * 4, (y + 1) * 640 * 4), (y * 1280 + i * 640) * 4));
+  cams.forEach((cam, i) => {
+    const cal = V.autoCalibrate(both, { region: { x0: i * 640, y0: 0, x1: (i + 1) * 640, y1: 720 }, center: { x: 320 + i * 640, y: 360 }, size: Math.hypot(640, 720) / 2 });
+    const inWhole = { project: (p) => { const q = cam.project(p); return q && { x: q.x + i * 640, y: q.y }; } };
+    assert.ok(cal && worstOff(inWhole, cal) < 0.6, `half ${i + 1}`);
+    near(V.halfCenter(cal).x, 320 + i * 640, 1e-9, `half ${i + 1} knows which half it is`);
+  });
+});
+
 // Two cameras either side of the board and a little above the bull, like the NexiGo rig. Drawing
 // the board takes a moment, so one rig is shared; each test gets its own run of random darts. The
 // light is soft, as on the real board (a dart's shadow is barely there); see the single-lamp test

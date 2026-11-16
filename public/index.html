@@ -418,7 +418,7 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
     th, td { padding-left: 6px; padding-right: 6px; }
   }
 </style>
-  <link rel="stylesheet" href="board-mode.css?v=4">
+  <link rel="stylesheet" href="board-mode.css?v=5">
   <title>Darts Tracker</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="nav.css?v=1">
@@ -589,12 +589,12 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
 <script src="practice-timer.js?v=2"></script>
 <script src="live-sync.js?v=1"></script>
 <script src="tracker-engine.js?v=2"></script>
-<script src="board-mode.js?v=4"></script>
+<script src="board-mode.js?v=5"></script>
 <script src="practice-engine.js?v=9"></script>
 <script src="challenge-engine.js?v=3"></script>
 <script src="stats-engine.js?v=1"></script>
-<script src="board-vision.js?v=9"></script>
-<script src="board-camera.js?v=11"></script>
+<script src="board-vision.js?v=10"></script>
+<script src="board-camera.js?v=12"></script>
 
 <script>
 (function() {
@@ -1603,7 +1603,7 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
     box.classList.toggle("warn", !!warn);
     if (linkToSetup) {
       const a = document.createElement("a");
-      a.href = "camera.html"; a.textContent = "Set them up";
+      a.href = "station.html"; a.textContent = "Camera station";
       box.append(" ", a);
     }
   }
@@ -1620,7 +1620,7 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
     if (!watcher) {
       boardCam = null;
       toggle.checked = false;
-      setCamNote("No cameras yet: no camera station is running for your account, and none are set up in this browser.", true, true);
+      setCamNote('No cameras yet. On the computer the cameras are plugged into, open the Camera station page and press "Set up the cameras".', true, true);
       return;
     }
     boardCam = watcher;
@@ -2267,7 +2267,7 @@ function applyBoardHit(hit){
     const note = saveShown ? saveEl.textContent : boardEl.textContent || camEl.textContent;
     const warn = saveShown ? saveEl.classList.contains("warn") : !boardEl.textContent && camEl.classList.contains("warn");
     const model = {
-      view: v, paused, camOn: document.getElementById("cameraToggle").checked, voiceOn: tapVoiceEnabled,
+      view: v, paused, camOn: document.getElementById("cameraToggle").checked, camDown: (boardCam && boardCam.down) || "", voiceOn: tapVoiceEnabled,
       undoCount: tapStack.length, note, noteWarn: warn,
       dartsText: p.darts ? `${p.darts} dart${p.darts === 1 ? "" : "s"}` : "",
       modeLabel: scoreMode === "single" ? "Tracker · singles" : "Tracker · standard scoring",

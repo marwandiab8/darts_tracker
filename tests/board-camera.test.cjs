@@ -202,3 +202,294 @@ test("a check event says whether the cameras were swapped back", () => {
   assert.deepEqual(slim.cameras.map((c) => c.moved), [0.12, 0.4]);
   assert.equal(C.slimEvent({ type: "check", cameras: [] }).swapped, false);
 });
+
+// ---- one reader of the board, and calibrating with no taps ------------------------------------------
+const V = require("../public/board-vision.js");
+const S = require("./board-sim.cjs");
+const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
+
+// This browser's own camera setup, as the pages keep it (localStorage), for the length of a test.
+function withLocalCameras(t, cameras) {
+  const store = new Map([[C.KEY, JSON.stringify({ version: 1, cameras })]]);
+  global.localStorage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) };
+  t.after(() => { delete global.localStorage; });
+}
+
+test("an account with a camera station uses it and nothing else, even when it isn't running", async (t) => {
+  // The case of Nov 16, 2026: cameras set up in this browser too, and the station closed. The page
+  // must wait for the station, not open the cameras itself: both reading would enter every dart twice.
+  withLocalCameras(t, [{ deviceId: "dev", label: "NexiGo", cal }]);
+  const db = fakeDb();
+  db.write("cameraStations/me", station({ station: { name: "Linux computer", seen: Date.now() - 20 * 3600 * 1000 } }));
+  const got = [];
+  const w = await C.chooseWatcher({ db, user: { uid: "me" }, onEvent: (e) => got.push(e) });
+  t.after(() => w.stop());
+  assert.equal(w.remote, true, "the station, though it is off");
+  await w.start();
+  assert.ok(got.some((e) => e.type === "error" && /isn't running/.test(e.text)), "and the page says it isn't running");
+  // A station that said it stopped counts as off at once, not 90 seconds later.
+  assert.equal(C.isOnline(station({ station: { seen: Date.now(), on: false } })), false);
+  assert.equal(C.isOnline(station({ station: { seen: Date.now(), on: true } })), true);
+  // Chosen cameras that aren't calibrated yet are a station too (it calibrates them itself).
+  assert.equal(C.hasStation({ setup: { cameras: [{ deviceId: "a", label: "NexiGo", cal: null }] } }), true);
+  assert.equal(C.hasStation({ station: { seen: 5 } }), true);
+  assert.equal(C.hasStation({ setup: { cameras: [] } }), false);
+  assert.equal(C.hasStation(null), false);
+});
+
+test("with no station in the account, this browser's cameras are used, until a station turns up", async (t) => {
+  withLocalCameras(t, [{ deviceId: "dev", label: "NexiGo", cal }]);
+  const db = fakeDb();
+  const w = await C.chooseWatcher({ db, user: { uid: "me" }, onEvent() {} });
+  assert.ok(w && w.remote === false, "this browser's cameras");
+  assert.equal(typeof w.markEmpty, "function");
+  // Not signed in: the same, with no account to watch for a station.
+  const alone = await C.chooseWatcher({ db: null, user: null, onEvent() {} });
+  assert.ok(alone && !alone.remote);
+  // A station set up meanwhile: the next page to ask gets the station.
+  db.write("cameraStations/me", station());
+  const next = await C.chooseWatcher({ db, user: { uid: "me" }, onEvent() {} });
+  assert.equal(next.remote, true);
+});
+
+// A camera station page, with what it said and whether it had the station.
+function stationPage(db, name) {
+  const said = [], lease = [];
+  const st = C.createStation({ db, uid: "me", name, onStatus: (text) => said.push(text), onLease: (l) => lease.push(l) });
+  return { st, said, lease };
+}
+const owner = (db) => (db.docs.get("cameraStations/me").station || {}).id;
+
+test("one camera station at a time: a second stands by, and takes over when the first stops", async (t) => {
+  const db = fakeDb();
+  const a = stationPage(db, "Linux computer"), b = stationPage(db, "Other computer");
+  t.after(() => { a.st.stop(); b.st.stop(); });
+  await a.st.start();
+  await tick();
+  assert.equal(a.st.active, true);
+  assert.equal(owner(db), a.st.id, "the first has the station");
+  assert.equal(db.docs.get("cameraStations/me").station.on, true);
+  await b.st.start();
+  await tick();
+  assert.equal(b.st.active, false, "the second stands by");
+  assert.equal(owner(db), a.st.id);
+  assert.ok(/already running/.test(b.said[b.said.length - 1]), b.said[b.said.length - 1]);
+  assert.deepEqual(b.lease[b.lease.length - 1].active, false);
+  // Standing by writes nothing: the first one's word in the account is untouched.
+  assert.equal(db.docs.get("cameraStations/me").station.name, "Linux computer");
+  a.st.stop();
+  await tick(20);
+  assert.equal(b.st.active, true, "the first stopped: the second takes over by itself");
+  assert.equal(owner(db), b.st.id);
+  assert.equal(db.docs.get("cameraStations/me").station.on, true);
+});
+
+test("taking the station over makes the one that had it give way, and it comes back when that one stops", async (t) => {
+  const db = fakeDb();
+  const a = stationPage(db, "Linux computer"), b = stationPage(db, "Other computer");
+  t.after(() => { a.st.stop(); b.st.stop(); });
+  await a.st.start();
+  await b.st.start({ takeOver: true });
+  await tick(20);
+  assert.equal(owner(db), b.st.id, "the second has it");
+  assert.equal(b.st.active, true);
+  assert.equal(a.st.active, false, "the first gave way");
+  assert.equal(a.lease[a.lease.length - 1].gaveWay, true);
+  // The one that gave way doesn't say "stopped" over the other's sign of life.
+  assert.equal(db.docs.get("cameraStations/me").station.on, true);
+  // A page standing by can be told to take it.
+  await a.st.takeOver();
+  await tick(20);
+  assert.equal(owner(db), a.st.id);
+  assert.equal(b.st.active, false);
+  a.st.stop();
+  await tick(20);
+  assert.equal(b.st.active, true, "and takes over again by itself");
+});
+
+test("a station that went quiet, or said it stopped, is taken over; one still running is not", async (t) => {
+  // Gone quiet two minutes ago (the computer went to sleep): free to take.
+  let db = fakeDb();
+  db.write("cameraStations/me", station({ station: { id: "old", host: "elsewhere", name: "Old computer", on: true, seen: Date.now() - 120000, running: true } }));
+  const a = stationPage(db, "Linux computer");
+  t.after(() => a.st.stop());
+  await a.st.start();
+  await tick();
+  assert.equal(a.st.active, true);
+  // A station from before stations claimed the account (no id), still giving signs of life: wait.
+  db = fakeDb();
+  db.write("cameraStations/me", station({ station: { name: "Linux computer", seen: Date.now(), running: true, status: "Watching with 2 cameras." } }));
+  const b = stationPage(db, "Second tab");
+  t.after(() => b.st.stop());
+  await b.st.start();
+  await tick();
+  assert.equal(b.st.active, false, "it may still be running");
+  // It stops (as the older page says it): the new one takes over.
+  db.write("cameraStations/me", { station: { seen: Date.now(), running: false, status: "Stopped." } }, { merge: true });
+  await tick(20);
+  assert.equal(b.st.active, true);
+  assert.equal(owner(db), b.st.id);
+});
+
+// A picture as the station takes it (a canvas), from the test rig.
+function canvasOf(cam, darts = []) {
+  const full = { crop: { sx: 0, sy: 0, sw: cam.width, sh: cam.height }, width: cam.width, height: cam.height };
+  const image = S.renderer(cam, full, { noise: 3, seed: 5, smooth: 2 })(darts);
+  return { width: image.width, height: image.height, getContext: () => ({ getImageData: () => image }) };
+}
+function worstOff(cam, calibration) {
+  const m = V.mapper(calibration);
+  let worst = 0;
+  for (const r of [V.REAL.bullOut, 0.35, V.REAL.tripleIn, V.REAL.tripleOut, 0.8, V.REAL.doubleIn, 1]) {
+    for (let k = 0; k < 60; k += 1) {
+      const a = (k / 60) * Math.PI * 2, p = cam.project({ x: Math.cos(a) * r * S.R, y: Math.sin(a) * r * S.R, z: 0 });
+      const b = m.toBoard(p.x, p.y);
+      worst = Math.max(worst, Math.hypot(b.x - Math.cos(a) * r, b.y - Math.sin(a) * r) * S.R);
+    }
+  }
+  return worst;
+}
+
+test("a camera is calibrated from what it shows, with no taps: found, followed when knocked, found again when moved", () => {
+  const spec = { pos: { x: 175, y: -55, z: 400 }, width: 1280, height: 720, hfov: 80, bend: -0.08 };
+  const cam = S.camera(spec);
+  // No calibration at all: the board is found in the picture.
+  const first = C.calibrateFrom(null, canvasOf(cam), false, 0);
+  assert.ok(first && first.how === "found" && first.moved === null, "found");
+  assert.ok(worstOff(cam, first.cal) < 0.6, `found within ${worstOff(cam, first.cal).toFixed(2)} mm`);
+  assert.equal(first.cal.auto, true);
+  assert.ok(first.cal.refined.edges >= C.GOOD_EDGES && first.cal.refined.rms <= C.GOOD_RMS);
+  // Knocked a little (with darts in the board): the calibration follows it, and says how far.
+  const knocked = S.camera(Object.assign({}, spec, { pos: { x: 181, y: -50, z: 396 }, look: { x: 4, y: 3, z: 0 } }));
+  const darts = [{ at: { x: 6, y: -101 }, lean: { x: 0.05, y: -0.25 } }, { at: { x: 40, y: 60 }, lean: { x: 0.1, y: -0.3 } }];
+  const second = C.calibrateFrom(first.cal, canvasOf(knocked, darts), false, 0);
+  assert.ok(second && second.how === "followed", "followed");
+  assert.ok(second.moved > 3 && second.moved < 12, `moved ${second.moved.toFixed(1)} mm`);
+  assert.ok(worstOff(knocked, second.cal) < 0.8);
+  assert.equal(second.cal.points.length, 5);
+  // Moved right across (put up somewhere else): the old calibration is no use, and the board is found afresh.
+  const moved = S.camera(Object.assign({}, spec, { pos: { x: -150, y: -90, z: 430 }, look: { x: -20, y: 10, z: 0 } }));
+  const third = C.calibrateFrom(second.cal, canvasOf(moved), false, 0);
+  assert.ok(third && third.how === "found", "found again");
+  assert.ok(third.moved > 25, `it says how far: ${third.moved.toFixed(0)} mm`);
+  assert.ok(worstOff(moved, third.cal) < 0.6);
+  // Nothing to see: no calibration, and nothing thrown.
+  const blank = { width: 1280, height: 720, getContext: () => ({ getImageData: () => ({ data: new Uint8ClampedArray(1280 * 720 * 4).fill(30), width: 1280, height: 720 }) }) };
+  assert.equal(C.calibrateFrom(null, blank, false, 0), null);
+  assert.equal(C.calibrateFrom(first.cal, blank, false, 0), null);
+  assert.equal(C.calibrateFrom(null, null, false, 0), null);
+});
+
+test("\"calibrate again\" from another computer reaches the station, and its answer comes back", async () => {
+  const db = fakeDb();
+  db.write("cameraStations/me", station());
+  // A station that answers every request with how it went.
+  const stop = db.collection("cameraStations").doc("me").onSnapshot((snap) => {
+    const d = snap.data();
+    if (d.ask && d.ask.calibrate && !(d.station.calibrated && d.station.calibrated.for === d.ask.calibrate)) {
+      db.write("cameraStations/me", { station: { calibrated: { for: d.ask.calibrate, at: 1, cameras: [{ ok: true, how: "followed", moved: 1.4, edges: 431, rms: 0.93 }] } } }, { merge: true });
+    }
+  });
+  const done = await C.requestCalibration(db, "me", 2000);
+  stop();
+  assert.equal(done.cameras[0].how, "followed");
+  assert.equal(done.cameras[0].edges, 431);
+  // No station answering: it says so rather than waiting for ever.
+  await assert.rejects(C.requestCalibration(db, "me", 60), /didn't answer/);
+});
+
+// ---- sharing the cameras with OBS (for DartCounter) -------------------------------------------------
+// A station with the two NexiGo cameras chosen, told which cameras are plugged in by the test.
+function obsRig(t, cameras) {
+  const db = fakeDb();
+  db.write("cameraStations/me", { uid: "me", setup: { version: 1, cameras: cameras || [{ deviceId: "a", label: "NexiGo N660P FHD Webcam", cal }, { deviceId: "b", label: "NexiGo N660P FHD Webcam", cal }] } });
+  const plugged = [{ deviceId: "a", label: "NexiGo N660P FHD Webcam" }, { deviceId: "b", label: "NexiGo N660P FHD Webcam" }];
+  const said = [];
+  const st = C.createStation({ db, uid: "me", name: "Linux computer", onStatus: (text) => said.push(text), devices: async () => plugged.slice(), obsTiming: { look: 15, gone: 60, wait: 200 } });
+  t.after(() => st.stop());
+  const obs = { deviceId: "o", label: "OBS" };
+  return { db, st, said, last: () => said[said.length - 1], record: () => db.docs.get("cameraStations/me").station,
+    obsOn: () => { if (!plugged.includes(obs)) plugged.push(obs); }, obsOff: () => { const i = plugged.indexOf(obs); if (i >= 0) plugged.splice(i, 1); } };
+}
+
+test("while OBS runs the station leaves the cameras alone, and takes them back by itself when OBS closes", async (t) => {
+  const r = obsRig(t);
+  await r.st.start();
+  await tick(40);
+  assert.equal(r.st.resting, false, "no OBS: the station has the cameras");
+  // OBS starts (its virtual camera appears among the cameras).
+  r.obsOn();
+  await tick(60);
+  assert.equal(r.st.resting, true, "it lets go");
+  assert.ok(/OBS is running and has the cameras/.test(r.last()), r.last());
+  assert.equal(r.record().resting, true, "and the account says so, for the games");
+  assert.equal(r.record().running, false);
+  // A game page says whose the cameras are, and what to do.
+  const got = [];
+  const w = C.createRemoteWatcher(r.db, "me", { onEvent: (e) => got.push(e) });
+  t.after(() => w.stop());
+  await w.start();
+  assert.ok(got.some((e) => e.type === "error" && /OBS has the cameras on Linux computer\. Close OBS there/.test(e.text)), JSON.stringify(got));
+  assert.equal(w.down, "OBS has the cameras");
+  // OBS closes: not straight away (it may only be starting again), then the cameras are taken back.
+  r.obsOff();
+  await tick(35);
+  assert.equal(r.st.resting, true, "a moment's grace for OBS to come back");
+  await tick(120);
+  assert.equal(r.st.resting, false, "then the station takes the cameras back");
+  assert.equal(r.record().resting, false);
+  assert.ok(r.said.some((s) => /OBS has closed/.test(s)));
+});
+
+test("OBS started again within the grace keeps the cameras: the station doesn't snatch them in between", async (t) => {
+  const r = obsRig(t);
+  await r.st.start();
+  r.obsOn();
+  await tick(50);
+  assert.equal(r.st.resting, true);
+  for (let k = 0; k < 4; k += 1) { // closed and opened again, over and over, quicker than the grace
+    r.obsOff();
+    await tick(30);
+    r.obsOn();
+    await tick(30);
+  }
+  assert.equal(r.st.resting, true, "still OBS's");
+  assert.ok(!r.said.some((s) => /OBS has closed/.test(s)), "never taken back in between");
+});
+
+test("\"Let OBS have the cameras\": freed before OBS starts, back after it closes, and back anyway if OBS never comes", async (t) => {
+  const r = obsRig(t);
+  await r.st.start();
+  await tick(30);
+  r.st.rest();
+  assert.equal(r.st.resting, true);
+  assert.ok(/free for OBS: start OBS now/.test(r.last()), r.last());
+  await tick(60);
+  assert.equal(r.st.resting, true, "it waits for OBS");
+  r.obsOn();
+  await tick(50);
+  assert.ok(/OBS is running and has the cameras/.test(r.last()), r.last());
+  r.obsOff();
+  await tick(150);
+  assert.equal(r.st.resting, false, "OBS came and went: the station has the cameras again");
+  // Asked for, but OBS never starts: it doesn't wait for ever.
+  r.st.rest();
+  assert.equal(r.st.resting, true);
+  await tick(320);
+  assert.equal(r.st.resting, false);
+  assert.ok(r.said.some((s) => /OBS didn't start/.test(s)));
+  // And it can be told to take them back at once.
+  r.st.rest();
+  r.st.resume();
+  assert.equal(r.st.resting, false);
+});
+
+test("a station set up on OBS's own picture reads it: OBS running is no reason to let go", async (t) => {
+  const r = obsRig(t, [{ deviceId: "o", label: "OBS", cal }, { deviceId: "o", label: "OBS", cal }]);
+  r.obsOn();
+  await r.st.start();
+  await tick(60);
+  assert.equal(r.st.resting, false);
+  r.st.rest();
+  assert.equal(r.st.resting, false, "nothing to hand over");
+});

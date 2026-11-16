@@ -55,6 +55,8 @@
   .steps li.current { border-color: var(--accent); }
   .steps li.done .dot { background: var(--good); }
   .steps .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--border); flex: none; }
+  .camlist { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 6px; }
+  .camlist li { padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; font-size: 14px; line-height: 1.4; }
   .guide { display: flex; gap: 10px; align-items: center; margin: 6px 0 10px; }
   .guide canvas { width: 96px; height: 96px; flex: none; }
   .fit { font-weight: 700; }
@@ -85,9 +87,9 @@
 
   <section class="card">
     <h2>Score darts with cameras</h2>
-    <p class="muted">Two cameras beside the board watch each dart go in, and the practice pages enter it for you, as if you had tapped where it landed. Set the cameras up once here: choose them, then show each one where the board is by tapping five points on its picture.</p>
-    <p class="muted">Cameras plugged into another computer? Open the <a href="station.html" style="color:var(--accent)">Camera station</a> page on that computer and leave it running: then set them up here, from any computer signed in to the same account, and play anywhere.</p>
-    <p class="muted">Mount the cameras close to the board, one each side, where they will stay. If a camera moves, calibrate it again.</p>
+    <p class="muted">Two cameras beside the board watch each dart go in, and the practice pages enter it for you, as if you had tapped where it landed.</p>
+    <p class="muted"><b>Setting up is one button</b>, on the <a href="station.html" style="color:var(--accent)">Camera station</a> page, on the computer the cameras are plugged into: it finds the cameras that see the board, calibrates each to the board by itself, and starts. Leave that page open, and play on any computer or tablet signed in to the same account. The station keeps the cameras calibrated: one that gets knocked is followed, and "Calibrate again" below does them afresh from here.</p>
+    <p class="muted">This page is for checking what the cameras see, calibrating by hand if the automatic way gets a camera wrong (one turned on its side or upside down), and trying them out. Mount the cameras close to the board, one each side, each seeing all of it.</p>
   </section>
 
   <!-- Where the cameras are -->
@@ -98,6 +100,13 @@
       <button type="button" class="secondary small" id="modeLocal" aria-pressed="false">Plugged into this computer</button>
     </div>
     <p id="stationInfo" class="muted" style="margin-bottom:0;"></p>
+    <div id="stationCal" class="hidden" style="margin-top:10px;">
+      <ul id="stationCams" class="camlist"></ul>
+      <div class="actions">
+        <button type="button" id="recalBtn">Calibrate again</button>
+      </div>
+      <div class="muted" id="recalMsg" role="status" style="font-size:14px;margin-top:8px;"></div>
+    </div>
   </section>
   <section class="card hidden" id="signCard">
     <p class="muted" style="margin:0 0 8px;">Sign in to use a camera station: cameras plugged into another computer, set up from here.</p>
@@ -131,7 +140,7 @@
 
   <!-- 2. Calibrate -->
   <section class="card hidden" id="calCard">
-    <h2>2. Show each camera where the board is</h2>
+    <h2 id="calTitle">2. Show each camera where the board is</h2>
     <div class="tabs" id="calTabs" role="group" aria-label="Which camera"></div>
     <div class="cal-grid">
       <div class="cal-stage">
@@ -141,10 +150,11 @@
       <div>
         <div class="guide"><canvas id="guide" width="192" height="192" aria-hidden="true"></canvas><div id="stepText" style="font-size:14px;"></div></div>
         <ol class="steps" id="steps"></ol>
-        <p class="muted" style="font-size:13px;">Press on the picture, slide until the cross in the magnifier sits exactly on the spot, and let go. Drag a dot to move it. Take the board out of the picture? Use "New picture" with the darts out of the board.</p>
+        <p class="muted" style="font-size:13px;"><b>The quick way:</b> "Find the board by itself" needs no taps. By hand: press on the picture, slide until the cross in the magnifier sits exactly on the spot, and let go. Drag a dot to move it. Take the board out of the picture? Use "New picture" with the darts out of the board.</p>
         <div class="fit" id="fit"></div>
         <div class="actions">
           <button type="button" id="saveCalBtn" disabled>Save</button>
+          <button type="button" class="secondary small" id="autoCalBtn">Find the board by itself</button>
           <button type="button" class="secondary small" id="snapBtn">New picture</button>
           <button type="button" class="secondary small" id="resetCalBtn">Start over</button>
         </div>
@@ -180,8 +190,8 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
-<script src="board-vision.js?v=9"></script>
-<script src="board-camera.js?v=11"></script>
+<script src="board-vision.js?v=10"></script>
+<script src="board-camera.js?v=12"></script>
 <script>
 (function () {
   "use strict";
@@ -475,7 +485,7 @@
       let off = null;
       (r.offBy || []).forEach((d, i) => { if (d !== null && d > 4 && (!off || d > off.d)) off = { i, d }; });
       fitBox.className = "fit good";
-      fitBox.textContent = `Matched to the board: the blue lines follow ${r.edges} edges of its rings and wires, ${r.rms < 1 ? "within a millimetre" : "within " + r.rms.toFixed(1) + " mm"} on average.`
+      fitBox.textContent = `${cal.auto ? "Calibrated with no taps: " : "Matched to the board: "}the blue lines follow ${r.edges} edges of its rings and wires, ${r.rms < 1 ? "within a millimetre" : "within " + r.rms.toFixed(1) + " mm"} on average.`
         + (r.shift >= 1 ? ` From your five points alone they were up to ${r.shift.toFixed(1)} mm off.` : "")
         + (off ? ` Point "${P[off.i].short}" is ${Math.round(off.d)} mm from where the board puts it: is it on the right spot?` : "")
         + " Check the lines sit on the wires, then Save.";
@@ -598,6 +608,23 @@
   calCanvas.addEventListener("pointercancel", endDrag);
 
   $("snapBtn").addEventListener("click", () => { takeStill(true); refresh(); });
+  // No taps: the board is found in the picture shown (or, with a calibration already, that is
+  // matched to the board again first). Save keeps it.
+  $("autoCalBtn").addEventListener("click", () => {
+    const slot = slots[active];
+    if (!slot.still) { $("calSaved").textContent = "No picture from this camera yet."; return; }
+    const got = C.calibrateFrom(slot.cal, slot.still, sharedPicture(slot), slot.i);
+    if (!got) {
+      $("calSaved").textContent = "The board couldn't be found in this picture (something in front of it, too dark, or part of the rings out of the picture). Take a new picture with the board clear, or tap the five points.";
+      return;
+    }
+    slot.cal = Object.assign({ at: Date.now() }, got.cal);
+    slot.points = got.cal.points.map((p) => (p ? { x: p.x, y: p.y } : null));
+    slot.saved = false; slot.snapTried = false;
+    current = P.length;
+    $("calSaved").textContent = "Found. Check the blue lines sit on the wires and the numbers are by their own segments, then Save.";
+    drawCal(); refresh();
+  });
   $("resetCalBtn").addEventListener("click", () => {
     const slot = slots[active];
     slot.points = P.map(() => null); slot.cal = null; slot.saved = false; current = 0;
@@ -895,9 +922,57 @@
     const name = st.name ? `"${st.name}"` : "The camera station";
     const cams = stationCams().map((c, i) => `Camera ${i + 1}: ${c.label || "?"}${c.cal ? " (calibrated)" : ""}`).join(", ");
     const ago = st.seen ? Math.round((Date.now() - st.seen) / 60000) : null;
-    const state = C.isOnline(stationDoc) ? (st.running ? "is running and watching the board" : `is running${st.status ? ": " + st.status : ""}`) : `isn't running${ago !== null ? ` (last seen ${ago < 1 ? "just now" : ago < 120 ? ago + " min ago" : Math.round(ago / 60) + " h ago"})` : ""}. Open the Camera station page on that computer.`;
+    const state = C.isOnline(stationDoc) ? (st.running ? "is running and watching the board." : st.resting ? "is on, and has let OBS have the cameras: it takes them back by itself when OBS closes." : `is on, but not watching the board${st.status ? ": " + String(st.status).replace(/\.$/, "") : ""}.`) : `isn't running${ago !== null ? ` (last seen ${ago < 1 ? "just now" : ago < 120 ? ago + " min ago" : Math.round(ago / 60) + " h ago"})` : ""}. Open the Camera station page on that computer.`;
     return `${name} ${state}` + (cams ? ` ${cams}.` : " No cameras chosen there yet.") + learnText(stationDoc.setup || {});
   }
+
+  // How each of the station's cameras is calibrated, and "Calibrate again": the station does every
+  // camera afresh from what it shows now (no taps), and says how it went.
+  function calLine(c, r, i) {
+    const name = `Camera ${i + 1}`;
+    if (!c.cal) return `${name}: not calibrated yet. The station does it by itself once the camera sees the whole board.`;
+    const fit = c.cal.refined ? `${c.cal.refined.edges} edges of the board, within ${c.cal.refined.rms < 1 ? "a millimetre" : c.cal.refined.rms.toFixed(1) + " mm"}` : "";
+    const how = c.cal.auto ? "calibrated by itself" : "calibrated by hand";
+    const when = c.cal.at ? ` on ${new Date(c.cal.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "";
+    const last = r && r.ok === false ? " Last time the board couldn't be made out, so it kept this one." : r && r.how === "followed" && r.moved ? ` It had moved ${r.moved.toFixed(1)} mm and was followed.` : "";
+    return `${name}: ${how}${when}${fit ? ` (${fit})` : ""}.${last}`;
+  }
+  function showStationCal() {
+    const on = mode === "station" && stationCams().length > 0;
+    $("stationCal").classList.toggle("hidden", !on);
+    if (!on) return;
+    const results = (stationDoc && stationDoc.station && stationDoc.station.cameras) || [];
+    const list = $("stationCams");
+    list.innerHTML = "";
+    stationCams().forEach((c, i) => { const li = document.createElement("li"); li.textContent = calLine(c, results[i], i); list.append(li); });
+    $("recalBtn").disabled = recalBusy || !C.isOnline(stationDoc);
+    if (!recalBusy && !C.isOnline(stationDoc)) $("recalMsg").textContent = "The camera station isn't running: open the Camera station page on the computer with the cameras.";
+    else if (!recalBusy && /isn't running/.test($("recalMsg").textContent)) $("recalMsg").textContent = "";
+  }
+  let recalBusy = false;
+  $("recalBtn").addEventListener("click", async () => {
+    if (!user || !db || recalBusy) return;
+    recalBusy = true;
+    $("recalMsg").textContent = "The station is finding the board in each camera's picture…";
+    showStationCal();
+    try {
+      const done = await C.requestCalibration(db, user.uid);
+      const cams = done.cameras || [], bad = cams.map((r, i) => (r && r.ok ? -1 : i)).filter((i) => i >= 0);
+      $("recalMsg").textContent = !bad.length
+        ? `Done: ${cams.length > 1 ? "both cameras are" : "the camera is"} calibrated to the board. Have a look at the blue lines below.`
+        : `${bad.map((i) => "Camera " + (i + 1)).join(" and ")}: the board couldn't be made out (something in front of it, too dark, or part of it out of the picture), so the calibration from before is kept. Clear the board's view and try again.`;
+      // The new calibrations, on fresh pictures.
+      loadSlots(stationCams());
+      slots.forEach((slot) => { slot.still = null; });
+      refresh();
+      takeStill();
+    } catch (error) {
+      $("recalMsg").textContent = error.message;
+    } finally {
+      recalBusy = false;
+      showStationCal();
+    }
+  });
 
   // What the station learned from the darts you kept and corrected (board-learn.js, on the station).
   function learnText(setup) {
@@ -920,6 +995,8 @@
     $("modeStation").setAttribute("aria-pressed", String(next === "station"));
     $("modeLocal").setAttribute("aria-pressed", String(next === "local"));
     $("stationInfo").textContent = next === "station" ? stationText() : "Cameras plugged into this computer, set up in this browser.";
+    showStationCal();
+    $("calTitle").textContent = next === "station" ? "Check a camera, or calibrate it by hand" : "2. Show each camera where the board is";
     $("pickCard").classList.toggle("hidden", next === "station");
     visit = []; captures = []; drawTestBoard();
     if (next === "station") {
@@ -962,12 +1039,13 @@
       }
       if (mode !== "station") return;
       $("stationInfo").textContent = stationText();
+      showStationCal();
       // Different cameras chosen on the station: start again with those.
       if (JSON.stringify(stationCams().map((c) => [c.deviceId, c.label])) !== before) setMode("station");
       else { setup = { version: 1, cameras: stationCams() }; refresh(); }
     }, () => { $("stationInfo").textContent = "Couldn't read the camera station from your account."; });
   }
-  setInterval(() => { if (mode === "station") $("stationInfo").textContent = stationText(); }, 30000);
+  setInterval(() => { if (mode === "station") { $("stationInfo").textContent = stationText(); showStationCal(); } }, 30000);
 
   // ---- start ----------------------------------------------------------------------------------------------
   drawTestBoard();

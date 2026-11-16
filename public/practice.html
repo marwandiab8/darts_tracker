@@ -6,7 +6,7 @@
 <title>Practice - Darts Tracker</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="nav.css?v=1">
-<link rel="stylesheet" href="board-mode.css?v=4">
+<link rel="stylesheet" href="board-mode.css?v=5">
 <style>
   :root {
     --bg: #0b0f17; --muted: #94a3b8; --text: #e5e7eb; --accent: #f59e0b; --bot: #38bdf8;
@@ -436,11 +436,11 @@
      still forced to fetch the matching engine instead of silently pairing a new page with a stale
      one, which throws inside announce()'s catch-all and looks like "no sound at all". -->
 <script src="practice-engine.js?v=9"></script>
-<script src="board-mode.js?v=4"></script>
+<script src="board-mode.js?v=5"></script>
 <script src="practice-timer.js?v=2"></script>
 <script src="live-sync.js?v=1"></script>
-<script src="board-vision.js?v=9"></script>
-<script src="board-camera.js?v=11"></script>
+<script src="board-vision.js?v=10"></script>
+<script src="board-camera.js?v=12"></script>
 <script>
 (function () {
   "use strict";
@@ -1989,8 +1989,8 @@
     box.textContent = "";
     if (!show) return;
     if (camText === "setup") {
-      box.append(document.createTextNode("No cameras yet: no camera station is running for your account, and none are set up in this browser. "));
-      const a = el("a", "", "Set them up"); a.href = "camera.html";
+      box.append(document.createTextNode('No cameras yet. On the computer the cameras are plugged into, open the Camera station page and press "Set up the cameras". '));
+      const a = el("a", "", "Camera station"); a.href = "station.html";
       box.append(a);
       return;
     }
@@ -2752,7 +2752,7 @@
     const model = {
       view,
       paused: !!timer && !game.winner && !reviewing && T.isPaused(timer, Date.now()),
-      camOn: !!settings.camera, voiceOn: !settings.mute,
+      camOn: !!settings.camera, camDown: (cam && cam.down) || "", voiceOn: !settings.mute,
       undoCount: canStepBack() ? 1 : 0,
       note: camText && camText !== "setup" ? camText : lastMessage,
       noteWarn: !!camWarn,

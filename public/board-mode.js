@@ -30,9 +30,12 @@
 // handlers: exit(), start(), pause(), voice(), camera(), manual(man), undo(),
 //           fix(index, seq, value), boardTap(x, y) (optional: a tap on the board, in board radii),
 //           and any other data-act of model.doneActions
-// model: { view, paused, camOn, voiceOn, undoCount, note, noteWarn, dartsText, info, doneText,
+// model: { view, paused, camOn, camDown, voiceOn, undoCount, note, noteWarn, dartsText, info, doneText,
 //          doneHtml, doneActions: [{ act, text, primary }], pad: [{ man, text, disabled }],
 //          idleTitle, lastRound }
+//          camDown: with the cameras switched on, why they aren't reading (the camera station isn't
+//          running, say), or "" when they are. The Cameras button and the next dart's box then say
+//          so, instead of "The cameras are watching".
 // view:  { target, finished, label?, next: [], dartNo, darts: [{ index, s, x, y, kind, read, sub, fixed }],
 //          unseen, waiting: [{ read, sub }], visitDone, pullOut, cells: [{ key, num, state, sub }],
 //          done, of, note }
@@ -219,6 +222,8 @@
         out += `<div class="bm-slot unread"><span class="n">${i + 1}</span><span class="r">${esc(x.read)}</span><span class="s">${esc(x.sub)}</span></div>`;
       } else if (v.unseen && i >= v.darts.length + waiting.length && i < v.darts.length + waiting.length + v.unseen) {
         out += `<div class="bm-slot miss unseen"><span class="n">${i + 1}</span><span class="r">Not seen</span><span class="s">Counted as a miss</span></div>`;
+      } else if (!v.visitDone && i === v.darts.length + waiting.length && !m.paused && m.camOn && m.camDown) {
+        out += `<div class="bm-slot wait down"><span class="n">${i + 1}</span><span class="r">Cameras off</span><span class="s">${esc(m.camDown)}</span></div>`;
       } else if (!v.visitDone && i === v.darts.length + waiting.length && !m.paused && m.camOn) {
         out += `<div class="bm-slot wait"><span class="n">${i + 1}</span><span class="r">Throw</span><span class="s">The cameras are watching</span></div>`;
       } else {
@@ -345,6 +350,7 @@
         ref.voice.setAttribute("aria-pressed", String(!!m.voiceOn));
         ref.voiceText.textContent = m.voiceOn ? "Voice" : "Voice off";
         ref.camera.setAttribute("aria-pressed", String(!!m.camOn));
+        ref.camera.classList.toggle("down", !!(m.camOn && m.camDown));
         ref.pause.textContent = m.paused ? "Resume" : "Pause";
         ref.pause.disabled = !v || v.finished || m.pauseOff;
         ref.darts.textContent = m.dartsText || "";
@@ -390,7 +396,7 @@
           }
         } else doneSig = "";
         // The rest only when something changed (it's redrawn every half second otherwise).
-        const s = JSON.stringify([v, m.paused, m.camOn, m.note, m.noteWarn, m.info, m.oppHtml]);
+        const s = JSON.stringify([v, m.paused, m.camOn, m.camDown, m.note, m.noteWarn, m.info, m.oppHtml]);
         if (s === sig) return;
         sig = s;
         ref.label.textContent = m.paused ? "Paused" : v.label || (v.pullOut ? "Pull your darts out, then" : "Throwing at");

@@ -9,7 +9,8 @@
 // with each half calibrated on its own.
 (function (root) {
   "use strict";
-  const V = root.BoardVision;
+  // In the pages BoardVision is loaded first; under Node (the tests) it is required here.
+  const V = root.BoardVision || (typeof module === "object" && module.exports && typeof require === "function" ? require("./board-vision.js") : undefined);
   const KEY = "dt_cameraSetup";
 
   function load() {
@@ -46,7 +47,7 @@
     switch (error && error.name) {
       case "NotAllowedError": return "Camera access was blocked. Allow the camera for this site (the camera icon in the address bar), then try again.";
       case "NotReadableError":
-      case "AbortError": return `${name} is in use by another program. Close OBS (or whatever else is using it), or choose "OBS Virtual Camera" instead.`;
+      case "AbortError": return `${name} is in use by another program. Close OBS (or whatever else is using it).`;
       case "NotFoundError":
       case "OverconstrainedError": return `${name} isn't plugged in, or its name changed. Check the cable, then set it up again.`;
       default: return `${name} could not be opened${error && error.message ? ": " + error.message : "."}`;
@@ -156,6 +157,93 @@
     return V.refineCalibration(cal, pixelsOf(canvas), Object.assign(lensOptions(cal, shared), extra));
   }
 
+  // --- calibrating with no taps ------------------------------------------------------------------
+
+  // A fit of this many of the board's edges (of about 440), this close on average (mm), is a
+  // calibration to trust with no taps behind it.
+  const GOOD_EDGES = 240, GOOD_RMS = 1.6;
+  const sharedIn = (cams, i) => !!(cams[i] && cams[i].deviceId) && cams.filter((c) => c && c.deviceId === cams[i].deviceId).length > 1;
+
+  // The part of a shared picture (OBS's two cameras side by side) that is this camera's own: the
+  // half its board is in when it has a calibration, else by its place (camera 1 on the left).
+  function ownHalf(cal, index, w, h) {
+    const middle = cal && cal.H ? V.halfCenter(cal) : null;
+    const left = middle ? middle.x < w / 2 : index === 0;
+    return left ? { x0: 0, y0: 0, x1: w / 2, y1: h } : { x0: w / 2, y0: 0, x1: w, y1: h };
+  }
+
+  // A camera's calibration from what it shows now (`canvas`), with nothing tapped. One from before
+  // (`cal`) is matched to the board first, which follows a camera that was knocked a little. When
+  // that no longer fits, or there is none, the board is found in the picture from scratch
+  // (BoardVision.autoCalibrate), the old one saying only which way up the board was. Returns
+  // { cal, how: "followed" | "found", moved } (`moved`: mm from the one before, null without one),
+  // or null when the board can't be made out: something in the way, too dark, or part of the rings
+  // out of the picture. `shared`: the picture is OBS's, with the other camera in its other half.
+  function calibrateFrom(cal, canvas, shared, index) {
+    if (!V || !canvas || !canvas.width) return null;
+    const image = pixelsOf(canvas);
+    const before = cal && cal.H && (!cal.width || (cal.width === image.width && cal.height === image.height)) ? cal : null;
+    if (before) {
+      let fit = null;
+      try { fit = V.refineCalibration(before, image, Object.assign(lensOptions(before, shared), { taps: false })); } catch (_) { fit = null; }
+      if (fit && fit.refined.edges >= GOOD_EDGES && fit.refined.rms <= GOOD_RMS) return { cal: V.withPoints(fit), how: "followed", moved: fit.refined.shift };
+    }
+    const region = shared ? ownHalf(before, index || 0, image.width, image.height) : null;
+    const lens = region ? { center: { x: (region.x0 + region.x1) / 2, y: image.height / 2 }, size: Math.hypot(image.width / 2, image.height) / 2 } : {};
+    let found = null;
+    try { found = V.autoCalibrate(image, Object.assign({ hint: before, region, minEdges: GOOD_EDGES, maxRms: GOOD_RMS }, lens)); } catch (_) { found = null; }
+    if (!found) return null;
+    return { cal: found, how: "found", moved: before ? V.shiftBetween(before, found) : null };
+  }
+
+  // Which of the cameras plugged in can see a dartboard, with a calibration for each, so nothing
+  // has to be chosen or tapped: every camera is opened in turn and the board looked for in its
+  // picture. OBS's virtual camera shows both cameras side by side: then each half is one. Returns
+  // { cameras, busy }: `cameras` is up to two { deviceId, label, cal } (the camera to the left of
+  // the board first; for OBS, two with the same deviceId), and `busy` the names of cameras another
+  // program has. OBS's picture is only settled for when no camera is busy: with the cameras
+  // themselves in use (by OBS, most likely), the answer is to free them, not to read them at half
+  // the size through OBS. onProgress({ label, state: "looking" | "found" | "none" | "failed", text }).
+  async function findBoardCameras({ onProgress = () => {} } = {}) {
+    const devices = await requestAccess();
+    const single = [], halves = [], busy = [];
+    // Two cameras of one model have one name: told apart here as "(1)" and "(2)".
+    const nameOf = (d) => {
+      const same = devices.filter((x) => x.label === d.label);
+      return same.length > 1 ? `${d.label} (${same.indexOf(d) + 1})` : d.label;
+    };
+    for (const d of devices) {
+      const shownAs = nameOf(d);
+      onProgress({ label: shownAs, state: "looking" });
+      let stream = null, video = null;
+      try {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { deviceId: { exact: d.deviceId }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } } });
+        } catch (error) {
+          if (error && (error.name === "NotReadableError" || error.name === "AbortError")) busy.push(shownAs);
+          throw new Error(explain(error, d.label));
+        }
+        video = await videoFor(stream);
+        await settled(video, 900);
+        const canvas = still(video);
+        const two = [0, 1].map((i) => calibrateFrom(null, canvas, true, i));
+        const one = two[0] && two[1] ? null : calibrateFrom(null, canvas, false, 0);
+        if (two[0] && two[1]) two.forEach((got) => halves.push({ deviceId: d.deviceId, label: d.label, cal: got.cal }));
+        else if (one) single.push({ deviceId: d.deviceId, label: d.label, cal: one.cal });
+        onProgress({ label: shownAs, state: (two[0] && two[1]) || one ? "found" : "none" });
+      } catch (error) {
+        onProgress({ label: shownAs, state: "failed", text: error.message });
+      } finally {
+        if (stream) stream.getTracks().forEach((t) => t.stop());
+        if (video && video.parentNode) video.parentNode.removeChild(video);
+      }
+    }
+    const found = single.length ? single.sort((x, y) => y.cal.refined.edges - x.cal.refined.edges).slice(0, 2) : busy.length ? [] : halves.slice(0, 2);
+    const side = (c) => { const pose = V.cameraPose(c.cal.H, c.cal.width, c.cal.height, c.cal.lens ? { x: c.cal.lens.cx, y: c.cal.lens.cy } : null); return pose ? pose.x : 0; };
+    if (single.length) found.sort((x, y) => side(x) - side(y));
+    return { cameras: found.map((c) => ({ deviceId: c.deviceId, label: c.label, cal: Object.assign({ at: Date.now() }, c.cal) })), busy };
+  }
+
   // A timer that keeps going while the page is in the background (a camera station left behind
   // other windows): browsers slow ordinary timers in hidden pages to about once a minute, but not
   // those in a worker. { set(fn, ms), clear(), close() }, or null where workers aren't available.
@@ -220,8 +308,18 @@
       running = true;
       stills = []; checks = []; swapped = false;
       onEvent({ type: "status", text: "Opening the cameras…" });
+      // Stopped while still starting (the cameras wanted elsewhere): whatever was opened since is
+      // let go of, and nothing more is opened.
+      const made = [];
+      const stopped = () => {
+        if (running) return false;
+        made.forEach((v) => { if (v.parentNode) v.parentNode.removeChild(v); });
+        stop();
+        return true;
+      };
       try {
         const found = matchCameras(cams, await listCameras());
+        if (stopped()) return;
         if (found.some((d) => !d)) throw missingError(cams, found);
         // One stream per physical camera, shared by views that use the same one (OBS side by side).
         const byDevice = new Map();
@@ -232,7 +330,10 @@
           if (!entry) {
             const stream = await openStream(device.deviceId, device.label || cams[i].label, 3);
             streams.push(stream);
+            if (stopped()) return;
             const video = await videoFor(stream);
+            made.push(video);
+            if (stopped()) return;
             entry = { device, video, still: null };
             const mine = entry;
             stream.getVideoTracks().forEach((track) => track.addEventListener("ended", () => {
@@ -245,6 +346,7 @@
         }
         // What each camera shows now, once its exposure has settled.
         await Promise.all([...byDevice.values()].map((entry) => settled(entry.video, 600)));
+        if (stopped()) return;
         for (const entry of byDevice.values()) entry.still = still(entry.video);
         // A camera sharing its picture with another (OBS side by side) has its lens in the middle
         // of its own half.
@@ -379,10 +481,13 @@
   //   cameraStations/{uid}                 { uid, setup, station, ask }
   //       setup    { version, cameras: [{ deviceId, label, cal }] }: which of the station's cameras,
   //                and their calibrations. Calibrated from any computer (camera.html), which writes it.
-  //       station  { name, seen, running, status, devices, frame }: written by the station; `seen`
-  //                (ms) every 20 s while it runs.
-  //       ask      { still, clear }: requests from other computers (an id each): send fresh
-  //                pictures; the board is clear now.
+  //       station  { id, host, on, name, seen, running, status, devices, frame, cameras, calibrated }:
+  //                written by the station; `seen` (ms) every 20 s while it runs. `id` is the page
+  //                that is the account's station (one at a time: see createStation) and `host` its
+  //                browser; `on` is false once it has stopped; `cameras` says how each camera's
+  //                calibration stands, and `calibrated` how the last "calibrate again" went.
+  //       ask      { still, clear, calibrate }: requests from other computers (an id each): send
+  //                fresh pictures; the board is clear now; calibrate every camera afresh.
   //   cameraStations/{uid}/stills/{0|1}    { jpeg, width, height, label, taken, for }: each camera's picture
   //   cameraStations/{uid}/events/latest   { seq, events, updated }: the last 20 events, each with
   //                a rising `seq`, as the watcher gives them (darts, take-outs...), slimmed down.
@@ -392,13 +497,51 @@
   // the station page loads; elsewhere nothing is learned).
   const learnedOptions = (setup) => (root.BoardLearn && setup && setup.learned && setup.learned.options ? root.BoardLearn.cleanLearned(setup.learned.options) : {});
   const BEAT_MS = 20000, ONLINE_MS = 90000;
+  // A station that has given no sign of life for this long has stopped: another may take over.
+  const LEASE_MS = 50000;
+  // A camera followed this far (mm) from its saved calibration has that saved as followed.
+  const FOLLOW_MM = 1;
   const stationRef = (db, uid) => db.collection(STATIONS).doc(uid);
   const seenAt = (v) => (typeof v === "number" ? v : v && typeof v.toMillis === "function" ? v.toMillis() : 0);
-  // Whether a station's last sign of life is recent.
-  const isOnline = (doc) => !!(doc && doc.station && Date.now() - seenAt(doc.station.seen) < ONLINE_MS);
+  // Whether a station's last sign of life is recent (and it hasn't said it stopped).
+  const isOnline = (doc) => !!(doc && doc.station && doc.station.on !== false && Date.now() - seenAt(doc.station.seen) < ONLINE_MS);
+  // Whether the account has a camera station at all: cameras chosen for one, or one that has run.
+  const hasStation = (doc) => !!(doc && ((doc.setup && Array.isArray(doc.setup.cameras) && doc.setup.cameras.some((c) => c && (c.deviceId || c.label))) || (doc.station && doc.station.seen)));
   const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   const round = (v, n = 5) => (typeof v === "number" ? Math.round(v * 10 ** n) / 10 ** n : v);
   const point = (p) => (p ? { x: round(p.x), y: round(p.y) } : null);
+  const numberOr = (v, n) => (typeof v === "number" && Number.isFinite(v) ? round(v, n) : null);
+  // How a camera's calibration stands, in a few numbers, for the account.
+  const slimResult = (r) => (r ? { ok: !!r.ok, how: r.how || null, why: r.why || null, moved: numberOr(r.moved, 2), edges: numberOr(r.edges, 0), rms: numberOr(r.rms, 2), at: r.at || null } : null);
+
+  // This browser, for telling two tabs of it from two computers (kept in localStorage).
+  let hostMemo = null;
+  function hostId() {
+    try {
+      let id = localStorage.getItem("dt_stationHost");
+      if (!id) { id = newId(); localStorage.setItem("dt_stationHost", id); }
+      return id;
+    } catch (_) {
+      hostMemo = hostMemo || newId();
+      return hostMemo;
+    }
+  }
+
+  // A timer for a page that may sit behind other windows (see workerTimer), or an ordinary one
+  // where there are no workers: { set(fn, ms), clear() }.
+  function backTimer() {
+    const w = workerTimer();
+    let t = null;
+    return {
+      set(fn, ms) {
+        if (w) { w.set(fn, ms); return; }
+        clearTimeout(t);
+        t = setTimeout(fn, ms);
+        if (t && typeof t.unref === "function") t.unref(); // under Node, a pending timer mustn't keep the tests alive
+      },
+      clear() { if (w) w.clear(); clearTimeout(t); t = null; },
+    };
+  }
 
   // An event as it is passed on: what the pages need, without the pictures and pixel lists.
   function slimEvent(e) {
@@ -429,28 +572,197 @@
   // Runs the camera station on this computer for the signed-in user `uid`. `name` names this
   // computer for the others. onStatus(text, warn) says what it is doing; onEvent(event) passes on
   // the watcher's events (for showing them here too); onSetup(setup) is told when the account's
-  // choice of cameras changes (the station puts each calibration with the camera it fits). Returns
-  // { start, stop, choose(cameras), running, setup }: choose([{deviceId, label} | null, ...]) picks
-  // this computer's cameras.
+  // choice of cameras changes (the station puts each calibration with the camera it fits);
+  // onCameras(list) how each camera's calibration stands: { label, cal, picture (a canvas of what
+  // it was last checked on), result }; onLease({ active, by }) when this page becomes the account's
+  // station, or stands by for another. Returns { start({ takeOver }), stop, choose(cameras),
+  // calibrate(), takeOver(), running, active, watching, setup }: choose([{deviceId, label} | null,
+  // ...]) picks this computer's cameras.
+  //
+  // Calibrating needs no taps. A chosen camera with no calibration is calibrated from what it shows
+  // (calibrateFrom: the board is found in its picture), and so is one whose calibration no longer
+  // fits when watching starts. One that had to be followed more than a little (the camera knocked)
+  // is saved as followed, so the next start begins from where the camera is. calibrate(), or
+  // ask.calibrate from any computer, does every camera afresh.
   //
   // Cameras can be unplugged and plugged in again (a laptop taken away and brought back): the
   // station stops watching when one is unplugged, and starts again by itself once they are all
   // plugged in, as it does when it starts with one missing.
-  function createStation({ db, uid, name, onStatus = () => {}, onEvent = () => {}, onLearn = () => {}, onSetup = () => {}, fps = 10 }) {
+  function createStation({ db, uid, name, onStatus = () => {}, onEvent = () => {}, onLearn = () => {}, onSetup = () => {}, onCameras = () => {}, onLease = () => {}, fps = 10, devices: listDevices = listCameras, obsTiming = {} }) {
     const ref = stationRef(db, uid), events = ref.collection("events").doc("latest");
+    const me = newId(), host = hostId(), LOCK = "dt-camera-station:" + uid;
+    // How often it looks for OBS, how long after OBS has gone it takes the cameras back, and how
+    // long it waits for OBS to start after "Let OBS have the cameras" (ms).
+    const OBS = Object.assign({ look: 3000, gone: 20000, wait: 180000 }, obsTiming);
     let unsub = null, doc = null, watcher = null, watchingKey = "", previews = [], recent = [], seq = 0;
-    let beat = null, running = false, status = "", handled = { still: null, clear: null }, busy = Promise.resolve();
-    let waiting = null, shownCameras = null;
-    const beatTimer = workerTimer();
+    let running = false, active = false, status = "", busy = Promise.resolve();
+    // `live`: the watcher has the cameras open and is reading them (not still opening them).
+    let live = false;
+    const watchingNow = () => !!(watcher && watcher.running && live);
+    let handled = { still: null, clear: null, calibrate: null };
+    let waiting = null, shownCameras = null, lock = null;
+    // Letting OBS have the cameras: { since, why ("obs": OBS is running; "asked": the button), saw
+    // (OBS has been seen running since), gone (when it was last seen to have stopped) }, or null.
+    let resting = null;
+    // For each chosen camera: the picture its calibration was last checked on, how that went, and
+    // when the board was last found from scratch in it (not again straight away if that didn't hold).
+    let shots = [], results = [], foundAt = [];
+    const beatT = backTimer(), turnT = backTimer(), retryT = backTimer(), obsT = backTimer();
     const learning = createLearning();
 
-    // What it is doing, here and (for the other computers) in the account.
+    // What it is doing, here and (for the other computers, while this is the account's station) in
+    // the account.
     const say = (text, warn) => {
       status = text;
       onStatus(text, !!warn);
-      if (running) ref.set({ station: { status: String(text).slice(0, 200) } }, { merge: true }).catch(() => {});
+      if (running && active) ref.set({ station: { status: String(text).slice(0, 200) } }, { merge: true }).catch(() => {});
     };
     const chosen = () => ((doc && doc.setup && doc.setup.cameras) || []).filter((c) => c && (c.deviceId || c.label));
+    const hasCal = (c) => !!(c && c.cal && c.cal.H);
+    const camName = (cams, i) => (cams.length > 1 ? `Camera ${i + 1}` : "The camera");
+
+    // --- one station at a time ---------------------------------------------------------------------
+    // Two stations reading one board would put every dart into the games twice. So a station claims
+    // the account (station.id) before it opens a camera, and gives way the moment another claims
+    // it. One that finds another running stands by, and takes over by itself when that one stops
+    // (it says so) or goes quiet. Within one browser a lock tells at once when the page that had
+    // the station is gone (closed, reloaded), without waiting for its sign of life to go stale.
+    const theirs = (d) => { const s = d && d.station; return s && s.seen && s.id !== me ? s : null; };
+    const alive = (s) => !!s && s.on !== false && s.status !== "Stopped." && Date.now() - seenAt(s.seen) < LEASE_MS;
+
+    // Whether another page of this browser holds the station's lock. Where that can't be told
+    // (no locks in this browser), it is taken to: the other station's sign of life decides.
+    async function lockedElsewhere() {
+      try {
+        const state = await navigator.locks.query();
+        return (state.held || []).some((l) => l.name === LOCK);
+      } catch (_) {
+        return true;
+      }
+    }
+    function holdLock() {
+      if (lock) return;
+      const mine = { release: null };
+      lock = mine;
+      try {
+        navigator.locks.request(LOCK, () => new Promise((release) => {
+          mine.release = release;
+          if (lock !== mine) { release(); return; }
+          // Got it while standing by: the page that had the station in this browser is gone.
+          const s = theirs(doc);
+          if (running && !active && s && s.host === host) takeTurn();
+        })).catch(() => {});
+      } catch (_) { /* no locks here */ }
+    }
+    function dropLock() {
+      const mine = lock;
+      lock = null;
+      if (mine && mine.release) mine.release();
+    }
+
+    // This page becomes the account's camera station.
+    async function takeTurn() {
+      if (active || !running) return;
+      active = true;
+      turnT.clear();
+      try { onLease({ active: true }); } catch (_) { /* the page's business */ }
+      say("Starting…");
+      await ref.set({ uid, station: { id: me, host, name, on: true, claimed: Date.now(), seen: Date.now(), running: false, status: "Starting…" } }, { merge: true }).catch(() => {});
+      if (!running || !active) return;
+      try {
+        const kept = JSON.parse(localStorage.getItem(REST_KEY) || "null");
+        if (kept && kept.why === "asked" && Date.now() - kept.since < OBS.wait) resting = { since: kept.since, why: "asked", saw: !!kept.saw, gone: 0 };
+      } catch (_) { /* no storage */ }
+      await lookForObs(); // before a camera is opened: OBS may have them
+      if (!running || !active) return;
+      await heartbeat();
+      learning.start();
+      if (resting) say(restText(), true);
+      busy = busy.then(() => reconcile()).then(() => sendStills("start")).catch(() => {});
+    }
+
+    // Another page is the account's camera station: this one lets go of the cameras and waits.
+    function standBy(s) {
+      const gaveWay = active;
+      active = false;
+      beatT.clear(); retryT.clear(); obsT.clear();
+      if (watcher) watcher.stop();
+      watcher = null; watchingKey = ""; live = false;
+      resting = null; // whether OBS has the cameras is the other station's to see now
+      stopWaiting(); closePreviews(); learning.stop();
+      const here = !!(s && s.host && s.host === host);
+      status = `The camera station is already running ${here ? "in another tab of this browser" : "on " + ((s && s.name) || "another computer")}. This page takes over by itself if that one stops.`;
+      onStatus(status, true);
+      try { onLease({ active: false, by: { name: (s && s.name) || "", here }, gaveWay }); } catch (_) { /* the page's business */ }
+      // A station that stops without saying so just goes quiet: look again every few seconds.
+      const look = () => {
+        if (!running || active) return;
+        if (!alive(theirs(doc))) takeTurn();
+        else turnT.set(look, 5000);
+      };
+      turnT.set(look, 5000);
+    }
+
+    // --- sharing the cameras with OBS ----------------------------------------------------------------
+    // Only one program can have a camera. OBS takes both for DartCounter, and the station needs
+    // them for the games here, so the station gets out of OBS's way and comes back by itself:
+    //   - OBS's virtual camera shows among the cameras only while OBS is running it. While it is
+    //     there, the station leaves the cameras alone; a little after it has gone (OBS.gone), the
+    //     station takes them back.
+    //   - OBS only gets a camera that is free when OBS starts. "Let OBS have the cameras" (rest())
+    //     frees them first; without it, OBS started beside a watching station shows black cameras
+    //     until it is started again (the station having let go the moment it saw OBS).
+    // So the station page never has to be closed for OBS, which is how it used to get left closed.
+    // (A station set up on OBS's own picture reads that, and none of this applies.)
+    const isObs = (d) => /\bobs\b|virtual cam/i.test((d && d.label) || "");
+    const onObsPicture = () => chosen().some(isObs);
+    const REST_KEY = "dt_stationRest";
+    const keepRest = () => { try { if (resting) localStorage.setItem(REST_KEY, JSON.stringify(resting)); else localStorage.removeItem(REST_KEY); } catch (_) { /* private mode, or no storage */ } };
+    function restText() {
+      if (!resting) return "";
+      return resting.saw
+        ? "OBS is running and has the cameras (for DartCounter). The station takes them back by itself a few seconds after OBS closes."
+        : "The cameras are free for OBS: start OBS now. The station takes them back by itself after OBS closes.";
+    }
+    function startRest(why, saw) {
+      if (resting) {
+        if (saw) resting.gone = 0;
+        if (saw && !resting.saw) { resting.saw = true; keepRest(); say(restText(), true); heartbeat(); }
+        return;
+      }
+      resting = { since: Date.now(), why, saw: !!saw, gone: 0 };
+      keepRest();
+      retryT.clear();
+      if (watcher) watcher.stop();
+      watcher = null; watchingKey = ""; live = false;
+      stopWaiting(); closePreviews();
+      say(restText(), true);
+      heartbeat();
+    }
+    function endRest(text) {
+      if (!resting) return;
+      resting = null;
+      keepRest();
+      if (text) say(text);
+      busy = busy.then(() => reconcile()).catch((error) => say(error.message, true));
+      heartbeat();
+    }
+    // Looks whether OBS is running (its virtual camera is among the cameras), every few seconds
+    // while this is the account's station.
+    async function lookForObs() {
+      if (!running || !active) return;
+      let list = null;
+      try { list = await listDevices(); } catch (_) { list = null; }
+      if (!running || !active) return;
+      if (list && !onObsPicture()) {
+        if (list.some(isObs)) startRest("obs", true);
+        else if (resting && resting.saw) {
+          if (!resting.gone) { resting.gone = Date.now(); keepRest(); }
+          else if (Date.now() - resting.gone >= OBS.gone) endRest("OBS has closed: taking the cameras back…");
+        } else if (resting && Date.now() - resting.since >= OBS.wait) endRest("OBS didn't start, so the station has the cameras again.");
+      } else if (resting && list) endRest(); // set up on OBS's own picture: nothing to wait for
+      obsT.set(lookForObs, OBS.look);
+    }
 
     function publish(e) {
       onEvent(e);
@@ -467,7 +779,7 @@
     function unplugged() {
       if (!watcher || !running) return;
       watcher.stop();
-      watcher = null;
+      watcher = null; live = false;
       say("A camera was unplugged. The station starts watching again by itself once the cameras are plugged back in.", true);
       heartbeat();
       waitForCameras();
@@ -477,18 +789,18 @@
     // once they are all plugged in, watches with them.
     function waitForCameras() {
       if (waiting || !running) return;
-      const me = { timer: workerTimer(), t: null, onChange: null };
+      const me2 = { timer: workerTimer(), t: null, onChange: null };
       const later = (ms) => {
-        if (waiting !== me) return;
-        if (me.timer) me.timer.set(look, ms);
-        else { clearTimeout(me.t); me.t = setTimeout(look, ms); }
+        if (waiting !== me2) return;
+        if (me2.timer) me2.timer.set(look, ms);
+        else { clearTimeout(me2.t); me2.t = setTimeout(look, ms); }
       };
       async function look() {
-        if (waiting !== me) return;
+        if (waiting !== me2) return;
         let devices = null;
         try { devices = await listCameras(); } catch (_) { /* try again */ }
         const want = ready({ cameras: chosen() });
-        if (waiting === me && devices && want.length && matchCameras(want, devices).every(Boolean)) {
+        if (waiting === me2 && devices && want.length && matchCameras(want, devices).every(Boolean)) {
           stopWaiting();
           busy = busy.then(() => reconcile()).catch((error) => say(error.message, true));
           return;
@@ -496,43 +808,57 @@
         later(3000);
       }
       // A camera just plugged in is given a moment to settle before it is opened.
-      me.onChange = () => later(1500);
-      waiting = me;
-      if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) navigator.mediaDevices.addEventListener("devicechange", me.onChange);
+      me2.onChange = () => later(1500);
+      waiting = me2;
+      if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) navigator.mediaDevices.addEventListener("devicechange", me2.onChange);
       later(3000);
     }
     function stopWaiting() {
-      const me = waiting;
-      if (!me) return;
+      const w = waiting;
+      if (!w) return;
       waiting = null;
-      if (me.timer) me.timer.close();
-      clearTimeout(me.t);
-      if (navigator.mediaDevices && navigator.mediaDevices.removeEventListener) navigator.mediaDevices.removeEventListener("devicechange", me.onChange);
+      if (w.timer) w.timer.close();
+      clearTimeout(w.t);
+      if (navigator.mediaDevices && navigator.mediaDevices.removeEventListener) navigator.mediaDevices.removeEventListener("devicechange", w.onChange);
     }
 
     async function heartbeat() {
-      if (!running) return;
+      if (!running || !active) return;
       let devices = [];
       try { devices = (await listCameras()).map((d) => ({ deviceId: d.deviceId, label: d.label })); } catch (_) { /* keep going */ }
       const frame = watcher && watcher.views[0] ? [watcher.views[0].frameW, watcher.views[0].frameH] : null;
-      await ref.set({ uid, station: { name, seen: Date.now(), running: !!(watcher && watcher.running), status: status.slice(0, 200), devices: devices.slice(0, 8), frame } }, { merge: true }).catch(() => {});
-      if (running) {
-        if (beatTimer) beatTimer.set(heartbeat, BEAT_MS);
-        else beat = setTimeout(heartbeat, BEAT_MS);
-      }
+      const sign = { name, seen: Date.now(), on: true, running: watchingNow(), resting: !!resting, status: status.slice(0, 200), devices: devices.slice(0, 8), frame };
+      // The claim, again, should the account have lost it (the document written over from elsewhere).
+      if (!(doc && doc.station && doc.station.id)) Object.assign(sign, { id: me, host });
+      await ref.set({ uid, station: sign }, { merge: true }).catch(() => {});
+      if (running && active) beatT.set(heartbeat, BEAT_MS);
     }
 
-    // Pictures of the board for calibrating: from the watcher if it is running, else from previews.
-    async function sendStills(requestId) {
-      let canvases = watcher && watcher.running ? watcher.snapshot() : [];
-      if (!canvases.length) {
-        await openPreviews();
-        canvases = chosen().map((cam) => {
+    // What each chosen camera shows now (a canvas each; null where there is none to be had): from
+    // the watcher for the cameras it watches with, from a preview for the rest.
+    async function pictures() {
+      const cams = chosen(), out = cams.map(() => null);
+      if (resting) return out; // OBS has the cameras
+      const watched = watchingNow() ? cams.filter(hasCal) : [];
+      if (watched.length) {
+        const snaps = watcher.snapshot();
+        if (snaps.length === watched.length) watched.forEach((c, j) => { out[cams.indexOf(c)] = snaps[j] || null; });
+      }
+      const rest = cams.filter((c, i) => !out[i]);
+      if (rest.length) {
+        await openPreviews(rest);
+        cams.forEach((cam, i) => {
+          if (out[i]) return;
           const p = previews.find((x) => x.key === (cam.deviceId || cam.label));
-          return p && p.video.videoWidth ? still(p.video) : null;
+          out[i] = p && p.video.videoWidth ? still(p.video) : null;
         });
       }
-      const cams = chosen();
+      return out;
+    }
+
+    // Pictures of the board for calibrating from another computer.
+    async function sendStills(requestId) {
+      const cams = chosen(), canvases = await pictures();
       await Promise.all(cams.map((cam, i) => {
         const canvas = canvases[i];
         if (!canvas) return null;
@@ -542,7 +868,8 @@
       }));
     }
 
-    async function openPreviews() {
+    // Previews (a camera kept open to take pictures from) for `only` of the chosen cameras, or all.
+    async function openPreviews(only) {
       const cams = chosen(), want = cams.map((c) => c.deviceId || c.label);
       for (const p of previews) if (!want.includes(p.key)) closePreview(p);
       previews = previews.filter((p) => want.includes(p.key));
@@ -550,7 +877,7 @@
       if (found.some((d) => !d)) say(missingError(cams, found).message, true);
       for (let i = 0; i < cams.length; i += 1) {
         const cam = cams[i], key = want[i];
-        if (previews.some((p) => p.key === key) || !found[i]) continue;
+        if ((only && !only.includes(cam)) || previews.some((p) => p.key === key) || !found[i]) continue;
         const stream = await openStream(found[i].deviceId, cam.label);
         const video = await videoFor(stream);
         await settled(video, 400);
@@ -563,6 +890,99 @@
     }
     function closePreviews() { previews.forEach(closePreview); previews = []; }
 
+    // --- calibrating by itself ---------------------------------------------------------------------
+
+    // How each chosen camera's calibration stands: told to this page with the picture it was last
+    // checked on, and (in a few numbers) to the other computers, as station.cameras.
+    function tellCameras() {
+      const cams = chosen();
+      try { onCameras(cams.map((c, i) => ({ label: c.label || "", cal: hasCal(c) ? c.cal : null, picture: shots[i] || null, result: results[i] || null }))); } catch (_) { /* the page's business */ }
+      if (running && active) ref.set({ station: { cameras: cams.map((c, i) => slimResult(results[i])) } }, { merge: true }).catch(() => {});
+    }
+    const resultOf = (got) => ({ ok: true, how: got.how, moved: got.moved, edges: got.cal.refined.edges, rms: got.cal.refined.rms, at: Date.now() });
+    const stamped = (cal) => Object.assign({ at: Date.now() }, cal);
+    // The cameras with these calibrations, kept here straight away and in the account.
+    function saveCameras(cameras, extra) {
+      doc = Object.assign({}, doc, { setup: Object.assign({}, doc && doc.setup, { cameras }) });
+      return ref.set(Object.assign({ uid, setup: { version: 1, cameras } }, extra), { merge: true });
+    }
+
+    // Chosen cameras with no calibration are calibrated from what they show, and saved. True when
+    // one was: the account then has it, and watching starts with it. Otherwise it says which
+    // camera can't see the board, and looks again in a few seconds.
+    async function calibrateMissing() {
+      const cams = chosen(), missing = cams.filter((c) => !hasCal(c));
+      if (!missing.length) return false;
+      say("Finding the board in the camera's picture…");
+      await openPreviews(missing).catch((error) => say(error.message, true));
+      if (!running || !active || resting) return false;
+      const next = cams.slice(), blind = [];
+      let any = false;
+      cams.forEach((cam, i) => {
+        if (hasCal(cam)) return;
+        const p = previews.find((x) => x.key === (cam.deviceId || cam.label));
+        const canvas = p && p.video.videoWidth ? still(p.video) : null;
+        const got = canvas ? calibrateFrom(null, canvas, sharedIn(cams, i), i) : null;
+        if (canvas) shots[i] = canvas;
+        results[i] = got ? resultOf(got) : { ok: false, why: canvas ? "board" : "picture", at: Date.now() };
+        if (got) { next[i] = Object.assign({}, cam, { cal: stamped(got.cal) }); any = true; } else blind.push(i);
+      });
+      if (any) await saveCameras(next).catch((error) => say("Couldn't save the calibration: " + error.message, true));
+      if (blind.length) {
+        const who = blind.map((i) => camName(cams, i)).join(" and ");
+        say(`${who} can't see the whole board yet (or something is in front of it). Point ${blind.length > 1 ? "them" : "it"} so all of the board is in the picture: the station looks again every few seconds.`, true);
+        retryT.set(() => { busy = busy.then(() => (running && active && chosen().some((c) => !hasCal(c)) ? calibrateMissing() : null)).catch(() => {}); }, 8000);
+      }
+      tellCameras();
+      return any;
+    }
+
+    // Every chosen camera calibrated afresh from what it shows now ("Calibrate again", from this
+    // page or, with `id`, from the computer that asked: it gets station.calibrated). A camera whose
+    // board can't be made out keeps the calibration it had.
+    async function calibrateNow(id) {
+      const cams = chosen();
+      if (!cams.length) { say("Choose this computer's cameras first.", true); return; }
+      if (resting) {
+        // Nothing to look at: OBS has the cameras. The one who asked is told it didn't happen.
+        const none = cams.map(() => ({ ok: false, why: "obs", at: Date.now() }));
+        await ref.set({ station: { calibrated: { for: id || "", at: Date.now(), cameras: none.map(slimResult) } } }, { merge: true }).catch(() => {});
+        say("OBS has the cameras, so they can't be calibrated just now. " + restText(), true);
+        return;
+      }
+      say("Calibrating: finding the board in each camera's picture…");
+      const pics = await pictures().catch(() => cams.map(() => null));
+      if (!running || !active) return;
+      const next = cams.slice();
+      cams.forEach((cam, i) => {
+        const got = pics[i] ? calibrateFrom(cam.cal, pics[i], sharedIn(cams, i), i) : null;
+        if (pics[i]) shots[i] = pics[i];
+        results[i] = got ? resultOf(got) : { ok: false, why: pics[i] ? "board" : "picture", at: Date.now() };
+        if (got) next[i] = Object.assign({}, cam, { cal: stamped(got.cal) });
+      });
+      const done = cams.map((c, i) => results[i]);
+      await saveCameras(next, { station: { calibrated: { for: id || "", at: Date.now(), cameras: done.map(slimResult) } } });
+      const bad = done.map((r, i) => (r.ok ? -1 : i)).filter((i) => i >= 0);
+      if (!bad.length) say(`Calibrated ${cams.length > 1 ? "both cameras" : "the camera"} to the board.`);
+      else say(`${bad.map((i) => camName(cams, i)).join(" and ")}: the board couldn't be made out (something in the way, too dark, or part of it out of the picture), so ${bad.length > 1 ? "they keep" : "it keeps"} the calibration from before.`, true);
+      tellCameras();
+      // Watching carries on with the new calibrations: the account's change brings reconcile round.
+      busy = busy.then(() => reconcile()).catch((error) => say(error.message, true));
+    }
+
+    // What isn't right with a camera while the station watches, for the end of its status line
+    // (so it stays said, rather than being written over by "Watching…"): one that can't see the
+    // board and so isn't used, or one that couldn't be matched to the board and uses what it had.
+    function trouble() {
+      const cams = chosen(), unseen = [], unmatched = [];
+      cams.forEach((c, i) => {
+        if (!hasCal(c)) unseen.push(camName(cams, i));
+        else if (results[i] && results[i].ok === false) unmatched.push(camName(cams, i));
+      });
+      return (unseen.length ? ` ${unseen.join(" and ")} can't see the whole board yet, so ${unseen.length > 1 ? "they aren't" : "it isn't"} used.` : "")
+        + (unmatched.length ? ` ${unmatched.join(" and ")} couldn't be matched to the board just now (something in front of it?), so ${unmatched.length > 1 ? "they use" : "it uses"} the calibration from before.` : "");
+    }
+
     // What the watcher depends on, field by field (the account may return a map's fields in
     // another order, which must not count as a change).
     function watchKey(cameras, options) {
@@ -572,69 +992,121 @@
 
     // Watch with the calibrated cameras; start again when the calibration changes.
     async function reconcile() {
+      if (!running || !active || resting) return;
       const setup = { version: 1, cameras: chosen(), options: (doc && doc.setup && doc.setup.options) || {} };
       const calibrated = ready(setup);
       const key = watchKey(setup.cameras, setup.options);
       // Nothing new: watching already, or waiting for these cameras to be plugged in.
       if (key === watchingKey && (watcher || waiting || !calibrated.length)) return;
       if (watcher) { watcher.stop(); watcher = null; }
-      stopWaiting();
+      live = false;
+      stopWaiting(); retryT.clear();
       watchingKey = key;
-      if (!calibrated.length) {
-        say(chosen().length ? "Waiting for the cameras to be calibrated (Cameras page, on any computer)." : "Choose this computer's cameras.");
-        if (chosen().length) await openPreviews().catch((error) => say(error.message, true));
-        return;
+      if (!setup.cameras.length) { say("Choose this computer's cameras."); tellCameras(); return; }
+      // A camera with no calibration yet is calibrated from what it shows: no taps. Saved, it comes
+      // back here through the account, and watching starts with it.
+      if (setup.cameras.some((c) => !hasCal(c))) {
+        const saved = await calibrateMissing();
+        if (saved || !running || !active) return;
       }
-      closePreviews();
+      if (!calibrated.length) return;
+      // The previews of cameras about to be watched are closed; one still waiting for its
+      // calibration keeps its own.
+      for (const p of previews.slice()) if (calibrated.some((c) => (c.deviceId || c.label) === p.key)) { closePreview(p); previews = previews.filter((x) => x !== p); }
       const w = createWatcher(setup, { onEvent: publish, fps, background: true, onFrames: null });
       watcher = w;
       try {
         await w.start();
-        keepDevices(w, setup, calibrated);
-        say(`Watching with ${calibrated.length} camera${calibrated.length > 1 ? "s" : ""}. Darts go to your games on any computer.`
-          + (w.swapped ? " (Camera 1 and camera 2 had been plugged in the other way round: swapped back.)" : ""));
+        if (watcher !== w) { w.stop(); return; } // stopped, or given way, while the cameras were opening
+        live = true;
+        const again = settle(w, setup, calibrated);
+        if (!again) {
+          const wrong = trouble();
+          say(`Watching with ${calibrated.length} camera${calibrated.length > 1 ? "s" : ""}. Darts go to your games on any computer.`
+            + (w.swapped ? " (Camera 1 and camera 2 had been plugged in the other way round: swapped back.)" : "") + wrong, !!wrong);
+        }
       } catch (error) {
-        if (watcher === w) watcher = null;
+        if (watcher !== w) return; // stopped meanwhile: no longer this watcher's to report
+        watcher = null; live = false;
         if (error.missing && running) {
           say(error.message + " The station starts watching by itself once they're plugged in.", true);
           waitForCameras();
         } else {
           watchingKey = ""; // tried again when the account changes (every heartbeat)
-          say(error.message, true);
+          say(error.message + " The station tries again by itself every few seconds.", true);
         }
       }
       heartbeat();
     }
 
-    // Tells the account which camera each calibration was found on, when that isn't the one it was
-    // saved with (two of a model plugged in the other way round, or under new ids), so every
-    // computer shows the right camera for each and the next start finds them straight away. The
-    // watching carries on: nothing it depends on changes.
-    function keepDevices(w, setup, calibrated) {
-      const now = w.cameras;
+    // Once watching has started, what it found out goes to the account, in one go:
+    //   - which camera each calibration was found on, when that isn't the one it was saved with
+    //     (two of a model plugged in the other way round, or under new ids), so every computer
+    //     shows the right camera for each and the next start finds them straight away;
+    //   - a calibration that had to be followed FOLLOW_MM or more (the camera knocked), saved as
+    //     followed, so it doesn't drift further from the camera with every knock.
+    // The watching carries on: nothing it depends on changes. Only a camera whose calibration
+    // didn't fit at all, and whose board was then found from scratch, starts it again with that
+    // (returns true).
+    function settle(w, setup, calibrated) {
+      const now = w.cameras, checks = w.checks, stills = w.stills;
       // Changed while the cameras were starting (a new calibration): it starts again with that.
-      if (now.length !== calibrated.length || watchKey(chosen(), setup.options) !== watchKey(setup.cameras, setup.options)) return;
-      let changed = false;
-      const cameras = setup.cameras.map((c) => {
+      if (now.length !== calibrated.length || watchKey(chosen(), setup.options) !== watchKey(setup.cameras, setup.options)) return false;
+      let moved = false, cals = false, again = false;
+      const devices = setup.cameras.map((c) => {
         const j = calibrated.indexOf(c), d = j >= 0 ? now[j].device : null;
         if (!d || (d.deviceId === c.deviceId && d.label === c.label)) return c;
-        changed = true;
+        moved = true;
         return Object.assign({}, c, { deviceId: d.deviceId, label: d.label });
       });
       // Never two cameras on one id where there weren't (that would read as OBS's two halves).
       const twice = (list) => list.length - new Set(list.map((c) => c.deviceId)).size;
-      if (!changed || twice(cameras) > twice(setup.cameras)) return;
-      watchingKey = watchKey(cameras, setup.options);
-      // Here straight away too, so nothing reads the old ids before the account answers.
-      doc = Object.assign({}, doc, { setup: Object.assign({}, doc && doc.setup, { cameras }) });
-      ref.set({ uid, setup: { version: 1, cameras } }, { merge: true }).catch((error) => say("Couldn't save which camera is which: " + error.message, true));
+      if (moved && twice(devices) > twice(setup.cameras)) moved = false;
+      const cameras = (moved ? devices : setup.cameras).map((c, i) => {
+        const j = calibrated.indexOf(setup.cameras[i]), check = j >= 0 ? checks[j] : null;
+        if (!check) return c;
+        if (stills[j]) shots[i] = stills[j];
+        if (check.ok) {
+          const followed = check.moved >= FOLLOW_MM && check.edges >= GOOD_EDGES && check.rms <= GOOD_RMS;
+          results[i] = { ok: true, how: followed ? "followed" : "checked", moved: check.moved, edges: check.edges, rms: check.rms, at: Date.now() };
+          if (!followed) return c;
+          cals = true;
+          return Object.assign({}, c, { cal: stamped(V.withPoints(now[j].cal)) });
+        }
+        // It doesn't fit what the camera shows any more: found from scratch, once (not round and
+        // round if that doesn't hold either).
+        const got = Date.now() - (foundAt[i] || 0) > 60000 ? calibrateFrom(c.cal, stills[j], sharedIn(setup.cameras, i), i) : null;
+        results[i] = got ? resultOf(got) : { ok: false, why: "board", at: Date.now() };
+        if (!got) return c;
+        foundAt[i] = Date.now();
+        cals = again = true;
+        return Object.assign({}, c, { cal: stamped(got.cal) });
+      });
+      if (moved || cals) {
+        // Not a change to what is being watched (unless the board was found from scratch).
+        if (!again) watchingKey = watchKey(cameras, setup.options);
+        saveCameras(cameras).catch((error) => say("Couldn't save the cameras' calibration: " + error.message, true));
+      }
+      tellCameras();
+      if (again) say("A camera had moved too far for its calibration: found the board again in its picture, and starting with that.");
+      return again;
     }
 
     function onDoc(snap) {
       doc = snap.exists ? snap.data() : null;
+      const s = theirs(doc);
+      if (!active) {
+        // Standing by: the other station has stopped.
+        if (running && !alive(s)) takeTurn();
+        return;
+      }
+      // Another page has claimed the station: this one gives way.
+      if (s && s.id) { standBy(s); return; }
       const ask = (doc && doc.ask) || {};
       const cams = JSON.stringify(chosen().map((c) => [c.deviceId || "", c.label || ""]));
       if (cams !== shownCameras) {
+        // Other cameras: what was known about the old ones goes.
+        if (shownCameras !== null) { shots = []; results = []; foundAt = []; }
         shownCameras = cams;
         try { onSetup((doc && doc.setup) || null); } catch (_) { /* the page's business */ }
       }
@@ -648,6 +1120,10 @@
         if (ask.clear && ask.clear !== handled.clear) {
           handled.clear = ask.clear;
           if (watcher) watcher.markEmpty();
+        }
+        if (ask.calibrate && ask.calibrate !== handled.calibrate) {
+          handled.calibrate = ask.calibrate;
+          await calibrateNow(ask.calibrate).catch((error) => say("Couldn't calibrate: " + error.message, true));
         }
       }).catch((error) => say(error.message, true)); // one failure mustn't stop the ones after it
     }
@@ -785,34 +1261,62 @@
     }
 
     return {
-      async start() {
+      // With `takeOver`, this page becomes the station even if another is running (that one gives
+      // way). Without, it stands by while another runs.
+      async start({ takeOver = false } = {}) {
         if (running) return;
         running = true;
-        say("Starting…");
+        status = "Starting…";
+        onStatus(status, false);
         // Requests made while the station was off are old news.
         const first = await ref.get();
         const data = first.exists ? first.data() : null;
         doc = data;
-        handled = { still: data && data.ask ? data.ask.still || null : null, clear: data && data.ask ? data.ask.clear || null : null };
-        await heartbeat();
+        const asked = (data && data.ask) || {};
+        handled = { still: asked.still || null, clear: asked.clear || null, calibrate: asked.calibrate || null };
+        const s = theirs(doc);
+        // Free to take: nobody has it, or the page that had it in this browser is gone.
+        let free = takeOver || !alive(s);
+        if (!free && s.host && s.host === host && !(await lockedElsewhere())) free = true;
+        if (!running) return;
+        holdLock();
+        if (free) await takeTurn();
+        else standBy(s);
+        if (!running) return;
         unsub = ref.onSnapshot(onDoc, (error) => say("Lost touch with your account: " + error.message, true));
-        learning.start();
-        // Fresh pictures for calibrating straight away.
-        busy = busy.then(() => sendStills("start")).catch(() => {});
       },
       stop() {
-        running = false;
+        const mine = active;
+        running = false; active = false;
         if (unsub) unsub();
         unsub = null;
-        if (beat) clearTimeout(beat);
-        if (beatTimer) beatTimer.clear();
+        beatT.clear(); turnT.clear(); retryT.clear(); obsT.clear();
         if (watcher) watcher.stop();
-        watcher = null; watchingKey = "";
+        watcher = null; watchingKey = ""; live = false;
         stopWaiting();
         closePreviews();
         learning.stop();
-        ref.set({ station: { name, seen: Date.now(), running: false, status: "Stopped." } }, { merge: true }).catch(() => {});
-        say("Stopped.");
+        dropLock();
+        // Only the account's station says it stopped: one standing by leaves the other's word alone.
+        if (mine) ref.set({ station: { name, seen: Date.now(), on: false, running: false, resting: false, status: "Stopped." } }, { merge: true }).catch(() => {});
+        status = "Stopped.";
+        onStatus(status, false);
+      },
+      // This page takes the station over from the one that has it.
+      takeOver() {
+        if (!running || active) return Promise.resolve();
+        return takeTurn();
+      },
+      // Lets go of the cameras so OBS can have them (before starting OBS); the station takes them
+      // back by itself once OBS has come and gone. resume() takes them back now.
+      rest() { if (running && active && !onObsPicture()) startRest("asked", false); },
+      resume() { if (running && active) endRest("Taking the cameras back…"); },
+      get resting() { return !!resting; },
+      // Every camera calibrated afresh from what it shows now (no taps).
+      calibrate() {
+        if (!running || !active) return Promise.resolve();
+        busy = busy.then(() => calibrateNow("")).catch((error) => say("Couldn't calibrate: " + error.message, true));
+        return busy;
       },
       // This computer's cameras for the station (up to two; null for none). A camera of another
       // model loses its calibration. One of the same model keeps it: two of a model can come back
@@ -834,8 +1338,10 @@
         await ref.set({ uid, setup: { version: 1, cameras } }, { merge: true });
       },
       get running() { return running; },
-      get watching() { return !!(watcher && watcher.running); },
+      get active() { return active; },
+      get watching() { return watchingNow(); },
       get setup() { return doc && doc.setup; },
+      get id() { return me; },
       learnNow: () => learning.learnNow(),
     };
   }
@@ -844,19 +1350,40 @@
   // computer. Events come as the station sends them, plus "status"/"error" for it being on or off.
   function createRemoteWatcher(db, uid, { onEvent = () => {} } = {}) {
     const ref = stationRef(db, uid);
-    let unsubs = [], running = false, lastSeq = null, doc = null, online = null, timer = null, readySent = false;
+    let unsubs = [], running = false, lastSeq = null, doc = null, online = null, state = null, down = "", timer = null, readySent = false;
 
+    // Three things it can be: watching; on but not watching (a camera unplugged, or still being
+    // calibrated: the station's own words say which); or not running at all.
     function checkOnline() {
-      const calibrated = !!(doc && ready(doc.setup).length);
-      const now = isOnline(doc) && calibrated;
-      if (now === online) return;
-      online = now;
-      const where = doc && doc.station && doc.station.name ? ` on ${doc.station.name}` : "";
-      if (isOnline(doc) && !calibrated) onEvent({ type: "error", text: `The camera station${where} is running, but its cameras aren't calibrated yet. Calibrate them on the Cameras page.` });
-      else if (now) {
+      const calibrated = !!(doc && ready(doc.setup).length), on = isOnline(doc);
+      const st = (doc && doc.station) || {};
+      // On, calibrated, and not saying it isn't watching (a station from before it said so counts).
+      const now = on && calibrated && st.running !== false ? "watching" : on ? "idle:" + (st.resting ? "obs" : calibrated ? st.status || "" : "calibrating") : "off";
+      if (now === state) return;
+      state = now;
+      online = now === "watching";
+      const where = st.name ? ` on ${st.name}` : "";
+      if (online) {
+        down = "";
         onEvent({ type: "status", text: `Watching with the camera station${where}.` });
         if (!readySent && lastSeq !== null) { readySent = true; onEvent({ type: "ready" }); }
-      } else onEvent({ type: "error", text: `The camera station${where} isn't running. Open the Camera station page on the computer with the cameras.` });
+      } else if (on && !calibrated) {
+        down = "The cameras aren't calibrated yet";
+        onEvent({ type: "error", text: `The camera station${where} is running, but its cameras aren't calibrated yet. It does that by itself once each camera sees the whole board: have a look at the Camera station page.` });
+      } else if (on && !st.resting && /^(Starting|Opening the cameras|Taking the cameras back|OBS has closed)/.test(st.status || "")) {
+        // A few seconds while it opens the cameras: not something wrong.
+        down = "The cameras are starting";
+        onEvent({ type: "status", text: `The camera station${where} is starting…` });
+      } else if (on && st.resting) {
+        down = "OBS has the cameras";
+        onEvent({ type: "error", text: `OBS has the cameras${where}. Close OBS there: the camera station takes them back by itself a few seconds later.` });
+      } else if (on) {
+        down = "The camera station isn't watching";
+        onEvent({ type: "error", text: `The camera station${where} is on but not watching the board${st.status ? ": " + String(st.status).slice(0, 160) : "."}` });
+      } else {
+        down = "The camera station isn't running";
+        onEvent({ type: "error", text: `The camera station${where} isn't running. Open the Camera station page on the computer with the cameras.` });
+      }
     }
 
     return {
@@ -907,6 +1434,8 @@
         timer = null;
       },
       get running() { return running; },
+      // Why the cameras aren't reading, in a few words for the game's screen ("" when they are).
+      get down() { return running ? down : ""; },
       get views() { return []; },
       get detector() { return null; },
       get cameras() { return (doc && doc.setup && doc.setup.cameras) || []; },
@@ -944,16 +1473,59 @@
     }
   }
 
-  // The cameras to score with here: the owner's camera station if it is running, else cameras set
-  // up in this browser, else a station that is set up but not running now (it says so, and
-  // carries on when the station starts). Null when there are none at all.
+  // The cameras to score with here. An account with a camera station uses that and nothing else,
+  // running or not: when it isn't, the page says so and carries on by itself once it is. A page
+  // never opens the cameras as well: two readers of one board put every dart in twice (on Nov 16,
+  // 2026 a tracker page that had fallen back to its own cameras while the station was closed kept
+  // reading beside the reopened station: three darts at 20 went in as six, three of them misses at
+  // 19). Only an account with no station at all uses cameras set up in this browser, and hands over
+  // if a station turns up. Null when there are no cameras at all.
   async function chooseWatcher({ db, user, onEvent }) {
     const station = user ? await getStation(db, user.uid) : null;
-    const local = ready(load()).length > 0;
-    if (station && ready(station.setup).length && (isOnline(station) || !local)) return createRemoteWatcher(db, user.uid, { onEvent });
-    if (local) return createWatcher(load(), { onEvent });
-    if (station) return createRemoteWatcher(db, user.uid, { onEvent });
-    return null;
+    if (hasStation(station)) return createRemoteWatcher(db, user.uid, { onEvent });
+    if (!ready(load()).length) return null;
+    return user && db ? createLocalWatcher(db, user.uid, load(), { onEvent }) : createWatcher(load(), { onEvent });
+  }
+
+  // This browser's own cameras, for an account with no camera station. If a station turns up while
+  // it watches, it stops and the station's darts are used from then on: never both at once.
+  function createLocalWatcher(db, uid, setup, { onEvent = () => {} } = {}) {
+    let inner = createWatcher(setup, { onEvent }), unsub = null, running = false, handed = false;
+    const handOver = () => {
+      if (handed || !running) return;
+      handed = true;
+      inner.stop();
+      inner = createRemoteWatcher(db, uid, { onEvent });
+      inner.start().catch((error) => onEvent({ type: "error", text: error.message }));
+    };
+    return {
+      async start() {
+        if (running) return;
+        running = true;
+        try { await inner.start(); } catch (error) { running = false; throw error; }
+        if (!running) return;
+        try {
+          unsub = stationRef(db, uid).onSnapshot((snap) => { if (hasStation(snap.exists ? snap.data() : null)) handOver(); }, () => {});
+        } catch (_) { /* no account to watch: this browser's cameras it is */ }
+      },
+      stop() {
+        running = false;
+        if (unsub) unsub();
+        unsub = null;
+        inner.stop();
+      },
+      get remote() { return handed; },
+      get running() { return running; },
+      get down() { return handed ? inner.down : ""; },
+      get views() { return inner.views; },
+      get detector() { return inner.detector; },
+      get cameras() { return inner.cameras; },
+      get stills() { return inner.stills; },
+      get checks() { return inner.checks; },
+      get station() { return inner.station; },
+      markEmpty() { inner.markEmpty(); },
+      snapshot() { return inner.snapshot(); },
+    };
   }
 
   // Asks the station for fresh pictures and waits for them (up to `ms`): canvases, one per camera.
@@ -989,6 +1561,29 @@
     });
   }
 
+  // Asks the station to calibrate every camera afresh from what it shows now (no taps), and waits
+  // (up to `ms`) for how it went: { at, cameras: [{ ok, how, moved, edges, rms } | null, ...] }.
+  function requestCalibration(db, uid, ms = 40000) {
+    const ref = stationRef(db, uid), id = newId();
+    return new Promise((resolveDone, reject) => {
+      let unsub = null, over = false;
+      const done = (error, value) => {
+        if (over) return;
+        over = true;
+        if (unsub) unsub();
+        clearTimeout(timer);
+        if (error) reject(error); else resolveDone(value);
+      };
+      const timer = setTimeout(() => done(new Error("The camera station didn't answer. Is the Camera station page open on the computer with the cameras?")), ms);
+      unsub = ref.onSnapshot((snap) => {
+        const c = snap.exists && snap.data().station ? snap.data().station.calibrated : null;
+        if (c && c.for === id) done(null, c);
+      }, (error) => done(error));
+      if (over && unsub) unsub();
+      ref.set({ ask: { calibrate: id } }, { merge: true }).catch((error) => done(error));
+    });
+  }
+
   // How the board is lit, for the station (kept in the account with the calibration):
   // { shadow: true } when a single lamp casts hard shadows beside every dart.
   function setStationOptions(db, uid, options) {
@@ -1002,7 +1597,8 @@
 
   root.DartCamera = {
     KEY, load, save, ready, listCameras, requestAccess, openStream, videoFor, still, pixelsOf, lensOptions, snap, explain, resolve, matchCameras, otherWayFits, createWatcher,
-    isOnline, slimEvent, createStation, createRemoteWatcher, getStation, chooseWatcher, requestStills, saveStationSetup, setStationOptions,
+    isOnline, hasStation, slimEvent, createStation, createRemoteWatcher, createLocalWatcher, getStation, chooseWatcher, requestStills, requestCalibration, saveStationSetup, setStationOptions,
+    calibrateFrom, findBoardCameras, GOOD_EDGES, GOOD_RMS,
     noteDart, forgetLearned, learnedOptions,
   };
 })(typeof self !== "undefined" ? self : this);

@@ -40,6 +40,17 @@
   .log { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 6px; max-height: 300px; overflow: auto; }
   .log li { border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; font-size: 14px; }
   .log li b { font-size: 16px; }
+  .cams { display: grid; grid-template-columns: 1fr; gap: 12px; margin: 12px 0 4px; }
+  @media (min-width: 640px) { .cams.two { grid-template-columns: 1fr 1fr; } }
+  .cam { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: #05070c; }
+  .cam canvas { display: block; width: 100%; height: auto; background: #000; }
+  .cam .what { padding: 8px 10px 10px; font-size: 14px; line-height: 1.4; }
+  .cam .what b { display: block; font-size: 15px; margin-bottom: 2px; }
+  .cam .what.warn { color: var(--warn); }
+  details.more { border: 1px solid var(--border); border-radius: 16px; padding: 12px 16px; margin-bottom: 16px; background: rgba(255,255,255,.02); }
+  details.more > summary { cursor: pointer; font-weight: 700; font-size: 16px; min-height: 28px; }
+  details.more[open] > summary { margin-bottom: 10px; }
+  .found { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 4px; font-size: 14px; }
 </style>
 </head>
 <body>
@@ -49,64 +60,73 @@
     <div class="links"><a class="back" href="camera.html">Cameras</a><a class="back" href="practice.html">Play the bot</a><a class="back" href="doubles.html">Doubles</a><a class="back" href="index.html">Tracker</a></div>
   </header>
 
-  <section class="card">
-    <h2>Score with these cameras from any computer</h2>
-    <p class="muted">Open this page on the computer the cameras are plugged into, and leave it open. It watches the board, reads every dart here, and sends it to your games on any computer or tablet where you are signed in with the same account (turn "Camera" on there). Calibrate the cameras from any computer on the <a href="camera.html" style="color:var(--accent)">Cameras</a> page: it gets pictures from this station.</p>
-    <p class="muted">Unplugging the cameras (taking this computer away) is fine: leave this page open, and when they are plugged back in the station starts again by itself and works out which camera is which, so they don't need calibrating again.</p>
-  </section>
-
   <section class="card" id="signCard">
-    <h2>Your account</h2>
-    <p id="who" class="muted">Checking…</p>
+    <p id="who" class="muted" style="margin:0;">Checking…</p>
     <div class="actions"><button type="button" id="signInBtn" class="hidden">Sign in with Google</button></div>
   </section>
 
-  <section class="card hidden" id="stationCard">
-    <h2>This computer's cameras</h2>
-    <div id="accessBox">
-      <p class="muted">The browser will ask to use the cameras. The pictures stay on this computer, apart from a still of the board when you calibrate from another computer.</p>
-      <div class="actions"><button type="button" id="accessBtn">Find my cameras</button></div>
-    </div>
-    <div id="pickBox" class="hidden">
-      <p class="muted" style="font-size:13px;">Using OBS? While OBS is open it holds the cameras: choose its virtual camera ("OBS Virtual Camera", or "OBS") for both, and calibrate each half of its picture.</p>
-      <div class="row two">
-        <label class="field">Camera 1 <select id="sel0"></select></label>
-        <label class="field">Camera 2 <select id="sel1"></select></label>
-      </div>
-      <label class="field">This computer's name, as your other computers show it <input type="text" id="name" maxlength="40"></label>
-      <div class="actions">
-        <button type="button" id="startBtn">Start the station</button>
-        <button type="button" class="secondary" id="stopBtn" disabled>Stop</button>
-      </div>
-      <label class="check"><input type="checkbox" id="auto"> Start by itself whenever this page opens</label>
-      <label class="check"><input type="checkbox" id="hardShadows"> Hard shadows beside the darts (the board is lit by a single lamp, not a ring light)</label>
-    </div>
-  </section>
-
+  <!-- How it is going: the one thing to look at -->
   <section class="card hidden" id="runCard">
     <div class="state"><span class="dot" id="dot"></span><span id="stateText">Not running</span></div>
     <div class="status" id="status" aria-live="polite"></div>
-    <p class="muted" style="font-size:13px;">Keep this page open (it can be behind other windows). The computer must not go to sleep while you play.</p>
-    <ul class="log" id="log"></ul>
+    <div class="cams hidden" id="cams"></div>
+    <p class="muted hidden" id="camsHint" style="font-size:13px;">The blue lines are where the station takes the board's wires to be. They should sit on the wires, with each number by its own segment. If they don't, press "Calibrate again" with nothing in front of the board.</p>
+    <div class="actions">
+      <button type="button" id="startBtn" class="hidden">Start the station</button>
+      <button type="button" id="takeBtn" class="hidden">Run the station here instead</button>
+      <button type="button" id="resumeBtn" class="hidden">Take the cameras back</button>
+      <button type="button" class="secondary hidden" id="calBtn">Calibrate again</button>
+      <button type="button" class="secondary hidden" id="restBtn">Let OBS have the cameras</button>
+      <button type="button" class="secondary hidden" id="stopBtn">Stop</button>
+    </div>
+    <p class="muted hidden" id="obsHint" style="font-size:13px;">Playing DartCounter through OBS? Press "Let OBS have the cameras", then start OBS. Leave this page open: it takes the cameras back by itself a few seconds after OBS closes. (OBS already open, with black cameras? Start OBS again: the station let go as soon as it saw OBS.)</p>
+    <p class="muted" style="font-size:13px;margin-bottom:0;">Keep this page open on the computer with the cameras (it can be behind other windows). The computer must not go to sleep while you play. Only this page reads the cameras: your games, on any computer or tablet signed in to the same account, get the darts from it.</p>
   </section>
 
-  <section class="card hidden" id="learnCard">
-    <h2>Learning from your games</h2>
+  <!-- Setting up: one button -->
+  <section class="card hidden" id="setupCard">
+    <h2 id="setupTitle">Set up the cameras</h2>
+    <p class="muted" id="setupText">Point the cameras at the board so each sees all of it, take the darts out, and press the button. The station finds the cameras that can see the board, calibrates each one to the board by itself, and starts. Nothing to choose and nothing to tap.</p>
+    <div class="actions"><button type="button" id="setupBtn">Set up the cameras</button></div>
+    <div class="status warn" id="setupMsg" role="status" style="margin-top:8px;"></div>
+    <ul class="found" id="found"></ul>
+  </section>
+
+  <details class="more hidden" id="moreCard">
+    <summary>Choose the cameras yourself, and other settings</summary>
+    <p class="muted" style="font-size:13px;">Using OBS? While OBS is open it holds the cameras: choose its virtual camera ("OBS Virtual Camera", or "OBS") for both. Each half of its picture is calibrated on its own.</p>
+    <div class="row two">
+      <label class="field">Camera 1 <select id="sel0"></select></label>
+      <label class="field">Camera 2 <select id="sel1"></select></label>
+    </div>
+    <label class="field">This computer's name, as your other computers show it <input type="text" id="name" maxlength="40"></label>
+    <label class="check"><input type="checkbox" id="auto"> Start by itself whenever this page opens</label>
+    <label class="check"><input type="checkbox" id="hardShadows"> Hard shadows beside the darts (the board is lit by a single lamp, not a ring light)</label>
+    <p class="muted" style="font-size:13px;margin-bottom:0;">A camera turned on its side or upside down can't tell which way up the board is by itself: calibrate that one by hand, once, on the <a href="camera.html" style="color:var(--accent)">Cameras</a> page. After that it keeps itself calibrated like the others.</p>
+  </details>
+
+  <details class="more hidden" id="learnCard">
+    <summary>Learning from your games</summary>
     <p class="muted" style="font-size:13px;">Every dart the cameras put into a game is kept here with its pictures once its visit is over: a dart you left in was read right, and one you corrected (Undo and tap, or Edit my last visit) shows where it really landed. Every few corrections the station reads them all again with other settings, and uses settings that read clearly more of them right.</p>
     <div class="status" id="learnText" aria-live="polite"></div>
     <div class="actions">
       <button type="button" class="secondary" id="learnNowBtn">Learn now</button>
       <button type="button" class="secondary" id="forgetBtn">Forget what it learned</button>
     </div>
+  </details>
+
+  <section class="card hidden" id="logCard">
+    <h2>What it saw</h2>
+    <ul class="log" id="log" style="margin-top:0;"></ul>
   </section>
 </div></div>
 
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
-<script src="board-vision.js?v=9"></script>
+<script src="board-vision.js?v=10"></script>
 <script src="board-learn.js?v=3"></script>
-<script src="board-camera.js?v=11"></script>
+<script src="board-camera.js?v=12"></script>
 <script>
 (function () {
   "use strict";
@@ -120,31 +140,35 @@
   };
   if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
   const auth = firebase.auth(), db = firebase.firestore();
-  const C = window.DartCamera;
+  const C = window.DartCamera, V = window.BoardVision;
   const $ = (id) => document.getElementById(id);
   const PREFS = "dt_station";
 
   // cameras: plugged in now; shown: the station's cameras (from the account) the lists were filled for.
-  let user = null, station = null, cameras = [], shown = [], wakeLock = null;
+  let user = null, station = null, cameras = [], shown = [], wakeLock = null, standing = false, settingUp = false, lastSeen = Date.now();
   const prefs = (() => { try { return JSON.parse(localStorage.getItem(PREFS) || "{}") || {}; } catch (_) { return {}; } })();
   const savePrefs = () => { try { localStorage.setItem(PREFS, JSON.stringify(prefs)); } catch (_) { /* private mode */ } };
   const defaultName = () => (/Windows/i.test(navigator.userAgent) ? "Windows computer" : /Mac/i.test(navigator.userAgent) ? "Mac" : /Linux/i.test(navigator.userAgent) ? "Linux computer" : "Camera computer");
   $("name").value = prefs.name || defaultName();
-  $("auto").checked = !!prefs.auto;
+  // Starting by itself is the usual way: the page is opened, and that is all.
+  $("auto").checked = prefs.auto !== false;
+  const autoStart = () => $("auto").checked;
 
   // ---- account ----------------------------------------------------------------------------------------
   $("signInBtn").addEventListener("click", () => auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).catch((e) => { $("who").textContent = "Sign-in failed: " + e.message; }));
   auth.onAuthStateChanged(async (u) => {
     user = u;
     $("signInBtn").classList.toggle("hidden", !!u);
-    $("stationCard").classList.toggle("hidden", !u);
     $("who").textContent = u ? `Signed in as ${u.email || u.displayName}. Darts read here go to this account.` : "Sign in with the account you play with, so your other computers get the darts.";
-    if (!u) { if (station) station.stop(); return; }
+    if (!u) { if (station) station.stop(); station = null; show(); return; }
     await findCameras(false);
-    if (prefs.auto && cameras.length && !station) start();
+    show();
+    if (autoStart() && cameras.length && shown.length && !station) start();
   });
 
   // ---- cameras ------------------------------------------------------------------------------------------
+  // The cameras plugged in (their names are only given once the browser has been allowed to use
+  // them), and the station's cameras as the account has them.
   async function findCameras(ask) {
     try {
       cameras = ask ? await C.requestAccess() : await C.listCameras();
@@ -153,15 +177,12 @@
       return;
     }
     const named = cameras.some((c) => c.label && !/^Camera \d+$/.test(c.label));
-    if (!named) { cameras = []; if (!ask) return; }
-    $("accessBox").classList.add("hidden");
-    $("pickBox").classList.remove("hidden");
+    if (!named) cameras = [];
     // What the station used last (from the account).
     const saved = await C.getStation(db, user.uid);
     $("hardShadows").checked = !!(saved && saved.setup && saved.setup.options && saved.setup.options.shadow);
     fillLists((saved && saved.setup && saved.setup.cameras) || []);
   }
-  $("accessBtn").addEventListener("click", () => findCameras(true));
 
   // The lists show the station's cameras among those plugged in now (two of one model are told
   // apart by the station, by what each sees). One that isn't plugged in stays chosen, calibration
@@ -177,20 +198,23 @@
       if (want && !found[i]) sel.append(new Option(`${want.label || "Camera " + (i + 1)} (not plugged in)`, "saved:" + i));
       sel.value = found[i] ? found[i].deviceId : want ? "saved:" + i : "";
     });
+    show();
   }
+  // `saved`: the station's cameras as the account has them now, when the caller knows. What is
+  // shown is always the newest known, whichever of two refreshes finishes last.
   async function refreshLists(saved) {
-    if (!user || $("pickBox").classList.contains("hidden")) return;
+    if (saved) shown = saved.filter(Boolean).slice(0, 2);
+    if (!user) return;
     try { cameras = await C.listCameras(); } catch (_) { return; }
-    fillLists(saved);
+    if (!cameras.some((c) => c.label && !/^Camera \d+$/.test(c.label))) cameras = [];
+    fillLists(station && station.setup && station.setup.cameras ? station.setup.cameras : shown);
   }
   // Cameras plugged in or out (a running station starts again by itself once its cameras are back).
   if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
     navigator.mediaDevices.addEventListener("devicechange", async () => {
-      if (!user) return;
-      if (!$("pickBox").classList.contains("hidden")) { refreshLists(station && station.setup ? station.setup.cameras : shown); return; }
-      // The page opened with no cameras at all.
-      await findCameras(false);
-      if (prefs.auto && cameras.length && !station) start();
+      if (!user || settingUp) return;
+      await refreshLists();
+      if (autoStart() && cameras.length && shown.length && !station) start();
     });
   }
 
@@ -200,7 +224,12 @@
     const cam = kept ? shown[Number(kept[1])] : cameras.find((c) => c.deviceId === id);
     return cam ? { deviceId: cam.deviceId, label: cam.label } : null;
   });
-  [0, 1].forEach((i) => $("sel" + i).addEventListener("change", () => { if (station) station.choose(choice()).catch((e) => setStatus(e.message, true)); }));
+  [0, 1].forEach((i) => $("sel" + i).addEventListener("change", async () => {
+    try {
+      if (station) await station.choose(choice());
+      else if (choice().some(Boolean)) await start();
+    } catch (e) { setStatus(e.message, true); }
+  }));
   $("name").addEventListener("change", () => { prefs.name = $("name").value.trim() || defaultName(); savePrefs(); });
   $("auto").addEventListener("change", () => { prefs.auto = $("auto").checked; savePrefs(); });
   // Kept in the account with the calibration; a running station starts watching again with it.
@@ -209,21 +238,184 @@
     C.setStationOptions(db, user.uid, { shadow: $("hardShadows").checked }).catch((e) => setStatus("Couldn't save that: " + e.message, true));
   });
 
-  // ---- running ------------------------------------------------------------------------------------------
+  // ---- setting up by itself -----------------------------------------------------------------------------
+  // Every camera is looked at for the board; those that see it are calibrated to it and become the
+  // station's cameras. Nothing is chosen and nothing is tapped.
+  async function setUp() {
+    if (!user || settingUp) return;
+    settingUp = true;
+    $("setupBtn").disabled = true;
+    $("found").innerHTML = "";
+    $("setupMsg").textContent = "";
+    // What the station has now: kept, unless the new look finds at least as many cameras.
+    const had = shown.length;
+    if (station) { station.stop(); station = null; }
+    standing = false;
+    setStatus("Looking for the board with every camera…");
+    const lines = new Map();
+    const line = (label, text, warn) => {
+      let li = lines.get(label);
+      if (!li) { li = document.createElement("li"); lines.set(label, li); $("found").append(li); }
+      li.textContent = `${label}: ${text}`;
+      li.className = warn ? "muted" : "";
+    };
+    try {
+      const look = await C.findBoardCameras({
+        onProgress: (p) => line(p.label, p.state === "looking" ? "looking…" : p.state === "found" ? "sees the board" : p.state === "none" ? "no board in its picture" : p.text || "couldn't be opened", p.state !== "found" && p.state !== "looking"),
+      });
+      const found = look.cameras;
+      const inUse = look.busy.length ? ` ${look.busy.length > 1 ? "Cameras are" : "A camera is"} in use by another program (OBS?): close it first.` : "";
+      if (found.length < Math.max(1, had)) {
+        // Fewer than before (one is blocked, or busy): what was set up stays, and says why.
+        const why = found.length
+          ? `Only ${found.length} of your ${had} cameras can see the whole board just now, so nothing was changed.`
+          : "No camera can see the whole board just now" + (had ? ", so nothing was changed." : ".");
+        const fix = inUse || " Point the cameras at the board so all of it is in each picture, with nothing in front, and press the button again.";
+        // Said by the button, where it stays (the station's own status moves on as it starts again).
+        $("setupMsg").textContent = why + fix;
+        if (had) await start();
+        else setStatus(why + fix, true);
+        return;
+      }
+      await C.saveStationSetup(db, user.uid, found);
+      prefs.auto = true; savePrefs(); $("auto").checked = true;
+      await refreshLists(found);
+      await start();
+    } catch (error) {
+      setStatus(error && error.name ? C.explain(error) : (error && error.message) || "Couldn't set up the cameras.", true);
+    } finally {
+      settingUp = false;
+      $("setupBtn").disabled = false;
+      show();
+    }
+  }
+  $("setupBtn").addEventListener("click", setUp);
+
+  // ---- what shows ---------------------------------------------------------------------------------------
+  function show() {
+    const signed = !!user, running = !!station, active = !!(station && station.active);
+    $("runCard").classList.toggle("hidden", !signed);
+    $("moreCard").classList.toggle("hidden", !signed);
+    // Setting up is the first thing to do; afterwards it is a quiet "do it again".
+    const setUpBefore = shown.length > 0;
+    $("setupCard").classList.toggle("hidden", !signed);
+    $("setupTitle").textContent = setUpBefore ? "Moved the cameras, or changed them?" : "Set up the cameras";
+    $("setupText").textContent = setUpBefore
+      ? "Set them up again: the station finds the cameras that can see the board and calibrates each to it by itself. (A camera that was only knocked is followed without this.)"
+      : "Point the cameras at the board so each sees all of it, take the darts out, and press the button. The station finds the cameras that can see the board, calibrates each one to the board by itself, and starts. Nothing to choose and nothing to tap.";
+    $("setupBtn").textContent = setUpBefore ? "Set up the cameras again" : "Set up the cameras";
+    $("setupBtn").className = setUpBefore ? "secondary" : "";
+    $("startBtn").classList.toggle("hidden", running || !setUpBefore);
+    $("stopBtn").classList.toggle("hidden", !running);
+    const resting = !!(station && station.resting);
+    $("calBtn").classList.toggle("hidden", !active || resting);
+    $("restBtn").classList.toggle("hidden", !active || resting);
+    $("resumeBtn").classList.toggle("hidden", !resting);
+    $("obsHint").classList.toggle("hidden", !active);
+    $("takeBtn").classList.toggle("hidden", !(running && standing));
+    const watching = !!(station && station.watching);
+    $("stateText").textContent = !running ? "Not running" : standing ? "Standing by" : resting ? "OBS has the cameras" : watching ? "Watching the board" : "Running";
+    if (!running && signed && !$("status").textContent) {
+      $("status").textContent = setUpBefore ? "Press Start, and leave this page open." : "Not set up yet.";
+    }
+  }
+
   function setStatus(text, warn) {
-    $("runCard").classList.remove("hidden");
     $("status").textContent = text;
     $("status").classList.toggle("warn", !!warn);
     const watching = !!(station && station.watching);
     $("dot").className = "dot" + (watching ? " on" : warn ? " warn" : "");
-    $("stateText").textContent = !station ? "Not running" : watching ? "Watching the board" : "Running";
+    show();
   }
 
   function addLog(html) {
+    $("logCard").classList.remove("hidden");
     const li = document.createElement("li");
     li.innerHTML = `<span class="muted">${new Date().toLocaleTimeString()}</span> ${html}`;
     $("log").prepend(li);
     while ($("log").children.length > 40) $("log").lastChild.remove();
+  }
+
+  // ---- each camera: what it sees, and where the station takes the board to be ------------------------
+  const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  function calText(cam, i, n) {
+    const r = cam.result, cal = cam.cal, name = n > 1 ? `Camera ${i + 1}` : "Camera";
+    if (!cal) {
+      const why = r && r.why === "picture" ? "No picture from it yet (is it plugged in, and not in use by another program?)." : "It can't see the whole board yet. Point it so all of the board is in its picture, with nothing in front.";
+      return { head: `${name}: not calibrated`, text: why, warn: true };
+    }
+    const fit = cal.refined ? `${cal.refined.edges} edges of the board's rings and wires, ${cal.refined.rms < 1 ? "within a millimetre" : "within " + cal.refined.rms.toFixed(1) + " mm"}` : "";
+    const at = cal.at ? ` at ${clock(cal.at)}` : "";
+    if (r && !r.ok) return { head: `${name}: kept as it was`, text: "The board couldn't be made out just now (something in front of it, or too dark), so it keeps its calibration from before.", warn: true };
+    if (r && r.how === "found") return { head: `${name}: found the board by itself`, text: `Calibrated${at}: ${fit}.` };
+    if (r && r.how === "followed") return { head: `${name}: followed the camera`, text: `It had moved ${r.moved.toFixed(1)} mm. Calibrated again${at}: ${fit}.` };
+    if (r && r.how === "checked") return { head: `${name}: calibrated ${cal.auto ? "by itself" : "by hand"}`, text: `${fit ? fit.charAt(0).toUpperCase() + fit.slice(1) + ". " : ""}Checked against the board as it started: within ${Math.max(0.1, r.moved || 0).toFixed(1)} mm of its calibration.` };
+    return { head: `${name}: calibrated`, text: cal.auto ? `By itself${at}${fit ? ": " + fit : ""}.` : `By hand${fit ? ": " + fit : ""}.` };
+  }
+
+  // The board's wires and numbers as a calibration has them, over a picture scaled by `k`.
+  function drawWires(ctx, cal, k) {
+    const m = V.mapper(cal);
+    const at = (x, y) => { const p = m.toPixel(x, y); return p ? { x: p.x * k, y: p.y * k } : null; };
+    ctx.save();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "rgba(56,189,248,.95)";
+    for (const key of ["bullIn", "bullOut", "tripleIn", "tripleOut", "doubleIn", "edge"]) {
+      const r = V.REAL[key];
+      ctx.beginPath();
+      for (let j = 0; j <= 96; j += 1) {
+        const a = (j / 96) * Math.PI * 2, p = at(Math.cos(a) * r, Math.sin(a) * r);
+        if (!p) continue;
+        j ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
+      }
+      ctx.stroke();
+    }
+    for (let i = 0; i < 20; i += 1) {
+      const a = -Math.PI / 2 + Math.PI / 20 + (i * Math.PI) / 10;
+      const p = at(Math.cos(a) * V.REAL.bullOut, Math.sin(a) * V.REAL.bullOut), q = at(Math.cos(a), Math.sin(a));
+      if (!p || !q) continue;
+      ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
+    }
+    ctx.fillStyle = "rgba(56,189,248,.98)";
+    ctx.font = "700 13px system-ui, sans-serif";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    V.SEG_ORDER.forEach((n, i) => {
+      const a = -Math.PI / 2 + (i * Math.PI) / 10, p = at(Math.cos(a) * 1.12, Math.sin(a) * 1.12);
+      if (p) ctx.fillText(String(n), p.x, p.y);
+    });
+    ctx.restore();
+  }
+
+  function onCameras(list) {
+    const box = $("cams");
+    box.innerHTML = "";
+    box.classList.toggle("hidden", !list.length);
+    box.classList.toggle("two", list.length > 1);
+    $("camsHint").classList.toggle("hidden", !list.some((c) => c.cal && c.picture));
+    list.forEach((cam, i) => {
+      const tile = document.createElement("div");
+      tile.className = "cam";
+      if (cam.picture && cam.picture.width) {
+        const canvas = document.createElement("canvas"), k = 640 / cam.picture.width;
+        canvas.width = 640; canvas.height = Math.round(cam.picture.height * k);
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(cam.picture, 0, 0, canvas.width, canvas.height);
+        if (cam.cal && cam.cal.H) {
+          // A calibration made at another picture size is drawn at this one's.
+          const scale = cam.cal.width && cam.cal.width !== cam.picture.width ? (cam.picture.width / cam.cal.width) * k : k;
+          try { drawWires(ctx, cam.cal, scale); } catch (_) { /* a calibration that can't be drawn */ }
+        }
+        canvas.setAttribute("aria-label", `What camera ${i + 1} sees, with the board's wires as the station has them`);
+        tile.append(canvas);
+      }
+      const t = calText(cam, i, list.length), what = document.createElement("div");
+      what.className = "what" + (t.warn ? " warn" : "");
+      const head = document.createElement("b");
+      head.textContent = t.head;
+      what.append(head, document.createTextNode(t.text));
+      tile.append(what);
+      box.append(tile);
+    });
   }
 
   // ---- learning (board-learn.js) ------------------------------------------------------------------
@@ -254,6 +446,9 @@
   });
 
   function onEvent(e) {
+    if (e.type !== "quiet" && e.type !== "status") lastSeen = Date.now(); // something at the board
+    // Opening the cameras takes a moment: say so meanwhile.
+    if (e.type === "status" && station && !station.watching && /^Opening/.test(e.text || "")) { $("status").textContent = e.text; return; }
     if (e.type === "dart") addLog(`<b>${e.label}</b> <span class="muted">sent${e.uncertain ? " (not sure)" : ""}</span>`);
     else if (e.type === "takeout") addLog("Darts out");
     else if (e.type === "unreadable") addLog("Something changed, but no dart could be read");
@@ -269,32 +464,83 @@
   }
   document.addEventListener("visibilitychange", () => { if (station && document.visibilityState === "visible") keepAwake(); });
 
+  // ---- running ------------------------------------------------------------------------------------------
   async function start() {
     if (!user || station) return;
     const picked = choice();
-    if (!picked.some(Boolean)) { setStatus("Choose at least one camera.", true); return; }
+    if (!picked.some(Boolean)) { setStatus("No cameras yet: press \"Set up the cameras\".", true); return; }
     prefs.name = $("name").value.trim() || defaultName(); savePrefs();
-    station = C.createStation({ db, uid: user.uid, name: prefs.name, onStatus: setStatus, onEvent, onLearn, onSetup: (setup) => refreshLists((setup && setup.cameras) || []) });
-    $("startBtn").disabled = true; $("stopBtn").disabled = false;
+    standing = false;
+    const mine = C.createStation({
+      db, uid: user.uid, name: prefs.name, onStatus: setStatus, onEvent, onLearn, onCameras,
+      onSetup: (setup) => refreshLists((setup && setup.cameras) || []),
+      onLease: (l) => {
+        standing = !l.active;
+        if (l.gaveWay) addLog(`The camera station moved to ${l.by && l.by.here ? "another tab of this browser" : (l.by && l.by.name) || "another computer"}: this page stopped reading the cameras.`);
+        if (l.active) keepAwake();
+        show();
+      },
+    });
+    station = mine;
+    show();
     try {
-      await station.choose(picked);
-      await station.start();
+      await mine.choose(picked);
+      await mine.start();
       keepAwake();
     } catch (error) {
-      station.stop(); station = null;
-      $("startBtn").disabled = false; $("stopBtn").disabled = true;
+      mine.stop();
+      if (station === mine) station = null;
       setStatus("Couldn't start: " + error.message, true);
     }
+    show();
   }
   $("startBtn").addEventListener("click", start);
   $("stopBtn").addEventListener("click", () => {
     if (station) station.stop();
-    station = null;
+    station = null; standing = false;
     if (wakeLock) wakeLock.release().catch(() => {});
-    $("startBtn").disabled = false; $("stopBtn").disabled = true;
-    setStatus("Stopped. Your other computers can't use the cameras until it runs again.");
+    setStatus("Stopped. Your games can't use the cameras until it runs again.");
+  });
+  $("takeBtn").addEventListener("click", () => { if (station) station.takeOver().catch((e) => setStatus(e.message, true)); });
+  // OBS and the station can't both have the cameras: the station lets go for OBS (DartCounter),
+  // and takes them back by itself when OBS has closed.
+  $("restBtn").addEventListener("click", () => { if (station) station.rest(); show(); });
+  $("resumeBtn").addEventListener("click", () => { if (station) station.resume(); show(); });
+  $("calBtn").addEventListener("click", async () => {
+    if (!station) return;
+    $("calBtn").disabled = true;
+    try { await station.calibrate(); } finally { $("calBtn").disabled = false; }
   });
   window.addEventListener("pagehide", () => { if (station) station.stop(); });
+
+  // ---- keeping itself up to date ------------------------------------------------------------------------
+  // The page is left open for days, so it would go on running old code after an update to the app.
+  // Every ten minutes it compares its own files as the app has them now with the copies this page
+  // was loaded from. When they differ and nothing has happened at the board for three minutes, it
+  // loads itself again (and, starting by itself, carries on). Not more than once an hour, whatever
+  // happens.
+  const FILES = ["station.html", ...[...document.querySelectorAll("script[src]")].map((el) => el.getAttribute("src")).filter((src) => !/^https?:/.test(src))];
+  async function fingerprint(cache) {
+    const parts = await Promise.all(FILES.map((f) => fetch(f, { cache }).then((r) => (r.ok ? r.text() : Promise.reject(new Error(String(r.status)))))));
+    let h = 0;
+    for (const text of parts) for (let i = 0; i < text.length; i += 1) h = (Math.imul(h, 31) + text.charCodeAt(i)) | 0;
+    return h + ":" + parts.reduce((n, text) => n + text.length, 0);
+  }
+  const RELOADED = "dt_stationReloaded";
+  const lately = () => { try { return Date.now() - Number(sessionStorage.getItem(RELOADED) || 0) < 3600000; } catch (_) { return false; } };
+  let ran = null, stale = false;
+  // The browser's kept copies are what this page is running.
+  fingerprint("force-cache").then((f) => { ran = f; }).catch(() => {});
+  setInterval(async () => {
+    try {
+      if (!stale && ran !== null) stale = (await fingerprint("no-store")) !== ran;
+    } catch (_) { /* offline: look again later */ }
+    if (!stale || !autoStart() || settingUp || lately() || Date.now() - lastSeen < 180000) return;
+    try { sessionStorage.setItem(RELOADED, String(Date.now())); } catch (_) { /* private mode */ }
+    // Fresh copies into the browser's cache first, so loading again gets them and not the old ones.
+    await Promise.all(FILES.map((f) => fetch(f, { cache: "reload" }).catch(() => {})));
+    location.reload();
+  }, 600000);
 })();
 </script>
 </body>

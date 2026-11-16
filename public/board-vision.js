@@ -476,6 +476,20 @@
     return { H: mul3(h, T), lens: k ? { cx: center.x, cy: center.y, s, k } : null, used, rms: used ? Math.sqrt(sq / used) : Infinity };
   }
 
+  // How far, at worst, the rings sit under calibration `after` from where `before` had them (mm):
+  // how far off a set of taps was, or how far a camera has moved between two calibrations of it.
+  function shiftBetween(before, after) {
+    const now = mapper(after), then = mapper(before);
+    let shift = 0;
+    for (const r of [REAL.bullOut, (REAL.tripleIn + REAL.tripleOut) / 2, (REAL.doubleIn + 1) / 2]) {
+      for (let k = 0; k < 72; k += 1) {
+        const a = (k / 72) * Math.PI * 2, p = now.toPixel(Math.cos(a) * r, Math.sin(a) * r), b = p && then.toBoard(p.x, p.y);
+        shift = Math.max(shift, b ? Math.hypot(b.x - Math.cos(a) * r, b.y - Math.sin(a) * r) * MM.edge : Infinity);
+      }
+    }
+    return shift;
+  }
+
   // A calibration matched to the board in `image` (RGBA { data, width, height }, the same size as
   // the picture `cal` was made on), starting from `cal`: one just tapped (from calibrate), or one
   // saved earlier, to check it against what the camera shows now. Null when too little of the
@@ -515,14 +529,7 @@
       cur = { H: fit.H, lens: fit.lens };
     }
     if (fit.rms * MM.edge > 2.5) return null;
-    const refined = mapper(cur), before = mapper(cal);
-    let shift = 0;
-    for (const r of [REAL.bullOut, (REAL.tripleIn + REAL.tripleOut) / 2, (REAL.doubleIn + 1) / 2]) {
-      for (let k = 0; k < 72; k += 1) {
-        const a = (k / 72) * Math.PI * 2, p = refined.toPixel(Math.cos(a) * r, Math.sin(a) * r), b = p && before.toBoard(p.x, p.y);
-        shift = Math.max(shift, b ? Math.hypot(b.x - Math.cos(a) * r, b.y - Math.sin(a) * r) * MM.edge : Infinity);
-      }
-    }
+    const refined = mapper(cur), shift = shiftBetween(cal, cur);
     // Moved this far, it has probably latched onto the wrong ring.
     if (!(shift <= o.maxShift)) return null;
     const offBy = (cal.points || []).map((t, i) => {
@@ -538,6 +545,344 @@
       error,
       refined: { edges: fit.used, rms: fit.rms * MM.edge, shift, offBy },
     };
+  }
+
+  // --- finding the board with nothing tapped -------------------------------------------------------
+  //
+  // Nothing else in a camera's picture is coloured like a dartboard: two rings of red and green
+  // pieces, one inside the other. So the board can be found with no taps at all:
+  //   1. Every pixel is called red, green or neither, against the picture's own white (so a dim
+  //      picture, or one under warm light, works too).
+  //   2. From a point inside the rings (the bull, which is the one red spot with green all round it;
+  //      or, with a dart in the bull, the middle of everything coloured), 720 rays go outward. The
+  //      last two bands of colour along each are the treble and the double ring, and where each
+  //      ends is a point on the outside of that ring.
+  //   3. Each ring's outside is a circle on the board, so an ellipse in the picture: one is fitted
+  //      to each set of points, leaving out the stray ones (a logo on the number ring, a flight).
+  //   4. The outer ellipse fixes the camera's view of the board's face, given where the board's
+  //      middle shows in the picture, and that is the one spot that makes the treble's ellipse a
+  //      circle about the middle as well.
+  //   5. What is left is how the board is turned. The red and green pieces say that to within two
+  //      numbers (the colours repeat every 36 degrees); the 20 is then the red piece nearest the
+  //      top of the picture, or nearest where a calibration from before had it.
+  // That is good to a couple of millimetres, which is all refineCalibration needs to take over.
+
+  const RED = 1, GREEN = 2;
+
+  // Each pixel of the picture as RED, GREEN or 0. `region` ({ x0, y0, x1, y1 }) limits it to part
+  // of the picture (one half of OBS's two-cameras-in-one, say).
+  function boardColours(image, region) {
+    const { data, width: w, height: h } = image, cls = new Uint8Array(w * h);
+    const x0 = region ? Math.max(0, Math.floor(region.x0)) : 0, x1 = region ? Math.min(w, Math.ceil(region.x1)) : w;
+    const y0 = region ? Math.max(0, Math.floor(region.y0)) : 0, y1 = region ? Math.min(h, Math.ceil(region.y1)) : h;
+    // The picture's white: what the brightest fiftieth of it reaches in each colour (the cream
+    // segments, usually). Colours are judged against it.
+    const hist = [new Uint32Array(256), new Uint32Array(256), new Uint32Array(256)];
+    let count = 0;
+    for (let y = y0; y < y1; y += 2) {
+      for (let x = x0, p = (y * w + x0) * 4; x < x1; x += 2, p += 8) {
+        hist[0][data[p]] += 1; hist[1][data[p + 1]] += 1; hist[2][data[p + 2]] += 1;
+        count += 1;
+      }
+    }
+    if (!count) return cls;
+    const white = hist.map((bins) => {
+      let left = count * 0.02, v = 255;
+      while (v > 0 && (left -= bins[v]) > 0) v -= 1;
+      return Math.max(v, 1);
+    });
+    const top = Math.max(white[0], white[1], white[2]);
+    if (top < 60) return cls; // too dark to tell colours apart
+    const gain = white.map((v) => Math.min(2, top / v));
+    const redStep = Math.max(20, top * 0.16), greenStep = Math.max(11, top * 0.09);
+    const redMin = top * 0.3, greenMin = top * 0.22;
+    for (let y = y0; y < y1; y += 1) {
+      for (let x = x0, i = y * w + x0, p = i * 4; x < x1; x += 1, i += 1, p += 4) {
+        const r = data[p] * gain[0], g = data[p + 1] * gain[1], b = data[p + 2] * gain[2];
+        if (r - (g > b ? g : b) >= redStep && r >= redMin) cls[i] = RED;
+        else if (g - (r > b ? r : b) >= greenStep && g >= greenMin) cls[i] = GREEN;
+      }
+    }
+    return cls;
+  }
+
+  // The bull: a red blob with green all round it. { x, y } in the picture, or null.
+  function findBull(cls, w, h) {
+    const seen = new Uint8Array(w * h), stack = new Int32Array(w * h);
+    let best = null;
+    for (let start = 0; start < w * h; start += 1) {
+      if (cls[start] !== RED || seen[start]) continue;
+      let top = 0, n = 0, sx = 0, sy = 0, x0 = w, x1 = 0, y0 = h, y1 = 0;
+      stack[top++] = start; seen[start] = 1;
+      while (top) {
+        const i = stack[--top], x = i % w, y = (i - x) / w;
+        n += 1; sx += x; sy += y;
+        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+        if (x > 0 && cls[i - 1] === RED && !seen[i - 1]) { seen[i - 1] = 1; stack[top++] = i - 1; }
+        if (x < w - 1 && cls[i + 1] === RED && !seen[i + 1]) { seen[i + 1] = 1; stack[top++] = i + 1; }
+        if (y > 0 && cls[i - w] === RED && !seen[i - w]) { seen[i - w] = 1; stack[top++] = i - w; }
+        if (y < h - 1 && cls[i + w] === RED && !seen[i + w]) { seen[i + w] = 1; stack[top++] = i + w; }
+      }
+      if (n < 12 || n > 8000) continue;
+      const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+      if (bw > 3 * bh || bh > 3 * bw || n < 0.45 * bw * bh) continue; // a disc, not a streak
+      const cx = sx / n, cy = sy / n, size = Math.sqrt(n / Math.PI);
+      // Outward from its middle in every direction: red, then green for a while.
+      let ringed = 0;
+      const DIRS = 32;
+      for (let k = 0; k < DIRS; k += 1) {
+        const a = (k / DIRS) * Math.PI * 2, dx = Math.cos(a), dy = Math.sin(a);
+        let green = 0, gap = 0, out = false;
+        for (let t = 0; t < size * 6 + 6; t += 0.5) {
+          const x = Math.round(cx + dx * t), y = Math.round(cy + dy * t);
+          if (x < 0 || y < 0 || x >= w || y >= h) break;
+          const c = cls[y * w + x];
+          if (!out) { if (c === RED) continue; out = true; }
+          if (c === GREEN) green += 0.5;
+          else if (green) break;
+          else { gap += 0.5; if (gap > 3 + size * 0.4) break; }
+        }
+        if (green >= Math.max(2, size * 0.6)) ringed += 1;
+      }
+      const ring = ringed / DIRS;
+      if (ring >= 0.75 && (!best || ring > best.ring || (ring === best.ring && n > best.n))) best = { x: cx + 0.5, y: cy + 0.5, ring, n };
+    }
+    return best;
+  }
+
+  // The middle of everything coloured: somewhere inside the rings when the board is most of the
+  // colour in the picture.
+  function colourCentre(cls, w, h) {
+    let n = 0, sx = 0, sy = 0;
+    for (let i = 0; i < w * h; i += 1) if (cls[i]) { n += 1; sx += i % w; sy += (i / w) | 0; }
+    return n >= 400 ? { x: sx / n + 0.5, y: sy / n + 0.5 } : null;
+  }
+
+  // Outward from `c` along `rays` rays: where the last band of colour ends (the outside of the
+  // double ring) and where the band before it ends (the outside of the treble). A band still going
+  // at the picture's edge is cut off there, so it isn't counted.
+  function ringEnds(cls, w, h, c, rays) {
+    const double = [], treble = [], far = Math.hypot(w, h);
+    for (let k = 0; k < rays; k += 1) {
+      const a = (k / rays) * Math.PI * 2, dx = Math.cos(a), dy = Math.sin(a);
+      const bands = [];
+      let from = -1, last = -1, cut = false;
+      for (let t = 0; t < far; t += 0.5) {
+        const x = Math.floor(c.x + dx * t), y = Math.floor(c.y + dy * t);
+        if (x < 0 || y < 0 || x >= w || y >= h) { cut = true; break; }
+        if (cls[y * w + x]) { if (from < 0) from = t; last = t; }
+        else if (from >= 0 && t - last > 1.5) { if (last + 0.5 - from >= 3) bands.push(last + 0.5); from = -1; }
+      }
+      if (from >= 0 && !cut && last + 0.5 - from >= 3) bands.push(last + 0.5);
+      if (bands.length < 2) continue;
+      const d = bands[bands.length - 1], t3 = bands[bands.length - 2];
+      double.push({ x: c.x + dx * d, y: c.y + dy * d });
+      treble.push({ x: c.x + dx * t3, y: c.y + dy * t3 });
+    }
+    return { double, treble };
+  }
+
+  // The conic through points near `o`, as a 3x3 matrix Q with p Q p = 0 for picture points p (as
+  // x, y, 1), by least squares; null unless it is an ellipse. `use` (a list of 0/1) leaves points out.
+  function fitConic(pts, o, use) {
+    const s = 1 / 200; // keeps the equations well conditioned
+    const N = Array.from({ length: 5 }, () => new Array(5).fill(0)), rhs = new Array(5).fill(0);
+    pts.forEach((p, i) => {
+      if (use && !use[i]) return;
+      const x = (p.x - o.x) * s, y = (p.y - o.y) * s, row = [x * x, x * y, y * y, x, y];
+      for (let a = 0; a < 5; a += 1) {
+        rhs[a] += row[a];
+        for (let b = 0; b < 5; b += 1) N[a][b] += row[a] * row[b];
+      }
+    });
+    const q = solveLinear(N, rhs); // A x² + B xy + C y² + D x + E y = 1, about o
+    if (!q || !(4 * q[0] * q[2] - q[1] * q[1] > 0)) return null;
+    const about = [q[0] * s * s, (q[1] * s * s) / 2, (q[3] * s) / 2, (q[1] * s * s) / 2, q[2] * s * s, (q[4] * s) / 2, (q[3] * s) / 2, (q[4] * s) / 2, -1];
+    // From coordinates about o to the picture's own.
+    return mul3(mul3([1, 0, 0, 0, 1, 0, -o.x, -o.y, 1], about), [1, 0, -o.x, 0, 1, -o.y, 0, 0, 1]);
+  }
+
+  // About how far (pixels) a point is from a conic.
+  function conicDistance(Q, p) {
+    const u = Q[0] * p.x + Q[1] * p.y + Q[2], v = Q[3] * p.x + Q[4] * p.y + Q[5], t = Q[6] * p.x + Q[7] * p.y + Q[8];
+    return Math.abs(p.x * u + p.y * v + t) / (2 * Math.hypot(u, v) || 1e-12);
+  }
+
+  // The ellipse most of the points lie on (within `tol` pixels): { Q, on (those points), of }.
+  function fitEllipse(pts, o, tol, seed) {
+    if (pts.length < 40) return null;
+    const random = seeded(seed);
+    let best = null, most = 0;
+    for (let it = 0; it < 250; it += 1) {
+      const pick = [];
+      while (pick.length < 5) {
+        const k = (random() * pts.length) | 0;
+        if (!pick.includes(k)) pick.push(k);
+      }
+      const Q = fitConic(pick.map((k) => pts[k]), o);
+      if (!Q) continue;
+      let n = 0;
+      for (const p of pts) if (conicDistance(Q, p) < tol) n += 1;
+      if (n > most) { most = n; best = Q; }
+    }
+    if (!best) return null;
+    for (let round = 0; round < 3; round += 1) {
+      const next = fitConic(pts, o, pts.map((p) => (conicDistance(best, p) < tol ? 1 : 0)));
+      if (!next) break;
+      best = next;
+    }
+    return { Q: best, on: pts.filter((p) => conicDistance(best, p) < tol), of: pts.length };
+  }
+
+  // The map from the picture to the board's face that takes ellipse Q to the outside of the double
+  // ring and picture point c to the middle; how the board is turned is still open. The polar of c
+  // is where the board's face runs off to infinity in the picture: sent there, the ellipse is
+  // centred on c, and a stretch makes it a circle.
+  function conicToBoard(Q, c) {
+    const Qc = mul3(mul3([1, 0, 0, 0, 1, 0, c.x, c.y, 1], Q), [1, 0, c.x, 0, 1, c.y, 0, 0, 1]); // about c
+    if (!Qc[8]) return null;
+    const a = Qc[2] / Qc[8], b = Qc[5] / Qc[8];
+    const Q2 = mul3(mul3([1, 0, -a, 0, 1, -b, 0, 0, 1], Qc), [1, 0, 0, 0, 1, 0, -a, -b, 1]);
+    const m11 = -Q2[0] / Q2[8], m12 = -Q2[1] / Q2[8], m22 = -Q2[4] / Q2[8];
+    const tr = m11 + m22, det = m11 * m22 - m12 * m12;
+    if (!(det > 0) || !(tr > 0)) return null;
+    const root = Math.sqrt(det), t = Math.sqrt(tr + 2 * root); // the square root of a 2x2 matrix
+    const stretch = [(m11 + root) / t, m12 / t, 0, m12 / t, (m22 + root) / t, 0, 0, 0, 1];
+    return mul3(mul3(stretch, [1, 0, 0, 0, 1, 0, a, b, 1]), [1, 0, -c.x, 0, 1, -c.y, 0, 0, 1]);
+  }
+
+  // The middle of the circle through points (least squares).
+  function circleCentre(pts) {
+    const A = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], b = [0, 0, 0];
+    for (const p of pts) {
+      const row = [p.x, p.y, 1], z = p.x * p.x + p.y * p.y;
+      for (let i = 0; i < 3; i += 1) {
+        b[i] += row[i] * z;
+        for (let j = 0; j < 3; j += 1) A[i][j] += row[i] * row[j];
+      }
+    }
+    const q = solveLinear(A, b);
+    return q ? { x: q[0] / 2, y: q[1] / 2 } : null;
+  }
+
+  // Where the board's middle shows in the picture, from the two rings alone: with the right
+  // middle, the treble's outside is a circle about it. Tried with the outer ellipse's own middle,
+  // the treble's circle comes out off-centre by (1 - its radius²) times the mistake; a few goes.
+  function ringsCentre(Q, treble) {
+    const det = Q[0] * Q[4] - Q[1] * Q[1];
+    if (!det) return null;
+    let c = { x: (Q[1] * Q[5] - Q[4] * Q[2]) / det, y: (Q[1] * Q[2] - Q[0] * Q[5]) / det };
+    const k = 1 - REAL.tripleOut * REAL.tripleOut;
+    for (let go = 0; go < 8; go += 1) {
+      const H = conicToBoard(Q, c), Hi = H && inv3(H);
+      if (!Hi) return null;
+      const e = circleCentre(treble.map((p) => applyH(H, p.x, p.y)).filter(Boolean));
+      const next = e && applyH(Hi, e.x / k, e.y / k);
+      if (!next) return null;
+      c = next;
+      if (Math.hypot(e.x, e.y) / k < 2e-4) break;
+    }
+    return c;
+  }
+
+  // How the board is turned under map H0 (which has it the right size and place): the angle, within
+  // 36 degrees, that puts red where the double's and treble's red pieces are and green where the
+  // green ones are. `fit` is how much of the rings then has the right colour (1 is all of it), and
+  // `seen` how much of them showed any colour.
+  function ringsTurn(cls, w, h, H0) {
+    const Hi = inv3(H0);
+    if (!Hi) return null;
+    const STEPS = 1440, sig = new Float32Array(STEPS);
+    const radii = [0.962, 0.972, 0.982, 0.992, 0.59, 0.6, 0.61, 0.62];
+    let total = 0;
+    for (let k = 0; k < STEPS; k += 1) {
+      const th = (k / STEPS) * Math.PI * 2, cos = Math.cos(th), sin = Math.sin(th);
+      let v = 0;
+      for (const r of radii) {
+        const p = applyH(Hi, cos * r, sin * r);
+        if (!p) continue;
+        const x = Math.floor(p.x), y = Math.floor(p.y);
+        if (x < 0 || y < 0 || x >= w || y >= h) continue;
+        const c = cls[y * w + x];
+        v += c === RED ? 1 : c === GREEN ? -1 : 0;
+      }
+      sig[k] = v;
+      total += Math.abs(v);
+    }
+    if (!total) return null;
+    let best = -Infinity, angle = 0;
+    for (let j = 0; j < 144; j += 1) { // quarter-degree steps
+      const phi = (j / 144) * 2 * WEDGE;
+      let sum = 0;
+      for (let k = 0; k < STEPS; k += 1) sum += (Math.round(((k / STEPS) * Math.PI * 2 - phi + Math.PI / 2) / WEDGE) % 2 === 0 ? 1 : -1) * sig[k];
+      if (sum > best) { best = sum; angle = phi; }
+    }
+    return { angle, fit: best / total, seen: total / (STEPS * radii.length) };
+  }
+
+  // The board in a picture (RGBA { data, width, height }), with nothing tapped: a rough calibration
+  // (as calibrate gives, with the five points where it puts them), good to a couple of millimetres,
+  // for refineCalibration to finish. Null when no board can be made out. Options: `hint` (a
+  // calibration from before: the 20 is taken to be near where it was, whichever way up the camera
+  // is), `region` (only this part of the picture: { x0, y0, x1, y1 }), `log` (told what it found).
+  function findBoard(image, options) {
+    const o = Object.assign({ hint: null, region: null, log: null }, options);
+    if (!image || !image.data || !image.width || !image.height) return null;
+    const w = image.width, h = image.height, say = o.log || (() => {});
+    const cls = boardColours(image, o.region);
+    const bull = findBull(cls, w, h), middle = colourCentre(cls, w, h);
+    for (const seed of [bull, middle]) {
+      if (!seed) continue;
+      const ends = ringEnds(cls, w, h, seed, 720);
+      const outer = fitEllipse(ends.double, seed, 2.5, 11), inner = fitEllipse(ends.treble, seed, 2.5, 13);
+      if (!outer || outer.on.length < 150 || !inner || inner.on.length < 120) { say({ step: "rings", found: false, outer: outer ? outer.on.length : 0, inner: inner ? inner.on.length : 0 }); continue; }
+      const c = ringsCentre(outer.Q, inner.on);
+      const H0 = c && conicToBoard(outer.Q, c), Hi0 = H0 && inv3(H0);
+      if (!Hi0) { say({ step: "middle", found: false }); continue; }
+      const turn = ringsTurn(cls, w, h, H0);
+      say({ step: "colours", outer: outer.on.length, inner: inner.on.length, fit: turn ? turn.fit : 0, seen: turn ? turn.seen : 0 });
+      if (!turn || turn.fit < 0.6 || turn.seen < 0.5) continue;
+      // Ten ways round fit the colours. The 20 is the one nearest where it was, or nearest the top.
+      const was = o.hint && o.hint.H ? mapper(o.hint).toPixel(0, -1) : null;
+      let best = -Infinity, turned = 0;
+      for (let j = 0; j < 10; j += 1) {
+        const a = -Math.PI / 2 + turn.angle + j * 2 * WEDGE, p = applyH(Hi0, Math.cos(a), Math.sin(a));
+        if (!p) continue;
+        const score = was ? -Math.hypot(p.x - was.x, p.y - was.y) : (c.y - p.y) / (Math.hypot(p.x - c.x, p.y - c.y) || 1);
+        if (score > best) { best = score; turned = turn.angle + j * 2 * WEDGE; }
+      }
+      const cos = Math.cos(turned), sin = Math.sin(turned);
+      const H = mul3([cos, sin, 0, -sin, cos, 0, 0, 0, 1], H0);
+      if (!H.every(Number.isFinite) || Math.abs(H[8]) < 1e-15) continue;
+      const cal = { H: H.map((v) => v / H[8]), width: w, height: h, error: 0 };
+      const m = mapper(cal);
+      cal.points = CAL_POINTS.map((pt) => m.toPixel(pt.x, pt.y));
+      return cal;
+    }
+    return null;
+  }
+
+  // A camera's calibration from its picture alone: the board found (findBoard) and then matched to
+  // its rings and wires (refineCalibration). Null unless the match is a good one: with no taps to
+  // check against, it has to be. The result is a calibration like a tapped and matched one, with
+  // `auto: true`, its five points where they are on the board in the picture, and `refined`
+  // { edges, rms } (shift and offBy are 0: there were no taps to be off).
+  // Options: findBoard's, and `center`/`size` for the lens (see refineCalibration).
+  function autoCalibrate(image, options) {
+    const o = Object.assign({ minEdges: 240, maxRms: 1.6 }, options);
+    const rough = findBoard(image, o);
+    if (!rough) return null;
+    const fit = refineCalibration(rough, image, { taps: false, maxShift: 60, windows: [0.1, 0.07, 0.05, 0.03, 0.018, 0.012], center: o.center || null, size: o.size || null, log: o.log ? (step) => o.log(Object.assign({ step: "match" }, step)) : null });
+    if (!fit || fit.refined.edges < o.minEdges || fit.refined.rms > o.maxRms) return null;
+    return withPoints(fit);
+  }
+
+  // A calibration made without taps (found, or followed after the camera moved), with its five
+  // points put where the board has them in the picture, so every page shows them on the wires.
+  function withPoints(cal) {
+    const m = mapper(cal);
+    const points = CAL_POINTS.map((pt) => m.toPixel(pt.x, pt.y));
+    return Object.assign({}, cal, { points, error: 0, auto: true, refined: Object.assign({}, cal.refined, { shift: 0, offBy: points.map(() => 0) }) });
   }
 
   // --- a camera's view of the board ----------------------------------------------------------------
@@ -1486,6 +1831,10 @@
     mapper,
     boardEdges,
     refineCalibration,
+    shiftBetween,
+    findBoard,
+    autoCalibrate,
+    withPoints,
     makeView,
     separateViews,
     halfCenter,
