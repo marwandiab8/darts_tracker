@@ -1601,9 +1601,13 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
     if (!box) return;
     box.textContent = text || "";
     box.classList.toggle("warn", !!warn);
-    if (linkToSetup) {
+    // On the computer with the cameras, with the station's page closed: one click opens it (in its
+    // own tab, so this game stays where it is).
+    const closed = !!(boardCam && boardCam.stationOff && window.DartCamera && DartCamera.stationHere());
+    if (linkToSetup || closed) {
       const a = document.createElement("a");
-      a.href = "station.html"; a.textContent = "Camera station";
+      a.href = "station.html"; a.textContent = closed ? "Open the Camera station" : "Camera station";
+      a.target = "_blank"; a.rel = "noopener";
       box.append(" ", a);
     }
   }

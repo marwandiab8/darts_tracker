@@ -33,6 +33,8 @@ const hook = `(() => {
           v.firestore().useEmulator("127.0.0.1", 8080);
           v.auth().useEmulator("http://127.0.0.1:9099", { disableWarnings: true });
           window.__emulated = true;
+          // The camera station's last word as its page goes (station.html, "leaving") is a plain request.
+          window.__firestoreRest = "http://127.0.0.1:8080/v1/projects/${PROJECT}/databases/(default)/documents";
           return app;
         };
       }

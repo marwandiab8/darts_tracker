@@ -60,7 +60,8 @@ const countCameras = `(() => {
     // ---- setting up: one button --------------------------------------------------------------------
     const tab = await H.device(browser, "station");
     await tab.context().addInitScript(countCameras);
-    tab.on("dialog", (d) => d.accept());
+    let asked = 0;
+    tab.on("dialog", (d) => { asked += 1; d.accept(); });
     await tab.goto(`${base}/station.html`);
     const uid = await H.signIn(tab);
     const read = async () => { let out = null; await env.withSecurityRulesDisabled(async (ctx) => { const s = await getDoc(doc(ctx.firestore(), "cameraStations", uid)); out = s.exists() ? s.data() : null; }); return out; };
@@ -85,6 +86,7 @@ const countCameras = `(() => {
     d = await until(async () => { const x = await read(); return x.station.cameras && x.station.cameras[0] ? x : null; }, 8000);
     check(d && d.station.cameras[0].ok === true, "how the camera's calibration stands is in the account for the other devices");
     const first = d.station.id;
+    check(await tab.evaluate(() => [...document.querySelectorAll("header .links a")].every((a) => a.target === "_blank")), "the links at the top of the station page open in a new tab, so the station's own window is never taken away");
 
     // ---- one station at a time -------------------------------------------------------------------------
     const tab2 = await tab.context().newPage();
@@ -98,6 +100,8 @@ const countCameras = `(() => {
     check(d.station.id === first && d.station.running === true, "the first tab still has the station, untouched");
     check(/Watching the board/.test(await text(tab, "stateText")), "and carries on watching");
     await tab.close({ runBeforeUnload: true });
+    await until(() => asked > 0, 5000);
+    check(asked > 0, "closing the page that is the station: the browser asks first");
     const tookOver = await until(async () => /Watching the board/.test(await text(tab2, "stateText")), 30000);
     check(tookOver, "the first tab closed: the second takes over and watches: " + (await text(tab2, "status")));
     d = await read();
@@ -136,7 +140,7 @@ const countCameras = `(() => {
     // ---- a game page never opens the cameras itself ----------------------------------------------
     // Cameras are set up in this browser too (as on the computer with the cameras), and Camera is on.
     const local = JSON.stringify({ version: 1, cameras: [{ deviceId: "whatever", label: video, cal: d.setup.cameras[0].cal }] });
-    const laptop = await H.device(browser, "laptop", { storage: { dt_cameraSetup: local, dt_trackerCamera: "1" } });
+    const laptop = await H.device(browser, "laptop", { storage: { dt_cameraSetup: local, dt_trackerCamera: "1", dt_station: JSON.stringify({ auto: true }) } });
     await laptop.context().addInitScript(countCameras);
     laptop.on("dialog", (x) => x.accept());
     await laptop.goto(`${base}/index.html`);
@@ -147,6 +151,7 @@ const countCameras = `(() => {
     // The station stops: the page says so, and still leaves the cameras alone.
     await tab2.click("#stopBtn");
     check(await until(async () => /isn't running/.test(await camNote()), 15000), "the station stopped: " + (await camNote()));
+    check(await laptop.evaluate(() => { const a = document.querySelector("#camNote a"); return !!a && /station\.html$/.test(a.href) && a.target === "_blank" && /Open the Camera station/.test(a.textContent); }), "on the computer that has been the station, the game offers to open it (in a new tab)");
     await laptop.evaluate(() => { const t = document.getElementById("cameraToggle"); t.click(); });
     await H.sleep(400);
     await laptop.evaluate(() => { const t = document.getElementById("cameraToggle"); t.click(); });
@@ -179,6 +184,14 @@ const countCameras = `(() => {
     const slots = await laptop.evaluate(() => [...document.querySelectorAll("#boardMode .bm-slot")].map((s) => s.querySelector(".s").textContent));
     check(slots.some((s) => /The cameras are watching/.test(s)), "and Board mode says the cameras are watching");
     check((await laptop.evaluate(() => window.__gum)) === 0, "still without a camera of its own");
+
+    // ---- the station's page goes: the account knows at once ----------------------------------
+    // (The same request the page sends as it is closed or taken elsewhere, sent here while it runs.)
+    check(await tab2.evaluate(() => window.__stationSaysStopped()), "the station's last word gets out as a plain request");
+    d = await read();
+    check(d.station.on === false && d.station.status === "Stopped." && d.station.name === "Linux computer" && !!d.station.id, "the account says it stopped (and nothing else about it is lost)");
+    check(await until(async () => /isn't running/.test(await camNote()), 5000), "and the game says so within seconds, not a minute later: " + (await camNote()).slice(0, 70));
+    check(await until(async () => /camera station|watching/i.test(await camNote()) && !/isn't running/.test(await camNote()), 40000), "(the station, still running here, is back at its next sign of life)");
 
     const errors = [tab2, ipad, laptop].flatMap((p) => p.errors || []);
     check(!errors.length, "no page errors" + (errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""));

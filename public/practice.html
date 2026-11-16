@@ -1995,6 +1995,12 @@
       return;
     }
     box.textContent = camText || "Camera on.";
+    // On the computer with the cameras, with the station's page closed: one click opens it (in its
+    // own tab, so this game stays where it is).
+    if (cam && cam.stationOff && window.DartCamera && DartCamera.stationHere()) {
+      const a = el("a", "", "Open the Camera station"); a.href = "station.html"; a.target = "_blank"; a.rel = "noopener";
+      box.append(" ", a);
+    }
   }
 
   let camCheckWarning = "";

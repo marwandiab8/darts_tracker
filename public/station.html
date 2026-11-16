@@ -57,7 +57,7 @@
 <div class="shell"><div class="wrap">
   <header>
     <h1>Camera station</h1>
-    <div class="links"><a class="back" href="camera.html">Cameras</a><a class="back" href="practice.html">Play the bot</a><a class="back" href="doubles.html">Doubles</a><a class="back" href="index.html">Tracker</a></div>
+    <div class="links"><a class="back" href="camera.html" target="_blank" rel="noopener">Cameras</a><a class="back" href="practice.html" target="_blank" rel="noopener">Play the bot</a><a class="back" href="doubles.html" target="_blank" rel="noopener">Doubles</a><a class="back" href="index.html" target="_blank" rel="noopener">Tracker</a></div>
   </header>
 
   <section class="card" id="signCard">
@@ -80,7 +80,7 @@
       <button type="button" class="secondary hidden" id="stopBtn">Stop</button>
     </div>
     <p class="muted hidden" id="obsHint" style="font-size:13px;">Playing DartCounter through OBS? Press "Let OBS have the cameras", then start OBS. Leave this page open: it takes the cameras back by itself a few seconds after OBS closes. (OBS already open, with black cameras? Start OBS again: the station let go as soon as it saw OBS.)</p>
-    <p class="muted" style="font-size:13px;margin-bottom:0;">Keep this page open on the computer with the cameras (it can be behind other windows). The computer must not go to sleep while you play. Only this page reads the cameras: your games, on any computer or tablet signed in to the same account, get the darts from it.</p>
+    <p class="muted" style="font-size:13px;margin-bottom:0;"><b>This window is the camera station: leave it open, and don't use it for anything else</b> (it can be behind other windows; the links at the top open in a new tab). Closing it, or going to another page in it, stops the cameras. The computer must not go to sleep while you play. Only this page reads the cameras: your games, on any computer or tablet signed in to the same account, get the darts from it.</p>
   </section>
 
   <!-- Setting up: one button -->
@@ -102,7 +102,7 @@
     <label class="field">This computer's name, as your other computers show it <input type="text" id="name" maxlength="40"></label>
     <label class="check"><input type="checkbox" id="auto"> Start by itself whenever this page opens</label>
     <label class="check"><input type="checkbox" id="hardShadows"> Hard shadows beside the darts (the board is lit by a single lamp, not a ring light)</label>
-    <p class="muted" style="font-size:13px;margin-bottom:0;">A camera turned on its side or upside down can't tell which way up the board is by itself: calibrate that one by hand, once, on the <a href="camera.html" style="color:var(--accent)">Cameras</a> page. After that it keeps itself calibrated like the others.</p>
+    <p class="muted" style="font-size:13px;margin-bottom:0;">A camera turned on its side or upside down can't tell which way up the board is by itself: calibrate that one by hand, once, on the <a href="camera.html" target="_blank" rel="noopener" style="color:var(--accent)">Cameras</a> page. After that it keeps itself calibrated like the others.</p>
   </details>
 
   <details class="more hidden" id="learnCard">
@@ -161,6 +161,7 @@
     $("signInBtn").classList.toggle("hidden", !!u);
     $("who").textContent = u ? `Signed in as ${u.email || u.displayName}. Darts read here go to this account.` : "Sign in with the account you play with, so your other computers get the darts.";
     if (!u) { if (station) station.stop(); station = null; show(); return; }
+    keepToken();
     await findCameras(false);
     show();
     if (autoStart() && cameras.length && shown.length && !station) start();
@@ -511,7 +512,40 @@
     $("calBtn").disabled = true;
     try { await station.calibrate(); } finally { $("calBtn").disabled = false; }
   });
-  window.addEventListener("pagehide", () => { if (station) station.stop(); });
+  // ---- leaving -------------------------------------------------------------------------------------------
+  // The station stops when this page goes (closed, or its window used for something else), and it
+  // was left stopped more than once that way: on Nov 16, 2026 the window was taken to the bot game
+  // by the "Play the bot" link up here, and the darts thrown next went unread. So: those links
+  // open in a new tab; the browser asks before this page is left while it is the station; and when
+  // it does go, the account is told at once, by a request the browser finishes after the page has
+  // gone (the usual way of writing to the account doesn't get out in time), so the games say
+  // "Cameras off" straight away and not a minute later.
+  const REST = window.__firestoreRest || `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents`;
+  let idToken = null, leaving = false;
+  const keepToken = () => { if (user) user.getIdToken().then((token) => { idToken = token; }).catch(() => {}); };
+  setInterval(keepToken, 600000);
+  function sayStoppedFast() {
+    if (!user || !idToken) return Promise.resolve(false);
+    const mask = ["on", "running", "resting", "status", "seen"].map((f) => "updateMask.fieldPaths=station." + f).join("&");
+    const fields = { on: { booleanValue: false }, running: { booleanValue: false }, resting: { booleanValue: false }, status: { stringValue: "Stopped." }, seen: { integerValue: String(Date.now()) } };
+    return fetch(`${REST}/cameraStations/${user.uid}?${mask}&currentDocument.exists=true`, {
+      method: "PATCH", keepalive: true,
+      headers: { Authorization: "Bearer " + idToken, "Content-Type": "application/json" },
+      body: JSON.stringify({ fields: { station: { mapValue: { fields } } } }),
+    }).then((r) => r.ok, () => false);
+  }
+  window.__stationSaysStopped = sayStoppedFast; // for the browser test
+  window.addEventListener("beforeunload", (e) => {
+    if (!station || !station.active || leaving) return;
+    e.preventDefault();
+    e.returnValue = "";
+  });
+  window.addEventListener("pagehide", () => {
+    if (!station) return;
+    const mine = station.active;
+    station.stop();
+    if (mine) sayStoppedFast();
+  });
 
   // ---- keeping itself up to date ------------------------------------------------------------------------
   // The page is left open for days, so it would go on running old code after an update to the app.
@@ -539,6 +573,7 @@
     try { sessionStorage.setItem(RELOADED, String(Date.now())); } catch (_) { /* private mode */ }
     // Fresh copies into the browser's cache first, so loading again gets them and not the old ones.
     await Promise.all(FILES.map((f) => fetch(f, { cache: "reload" }).catch(() => {})));
+    leaving = true; // its own doing: no "leave this page?" question
     location.reload();
   }, 600000);
 })();

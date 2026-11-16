@@ -56,6 +56,15 @@ Only one program can have a camera. OBS takes both for DartCounter's picture; th
 - **"Let OBS have the cameras"** frees them before OBS starts, which is the right order: OBS only gets a camera that is free when it starts. Started beside a watching station, OBS shows black cameras; starting OBS again fixes that (the station let go when it saw OBS). If OBS doesn't start within 3 minutes of the button, the station takes the cameras back. "Take the cameras back" does it at once.
 - A station set up on OBS's own picture (both halves of its virtual camera) reads that, and none of this applies.
 
+### The station's window can't be lost by accident
+
+The station stops when its page goes. On Nov 16, 2026, an hour after it was set up in a window of its own, that window was taken to the bot game by the "Play the bot" link at the top of the station page; the darts thrown next went unread, and for a minute the game still said the cameras were watching. So:
+
+- The links at the top of the station page open in a new tab.
+- The browser asks before the page is closed, reloaded or left while it is the account's station (not when it reloads itself after an update).
+- As the page goes it tells the account at once, with a plain request the browser finishes after the page has gone (`sayStoppedFast`: a `keepalive` PATCH to Firestore's REST API with the signed-in user's token, kept fresh every ten minutes). The usual write doesn't get out in time. The games then say "Cameras off" within seconds.
+- On the computer that has been the station (`dt_station` in its browser: `stationHere`), the tracker and the bot game add "Open the Camera station" to the "isn't running" message: one click, in a new tab.
+
 ### It keeps itself up to date
 
 The station page is left open for days, so after an update to the app it would go on running the old code. Every ten minutes it compares its own files (the page and its three scripts) with what it loaded; when they differ and nothing has happened at the board for three minutes, it loads itself again and, starting by itself, carries on.
@@ -66,7 +75,7 @@ The station reads the darts itself, from the cameras' own pictures, so nothing i
 - `cameraStations/{uid}/stills/{0|1}`: each camera's latest picture, as a JPEG (about 300 kB).
 - `cameraStations/{uid}/events/latest`: the last 20 events (darts, take-outs, the start-up check), each with a rising number; a page passes on only those after it started listening.
 
-The code is in `public/board-camera.js` (`createStation`, `createRemoteWatcher`, `chooseWatcher`, `requestStills`, `requestCalibration`, `calibrateFrom`, `findBoardCameras`). A station counts as running if it was seen in the last 90 seconds and hasn't said it stopped.
+The code is in `public/board-camera.js` (`createStation`, `createRemoteWatcher`, `chooseWatcher`, `requestStills`, `requestCalibration`, `calibrateFrom`, `findBoardCameras`). A station counts as running if it was seen in the last 50 seconds and hasn't said it stopped.
 
 ### When the cameras stop reading darts
 

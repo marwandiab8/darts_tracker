@@ -496,7 +496,8 @@
   // Settings the station learned from the darts you kept and corrected (board-learn.js, which only
   // the station page loads; elsewhere nothing is learned).
   const learnedOptions = (setup) => (root.BoardLearn && setup && setup.learned && setup.learned.options ? root.BoardLearn.cleanLearned(setup.learned.options) : {});
-  const BEAT_MS = 20000, ONLINE_MS = 90000;
+  // A station gives a sign of life every BEAT_MS; with none for ONLINE_MS it counts as not running.
+  const BEAT_MS = 20000, ONLINE_MS = 50000;
   // A station that has given no sign of life for this long has stopped: another may take over.
   const LEASE_MS = 50000;
   // A camera followed this far (mm) from its saved calibration has that saved as followed.
@@ -513,6 +514,12 @@
   const numberOr = (v, n) => (typeof v === "number" && Number.isFinite(v) ? round(v, n) : null);
   // How a camera's calibration stands, in a few numbers, for the account.
   const slimResult = (r) => (r ? { ok: !!r.ok, how: r.how || null, why: r.why || null, moved: numberOr(r.moved, 2), edges: numberOr(r.edges, 0), rms: numberOr(r.rms, 2), at: r.at || null } : null);
+
+  // Whether this browser has been the camera station (its page keeps its settings here): then
+  // this is the computer with the cameras, and a game page can offer to open the station.
+  function stationHere() {
+    try { return !!localStorage.getItem("dt_station"); } catch (_) { return false; }
+  }
 
   // This browser, for telling two tabs of it from two computers (kept in localStorage).
   let hostMemo = null;
@@ -1436,6 +1443,8 @@
       get running() { return running; },
       // Why the cameras aren't reading, in a few words for the game's screen ("" when they are).
       get down() { return running ? down : ""; },
+      // The station isn't running at all (its page is closed): opening it is what is needed.
+      get stationOff() { return running && state === "off"; },
       get views() { return []; },
       get detector() { return null; },
       get cameras() { return (doc && doc.setup && doc.setup.cameras) || []; },
@@ -1517,6 +1526,7 @@
       get remote() { return handed; },
       get running() { return running; },
       get down() { return handed ? inner.down : ""; },
+      get stationOff() { return handed ? inner.stationOff : false; },
       get views() { return inner.views; },
       get detector() { return inner.detector; },
       get cameras() { return inner.cameras; },
@@ -1597,7 +1607,7 @@
 
   root.DartCamera = {
     KEY, load, save, ready, listCameras, requestAccess, openStream, videoFor, still, pixelsOf, lensOptions, snap, explain, resolve, matchCameras, otherWayFits, createWatcher,
-    isOnline, hasStation, slimEvent, createStation, createRemoteWatcher, createLocalWatcher, getStation, chooseWatcher, requestStills, requestCalibration, saveStationSetup, setStationOptions,
+    isOnline, hasStation, stationHere, slimEvent, createStation, createRemoteWatcher, createLocalWatcher, getStation, chooseWatcher, requestStills, requestCalibration, saveStationSetup, setStationOptions,
     calibrateFrom, findBoardCameras, GOOD_EDGES, GOOD_RMS,
     noteDart, forgetLearned, learnedOptions,
   };
