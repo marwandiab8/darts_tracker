@@ -35,6 +35,13 @@ The station reads the darts itself, from the cameras' own pictures, so nothing i
 
 The code is in `public/board-camera.js` (`createStation`, `createRemoteWatcher`, `chooseWatcher`, `requestStills`). A station counts as running if it was seen in the last 90 seconds.
 
+### When the cameras stop reading darts
+
+Check the station first: the game pages say "The camera station on Linux computer isn't running", and `cameraStations/{uid}.station.seen` stops moving (it is written every 20 s). On Nov 16, 2026 the cameras had read nothing since 3 PM the day before because the Camera station tab had been closed (Chrome's tab search listed it under Recently Closed), around when the cameras were given to OBS for DartCounter. Reopening the tab (it has "Start by itself") brought it straight back; its start-up check found both cameras within 1.6 mm of their calibration, and fitting the saved calibrations to fresh pictures (no taps) and saving them brought that to 0.3-0.5 mm.
+
+- Keep the Camera station tab open. Only one program can have the cameras the usual way: while OBS has them, the station needs OBS's virtual camera (see "Setting up" above).
+- A game page that started while the station was down uses this browser's own cameras, if any are set up here; reload it once the station is back.
+
 ### Unplugging the cameras, and which is which
 
 The two NexiGo cameras are the same model, so the computer can't tell them apart: they have the same name, and on Linux a camera's device id (as Chrome gives it) follows the order the cameras were plugged in. After the cameras are unplugged and plugged in again (the laptop taken to work and back), they can come back with each other's ids, or with new ones. The calibrations belong to the cameras' views of the board, not to the ids, so the station works out which is which by what each camera sees:
