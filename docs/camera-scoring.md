@@ -67,7 +67,7 @@ The station stops when its page goes. On Nov 16, 2026, an hour after it was set 
 
 ### It keeps itself up to date
 
-The station page is left open for days, so after an update to the app it would go on running the old code. Every ten minutes it compares its own files (the page and its three scripts) with what it loaded; when they differ and nothing has happened at the board for three minutes, it loads itself again and, starting by itself, carries on.
+The station page is left open for days, so after an update to the app it would go on running the old code. Every ten minutes it compares its own files (the page and its three scripts) with the copies it was loaded from. Once they differ it waits for a quiet moment (nothing at the board for three minutes, looked for every twenty seconds), then loads itself again and, starting by itself, carries on. Not more than once an hour.
 
 The station reads the darts itself, from the cameras' own pictures, so nothing is lost to video compression; only the results travel. Everything goes through Firestore, under the owner's account (rules: only the owner reads or writes any of it):
 

@@ -565,17 +565,22 @@
   let ran = null, stale = false;
   // The browser's kept copies are what this page is running.
   fingerprint("force-cache").then((f) => { ran = f; }).catch(() => {});
-  setInterval(async () => {
+  // Looks for an update every ten minutes; once there is one, for a quiet moment every twenty seconds.
+  async function upToDate() {
     try {
       if (!stale && ran !== null) stale = (await fingerprint("no-store")) !== ran;
     } catch (_) { /* offline: look again later */ }
-    if (!stale || !autoStart() || settingUp || lately() || Date.now() - lastSeen < 180000) return;
+    if (!stale || !autoStart() || settingUp || lately() || Date.now() - lastSeen < 180000) {
+      setTimeout(upToDate, stale && !lately() ? 20000 : 600000);
+      return;
+    }
     try { sessionStorage.setItem(RELOADED, String(Date.now())); } catch (_) { /* private mode */ }
     // Fresh copies into the browser's cache first, so loading again gets them and not the old ones.
     await Promise.all(FILES.map((f) => fetch(f, { cache: "reload" }).catch(() => {})));
     leaving = true; // its own doing: no "leave this page?" question
     location.reload();
-  }, 600000);
+  }
+  setTimeout(upToDate, 600000);
 })();
 </script>
 </body>
