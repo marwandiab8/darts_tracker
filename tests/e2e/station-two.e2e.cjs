@@ -197,6 +197,16 @@ const twoCameras = `(() => {
     check(JSON.stringify((await read()).setup.cameras.map((c) => [c.deviceId, c.cal.at])) === kept, "the station's cameras and their calibrations are as they were");
     check(await watching(), "and it is watching again with both: " + (await text(tab, "status")).slice(0, 80));
 
+    // ---- a camera that couldn't be checked as watching started is checked again by itself -------
+    // (Camera 2 is still blocked from the step before: the lights off, a coat over the board.)
+    check(await until(async () => /Camera 2 couldn't be matched to the board/.test(await text(tab, "status")), 20000), "watching started with camera 2 not checked: " + (await text(tab, "status")).slice(0, 150));
+    await tab.evaluate(() => window.__show(0, "right-empty"));
+    const cleared = await until(async () => { const st = await text(tab, "status"); return /Watching with 2 cameras/.test(st) && !/couldn't be matched/.test(st) ? st : null; }, 120000);
+    check(cleared, "once it can see the board again, it checks by itself and stops saying so: " + (cleared || await text(tab, "status")).slice(0, 110));
+    d = await until(async () => { const x = await read(); return x.station.cameras && x.station.cameras[1] && x.station.cameras[1].ok === true ? x : null; }, 30000) || await read();
+    check(d.station.cameras[1].ok === true && d.station.cameras[1].how === "checked", "and the account has it as checked: " + JSON.stringify(d.station.cameras[1]));
+    check(await watching(), "watching all the while");
+
     const errors = [tab, ipad].flatMap((p) => p.errors || []);
     check(!errors.length, "no page errors" + (errors.length ? ": " + errors.slice(0, 3).join(" | ") : ""));
   } catch (error) {
