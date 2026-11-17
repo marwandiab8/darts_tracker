@@ -34,6 +34,8 @@ The Time Left item uses:
 
 Games played against the bot on `practice.html` are sent the same way from `botGames/{gameId}` (function `syncBotGameToTimeLeft`), as a summary with `sourceCollection: botGames`. See [bot-practice.md](bot-practice.md).
 
+Games between two players on `practice.html` are sent from `versusGames/{gameId}` (function `syncVersusGameToTimeLeft`, since Nov 16, 2026), each game of a match as an item of its own: a `completed_darts_match` event like the DartCounter ones, titled "Won 501 vs Sam (avg 55.55)", with the result, both averages, the darts thrown, the best visit and the time played. The other player's name goes along; their email address and both players' darts stay in Darts Tracker. Deleting a game on the page tells Time Left it is gone. The results email writes its status back to the game a moment after it is saved, which sends the same item a second time; Time Left takes that as a duplicate. Games saved before the function existed were sent once by adding and removing a `resyncRequestedAt` field on each (any change to a game sends it again). See [two-players.md](two-players.md).
+
 JDC Challenge rounds from `challenge.html` are sent from `challengeGames/{gameId}` (function `syncChallengeGameToTimeLeft`) as a timed Darts practice item: the score out of 3,330, each part, doubles hit, trebles and Shanghais. The 57 darts stay in Darts Tracker. See [challenge.md](challenge.md).
 
 ## Practice timer

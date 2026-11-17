@@ -939,7 +939,7 @@
   }
 
   async function deleteGame(item) {
-    if (!window.confirm(item.coll === "versusGames" ? "Delete this game from your record? The emails already sent stay in the inboxes." : "Delete this game from your record? It is also removed from Time Left.")) return;
+    if (!window.confirm(item.coll === "versusGames" ? "Delete this game from your record? It is also removed from Time Left. The emails already sent stay in the inboxes." : "Delete this game from your record? It is also removed from Time Left.")) return;
     try {
       await db.collection(item.coll || "botGames").doc(item.id).delete();
       savedGames = savedGames.filter((g) => g.id !== item.id);
@@ -2357,7 +2357,7 @@
       if (!savedGames.some((g) => g.id === ref.id)) savedGames.push({ id: ref.id, coll: collectionName, data: record });
       syncSetupVisibility();
       note.className = "saved ok";
-      note.textContent = collectionName === "versusGames" ? "Saved to your record." : "Saved to your practice record. It will show up in Time Left.";
+      note.textContent = collectionName === "versusGames" ? "Saved to your record. It will show up in Time Left." : "Saved to your practice record. It will show up in Time Left.";
       if (collectionName === "versusGames") watchEmail(ref, record);
       renderHistory(); renderHeat();
       return true;

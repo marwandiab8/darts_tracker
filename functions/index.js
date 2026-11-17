@@ -323,6 +323,109 @@ function mapBotGameToTimeLeft(game, gameId, syncStatus = "active") {
   };
 }
 
+// A game between two players on practice.html (versusGames/{gameId}; docs/two-players.md). Written by the
+// browser like a bot game, so every field is checked or clamped. The other player's name goes along: it
+// is the owner's own record of who they played. Their email address stays in Darts Tracker, and so do
+// both players' darts. Each game of a match is an item of its own, timed from its start like a bot game.
+function mapVersusGameToTimeLeft(game, gameId, syncStatus = "active") {
+  const timeZone = DARTS_DEFAULT_TIME_ZONE.value() || "America/Toronto";
+  const dateId = timestampDateId(game.timestamp || game.dateId || game.createdAt, timeZone);
+  const appBaseUrl = String(DARTS_APP_BASE_URL.value() || "").replace(/\/+$/, "");
+
+  const info = versusSummary(game);
+  const { kind, result, gameName } = info;
+  const startScore = kind === "x01" && Number.isInteger(game.startScore) && game.startScore >= 201 && game.startScore <= 701 ? game.startScore : null;
+  const doubleOut = kind === "x01" ? game.doubleOut !== false : null;
+  const opponent = cleanString(game.opponentName, 40).replace(/[<>]/g, "") || "another player";
+  const playerAvg = cleanNumber(game.playerAvg, 0, 300);
+  const opponentAvg = cleanNumber(game.opponentAvg, 0, 300);
+  const playerDarts = info.rows[0].darts;
+  const opponentDarts = info.rows[1].darts;
+  const playerScore = info.rows[0].score;
+  const opponentScore = info.rows[1].score;
+  const bestVisit = kind === "x01" && info.best[0] > 0 && info.best[0] <= 180 ? info.best[0] : null;
+  const durationSec = info.durationSec;
+  const leg = Number.isInteger(game.leg) && game.leg >= 1 && game.leg <= 30 ? game.leg : null;
+  const legsToWin = Number.isInteger(game.legsToWin) && game.legsToWin >= 1 && game.legsToWin <= 11 ? game.legsToWin : null;
+  const matchId = /^[A-Za-z0-9_-]{1,40}$/.test(String(game.matchId || "")) ? String(game.matchId) : null;
+
+  const resultWord = { won: "Won", lost: "Lost", abandoned: "Unfinished" }[result];
+  const averageName = kind === "cricket" ? "marks per round" : "three-dart average";
+  const sentences = [`${resultWord} ${gameName} against ${opponent}`];
+  if (playerAvg !== null && playerDarts) sentences.push(`Your ${averageName} ${playerAvg} against ${opponentAvg === null ? "theirs" : opponentAvg}`);
+  if (playerDarts) sentences.push(`${playerDarts} darts thrown${bestVisit ? `, best visit ${bestVisit}` : ""}`);
+  if (kind === "x01" && result === "won" && opponentScore) sentences.push(`${opponent} had ${opponentScore} left`);
+  if (kind === "x01" && result === "lost" && playerScore) sentences.push(`You had ${playerScore} left`);
+  if (kind === "cricket" && result !== "abandoned" && playerScore !== null && opponentScore !== null) sentences.push(`Points ${playerScore} to ${opponentScore}`);
+  if (leg && legsToWin) sentences.push(`Game ${leg} of a first-to-${legsToWin} match`);
+  const summary = `${sentences.join(". ")}.`;
+  const titleAverage = playerAvg !== null && playerDarts && result !== "abandoned" ? ` (${kind === "cricket" ? `${playerAvg} marks a round` : `avg ${playerAvg}`})` : "";
+
+  return {
+    dateId: dateId || undefined,
+    sourceApp: "DartstRacker2026",
+    category: "dartsRecord",
+    title: `${resultWord} ${gameName} vs ${opponent}${titleAverage}`,
+    summary,
+    description: `Game between two players in Darts Tracker: ${gameName} against ${opponent}, ${result}.`,
+    sourceFirebaseProjectId: DARTS_FIREBASE_PROJECT_ID.value() || "dartstracker2026",
+    sourceProjectName: "Darts Tracker",
+    sourceProjectId: DARTS_SOURCE_PROJECT_ID,
+    sourceCollection: "versusGames",
+    sourceDocumentId: gameId,
+    sourceDocumentPath: `versusGames/${gameId}`,
+    sourceStoragePath: null,
+    sourceUrl: appBaseUrl ? `${appBaseUrl}/practice.html` : "",
+    fileUrl: null,
+    thumbnailUrl: null,
+    contentType: null,
+    fileName: null,
+    fileSize: null,
+    originalCreatedAt: isoOrNull(game.createdAt),
+    originalUpdatedAt: isoOrNull(game.updatedAt),
+    capturedAt: game.timestamp || isoOrNull(game.createdAt),
+    visibility: "ownerOnly",
+    syncStatus,
+    metadata: {
+      uid: game.uid || null,
+      practiceType: "versus",
+      kind,
+      startScore,
+      doubleOut,
+      result,
+      opponent,
+      playerAvg,
+      opponentAvg,
+      playerScore,
+      opponentScore,
+      playerDarts,
+      opponentDarts,
+      bestVisit,
+      rounds: info.rounds,
+      leg,
+      legsToWin,
+      matchId,
+      durationSec,
+      timestamp: cleanString(game.timestamp || ""),
+      source: "dartstracker2026",
+      note: summary,
+    },
+    // A match against a person, like the ones that come from DartCounter: filed under Darts, and timed
+    // from the game's start (capturedAt) so it shows on the Activity wheel.
+    eventType: "completed_darts_match",
+    activityFamily: "darts",
+    durationSeconds: durationSec > 0 ? durationSec : undefined,
+    metrics: Object.fromEntries(Object.entries({
+      won: result === "won" ? 1 : result === "lost" ? 0 : null,
+      darts: playerDarts || null,
+      average: playerDarts ? playerAvg : null,
+      opponentAverage: opponentDarts ? opponentAvg : null,
+      bestVisit,
+      rounds: info.rounds,
+    }).filter(([, value]) => value !== null && value !== undefined)),
+  };
+}
+
 // A JDC Challenge round from challenge.html: Shanghai 10-15, a dart at each double and the bull, Shanghai
 // 15-20 (57 darts, out of 3,330). Written by the browser, so every number is clamped; the darts stay here.
 const CHALLENGE_MAX = 3330;
@@ -839,6 +942,13 @@ exports.syncBotGameToTimeLeft = onDocumentWritten(
   (event) => forwardOwnerDocument({ event, collectionName: "botGames", idParam: "gameId", mapItem: mapBotGameToTimeLeft })
 );
 
+// A game between two players. (The results email writes its status back to the game a moment after it
+// is saved; that write sends the same item again, which Time Left takes as a duplicate.)
+exports.syncVersusGameToTimeLeft = onDocumentWritten(
+  { ...SYNC_OPTIONS, document: "versusGames/{gameId}" },
+  (event) => forwardOwnerDocument({ event, collectionName: "versusGames", idParam: "gameId", mapItem: mapVersusGameToTimeLeft })
+);
+
 exports.syncChallengeGameToTimeLeft = onDocumentWritten(
   { ...SYNC_OPTIONS, document: "challengeGames/{gameId}" },
   (event) => forwardOwnerDocument({ event, collectionName: "challengeGames", idParam: "gameId", mapItem: mapChallengeGameToTimeLeft })
@@ -1021,6 +1131,7 @@ module.exports._test = {
   mapChallengeGameToTimeLeft,
   mapDoublesSessionToTimeLeft,
   mapSessionToTimeLeft,
+  mapVersusGameToTimeLeft,
   rowScoreForMode,
   summarizeTargets,
   timestampDateId,

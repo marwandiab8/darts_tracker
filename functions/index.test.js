@@ -620,3 +620,75 @@ test("a match goes to each player as one email; a single game still sends on its
   assert.equal(await _test.processVersusGame({ game: versusGame(), ref: fakeRef(), ownerUid: "owner-1", countRecent: async () => 0, send: async (games) => { sends += 1; assert.equal(games, null); return okSend(); }, loadMatch: async () => { throw new Error("not called for a single game"); } }), "sent");
   assert.equal(sends, 1);
 });
+
+// --- a game between two players goes to Time Left -----------------------------------------------------
+
+test("a game between two players becomes a timed darts match in Time Left, without emails or dart positions", () => {
+  const item = _test.mapVersusGameToTimeLeft(versusGame({ log: [{ w: "p", t: "60" }, { w: "o", t: "140" }, { w: "p", t: "100" }, { w: "o", t: "Bust" }] }), "v1");
+  assert.equal(item.dateId, "2026-09-20");
+  assert.equal(item.sourceApp, "DartstRacker2026");
+  assert.equal(item.category, "dartsRecord");
+  assert.equal(item.sourceCollection, "versusGames");
+  assert.equal(item.sourceDocumentPath, "versusGames/v1");
+  assert.equal(item.sourceProjectId, "1:151826966768:web:a409ac8d409bf0f796ba35");
+  assert.equal(item.visibility, "ownerOnly");
+  assert.equal(item.title, "Won 501 vs Sam (avg 55.55)");
+  assert.equal(item.summary, "Won 501 against Sam. Your three-dart average 55.55 against 48.1. 40 darts thrown, best visit 100. Sam had 96 left.");
+  assert.deepEqual([item.eventType, item.activityFamily, item.durationSeconds, item.capturedAt], ["completed_darts_match", "darts", 905, "2026-09-20 19:30"]);
+  assert.deepEqual(item.metrics, { won: 1, darts: 40, average: 55.55, opponentAverage: 48.1, bestVisit: 100, rounds: 14 });
+  assert.equal(item.metadata.practiceType, "versus");
+  assert.equal(item.metadata.opponent, "Sam");
+  assert.equal(item.metadata.opponentDarts, 39);
+  const sent = JSON.stringify(item);
+  assert.equal(sent.includes("@"), false, "no email address leaves Darts Tracker");
+  assert.equal(sent.includes('"s":"T20"'), false, "nor the darts themselves");
+});
+
+test("a lost game, cricket, an unfinished game and a game of a match are each described", () => {
+  const lost = _test.mapVersusGameToTimeLeft(versusGame({ result: "lost", playerScore: 40, opponentScore: 0, leg: 3, legsToWin: 2, matchId: "m1abc" }), "v2");
+  assert.equal(lost.title, "Lost 501 vs Sam (avg 55.55)");
+  assert.match(lost.summary, /^Lost 501 against Sam\. .* You had 40 left\. Game 3 of a first-to-2 match\.$/);
+  assert.equal(lost.metrics.won, 0);
+  assert.deepEqual([lost.metadata.leg, lost.metadata.legsToWin, lost.metadata.matchId], [3, 2, "m1abc"]);
+  const cricket = _test.mapVersusGameToTimeLeft(versusGame({ kind: "cricket", startScore: undefined, doubleOut: undefined, playerAvg: 2.1, opponentAvg: 1.8, playerScore: 120, opponentScore: 85 }), "v3");
+  assert.equal(cricket.title, "Won Cricket vs Sam (2.1 marks a round)");
+  assert.equal(cricket.summary, "Won Cricket against Sam. Your marks per round 2.1 against 1.8. 40 darts thrown. Points 120 to 85.");
+  assert.equal(cricket.metrics.bestVisit, undefined);
+  const unfinished = _test.mapVersusGameToTimeLeft(versusGame({ result: "abandoned", startScore: 301, doubleOut: false, playerDarts: [], opponentDarts: [], durationSec: 0 }), "v4");
+  assert.equal(unfinished.title, "Unfinished 301 straight out vs Sam");
+  assert.equal(unfinished.summary, "Unfinished 301 straight out against Sam.");
+  assert.equal(unfinished.metrics.won, undefined, "neither won nor lost");
+  assert.equal(unfinished.durationSeconds, undefined, "untimed when no time was kept");
+});
+
+test("a two-player game's contents are treated as untrusted", () => {
+  const item = _test.mapVersusGameToTimeLeft(
+    versusGame({ opponentName: "  <b>Sam</b>   the    Great and Terrible of the Long Long Name  ", result: "cheated", kind: "poker", startScore: 99999, playerAvg: "a lot", opponentAvg: 1e9, playerDarts: "many", durationSec: -5, leg: 99, legsToWin: "two", matchId: "../../x", log: "none" }),
+    "v5"
+  );
+  assert.equal(item.title.includes("<"), false);
+  assert.ok(item.metadata.opponent.length <= 40 && !/\s{2}/.test(item.metadata.opponent), item.metadata.opponent);
+  assert.equal(item.metadata.result, "abandoned");
+  assert.equal(item.metadata.kind, "x01");
+  assert.equal(item.metadata.startScore, null);
+  assert.equal(item.metadata.playerAvg, null);
+  assert.equal(item.metadata.opponentAvg, 300);
+  assert.equal(item.metadata.playerDarts, 0);
+  assert.equal(item.metadata.durationSec, 0);
+  assert.deepEqual([item.metadata.leg, item.metadata.legsToWin, item.metadata.matchId, item.metadata.bestVisit], [null, null, null, null]);
+  assert.equal(_test.mapVersusGameToTimeLeft(versusGame({ opponentName: "" }), "v6").title, "Won 501 vs another player (avg 55.55)", "no name: said plainly");
+});
+
+test("the owner's two-player game is sent once; someone else's isn't; deleting it tells Time Left", async () => {
+  const options = { collectionName: "versusGames", mapItem: _test.mapVersusGameToTimeLeft };
+  const sent = await runForward(versusGame(), options);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].body.item.sourceDocumentPath, "versusGames/g1");
+  assert.equal(sent[0].body.item.syncStatus, "active");
+  assert.equal((await runForward(versusGame({ uid: "someone-else" }), options)).length, 0);
+  const gone = await runForward(versusGame(), { ...options, deleted: true });
+  assert.equal(gone.length, 1);
+  assert.equal(gone[0].body.item.syncStatus, "deletedFromSource");
+  // The trigger is there, on the two-player games.
+  assert.equal(typeof require("./index").syncVersusGameToTimeLeft, "function");
+});

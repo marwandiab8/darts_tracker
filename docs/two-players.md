@@ -56,6 +56,10 @@ Emails are sent from your Gmail account with an app password. Nothing is sent un
 
 Gmail sends from the account it logs in as, whatever `MAIL_FROM` says, and limits how many messages a day it will send (about 500), far above the cap here.
 
+## Time Left
+
+Each saved game is also sent to Time Left To Live by `syncVersusGameToTimeLeft` (in `functions/index.js`, since Nov 16, 2026; the 11 games saved before that were sent the same day), for the account in `DARTS_OWNER_UID` only: a timed Darts item from when the game started, titled like "Won 501 vs Sam (avg 55.55)", with the result, both averages, the darts thrown and the best visit, and which game of a match it was. The other player's name is sent; their email address and both players' darts are not. Deleting a game on the page removes it from Time Left. See [time-left-sync.md](time-left-sync.md).
+
 ## Privacy
 
-The other player's email address is stored in your `versusGames` record and, for convenience, in this browser's local storage; it is used only to send that result. Deleting a game removes the record, not emails already sent.
+The other player's email address is stored in your `versusGames` record and, for convenience, in this browser's local storage; it is used only to send that result. Their name (not their address) goes to your own Time Left with each game. Deleting a game removes the record (and its Time Left item), not emails already sent.
