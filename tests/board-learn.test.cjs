@@ -74,3 +74,30 @@ test("from bad settings it learns better ones, from the darts it has kept", asyn
   assert.equal(again.was, result.right);
   assert.ok(again.right >= again.was);
 });
+
+test("the cameras' noise sets a floor for the change threshold: nothing below it is tried or kept", async () => {
+  // Nov 16, 2026: the kept darts read a little better at 22, and it was used; but on the live board
+  // an empty picture differed from itself by more than a dart at 22, so the detector was set off
+  // all the time and darts were read twice or not at all. The kept darts can't show that.
+  assert.ok(!L.SEARCH[0].values.includes(22), "22 is no longer one of the values");
+  assert.deepEqual(L.cleanLearned({ threshold: 22, cell: 0.009 }), { cell: 0.009 }, "an account that still has it loses it");
+  // With a floor of 34 only 34 and 38 are tried, whatever the kept darts would like.
+  const tried = L.variations(Object.assign({}, L.BASE, { threshold: 38 }), [], 34).map((o) => o.threshold);
+  assert.ok(tried.every((t) => t >= 34), "nothing below the floor: " + [...new Set(tried)].join(", "));
+  assert.equal(L.thresholdFrom(31), 34);
+  assert.equal(L.thresholdFrom(0), L.SEARCH[0].values[0]);
+  assert.equal(L.thresholdFrom(99), 38, "above them all: the highest");
+  const samples = darts();
+  const free = await L.learn({ threshold: 38 }, () => samples, { minThreshold: 34 });
+  assert.ok(free.options.threshold === undefined || free.options.threshold >= 34, "learned with the floor: " + free.options.threshold);
+  assert.equal(free.forced, false);
+  // The threshold in use is below the floor: the result starts from the floor and is to be used,
+  // even if it reads no more of the kept darts right.
+  const forced = await L.learn({ threshold: 26 }, () => samples, { minThreshold: 34 });
+  assert.equal(forced.forced, true);
+  assert.ok(forced.options.threshold >= 34, "moved up to the floor: " + forced.options.threshold);
+  assert.ok(forced.changed.includes("threshold"));
+  assert.ok(L.better(forced), "used whatever it reads");
+  assert.ok(L.better({ forced: true, n: 3, right: 1, was: 2 }));
+  assert.ok(!L.better({ forced: false, n: 50, right: 30, was: 30 }));
+});

@@ -151,6 +151,9 @@ const twoCameras = `(() => {
     check(out, "the dart pulled out: the station sees the take-out");
     const closed = await until(async () => { const s = await live(); return s && s.thrown["20"] === 3 ? s : null; }, 15000);
     check(closed && closed.pulled === true && !closed.thrown["19"], "which ends the visit at 20 (the two darts not thrown are misses there, nothing spills to 19)");
+    // What the detector made of it is kept for looking at afterwards.
+    const trace = await until(async () => { const x = await read(); const tr = (x.station && x.station.trace) || []; return tr.some((l) => / dart T20 /.test(l)) && tr.some((l) => / takeout 1/.test(l)) ? tr : null; }, 30000);
+    check(trace && trace.some((l) => /^\d+:\d\d:\d\d\.\d dart T20 \S.* \d\.\d\d \d+ms$/.test(l)), "the station's trace has the dart, how it was read and how long it took: " + (trace ? trace.find((l) => /dart/.test(l)) : "nothing"));
 
     // ---- calibrate again: a knock is followed, a move found afresh, a blocked camera kept ----
     const at0 = (await read()).setup.cameras.map((c) => c.cal.at);

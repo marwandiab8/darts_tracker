@@ -584,3 +584,180 @@ test("a slow pull, one dart at a time with the hand at the board, is no darts an
   assert.equal(next.length, 1, "the next visit's first dart");
   assert.equal(next[0].index, 1);
 });
+
+// ---- the dart that is followed at once by the hand, and the cameras' own noise ----------------------
+
+// An arm coming in from the bottom of the picture, `reach` of the way up (0..1).
+function withArm(frame, reach) {
+  const data = Uint8ClampedArray.from(frame.data), w = frame.width, h = frame.height;
+  for (let y = Math.floor(h * (1 - reach)); y < h; y += 1) {
+    for (let x = Math.floor(w * 0.42); x < w * 0.58; x += 1) { const i = (y * w + x) * 4; data[i] = 214; data[i + 1] = 160; data[i + 2] = 130; }
+  }
+  return { data, width: w, height: h };
+}
+// A shadow falling across the picture from the left as someone walks up: `cover` of its width, darkened to `light`.
+function withShadow(frame, cover, light) {
+  const data = Uint8ClampedArray.from(frame.data), w = frame.width, h = frame.height, edge = Math.floor(w * cover);
+  for (let y = 0; y < h; y += 1) {
+    for (let x = 0; x < edge; x += 1) { const i = (y * w + x) * 4; data[i] *= light; data[i + 1] *= light; data[i + 2] *= light; }
+  }
+  return { data, width: w, height: h };
+}
+// A detector with two darts of `visit` read, and what it says from then on.
+function twoIn(seed, options) {
+  const { views, renders } = rig(seed);
+  const detector = V.createDetector(views, options);
+  const run = { now: 0, events: [], views, renders, detector };
+  run.feed = (make, times) => {
+    const out = [];
+    for (let i = 0; i < times; i += 1) { run.now += 100; out.push(...detector.push(make(i), run.now)); }
+    run.events.push(...out);
+    return out;
+  };
+  run.board = (darts) => () => renders.map((r) => r(darts));
+  run.feed(run.board([]), 10);
+  const first = run.feed(run.board(visit.slice(0, 1)), 8).filter((e) => e.type === "dart");
+  run.now += 1500;
+  const second = run.feed(run.board(visit.slice(0, 2)), 8).filter((e) => e.type === "dart");
+  run.now += 1500;
+  assert.equal(first.length + second.length, 2, "the first two darts are read");
+  run.events.length = 0;
+  return run;
+}
+
+test("the third dart is read though the thrower is at the board before the picture has held still", () => {
+  // Two-player games on Nov 14 and 16, 2026: the thrower walks up as the third dart lands (the
+  // other player is waiting), the picture never holds still for the three frames a read took, the
+  // darts come out, and the take-out said "2 darts": the game put a miss in for the third.
+  const cases = [
+    ["a hand in the way 0.2 s after it landed", (run) => { run.feed(run.board(visit), 2); run.feed(() => run.renders.map((r) => withHand(r(visit))), 12); }],
+    ["an arm reaching in from 0.2 s after it landed", (run) => { run.feed(run.board(visit), 2); run.feed((i) => run.renders.map((r) => withArm(r(visit), Math.min(0.75, 0.1 + i * 0.08))), 10); run.feed(() => run.renders.map((r) => withHand(r(visit))), 6); }],
+    ["the thrower's shadow crossing the board from the moment it landed", (run) => { run.feed(run.board(visit), 1); run.feed((i) => run.renders.map((r) => withShadow(r(visit), Math.min(1, (i + 1) / 15), 0.8)), 15); run.feed(() => run.renders.map((r) => withHand(withShadow(r(visit), 1, 0.8))), 8); }],
+  ];
+  cases.forEach(([name, interrupt], k) => {
+    const run = twoIn(61 + k);
+    interrupt(run);
+    run.feed(run.board([]), 12);
+    const read = run.events.filter((e) => e.type === "dart");
+    assert.equal(read.length, 1, `${name}: the third dart is read (${run.events.map((e) => e.type).join(",")})`);
+    assert.equal(read[0].index, 3);
+    assert.ok(read[0].early, `${name}: from the picture before the hand`);
+    assert.ok(read[0].from && read[0].from.before.length === 2 && read[0].from.after.length === 2, `${name}: with the pictures it was read from (for learning)`);
+    // Where it is, as well as a dart read the usual way (this one is 1.5 mm inside the treble's wire,
+    // so the name alone could go either way).
+    const off = Math.hypot(read[0].real.x * S.R - visit[2].at.x, read[0].real.y * S.R - visit[2].at.y);
+    assert.ok(off < 5, `${name}: read where it is (${off.toFixed(1)} mm off)`);
+    const out = run.events.filter((e) => e.type === "takeout");
+    assert.ok(out.length === 1 && out[0].darts === 3, `${name}: the take-out counts three darts, not two`);
+    assert.ok(!run.events.some((e) => e.type === "coarser"), `${name}: a hand is not the cameras' noise`);
+  });
+});
+
+test("a hand that pauses at the board is not a dart, with two darts in or with none", () => {
+  // Fingers by two darts for a moment, moving, and away again: the darts are still there, so
+  // what came and went was a hand.
+  let run = twoIn(71);
+  const two = visit.slice(0, 2);
+  const fingers = (p) => () => run.renders.map((r, i) => withFingers(r(two), run.views[i], p));
+  run.feed(fingers({ x: 8, y: -128 }), 2);
+  run.feed(fingers({ x: 20, y: -110 }), 2);
+  run.feed(fingers({ x: -5, y: -135 }), 3);
+  run.feed(run.board(two), 8);
+  assert.equal(run.events.filter((e) => e.type === "dart").length, 0, "no third dart: " + run.events.map((e) => e.type).join(","));
+  run.feed(() => run.renders.map((r) => withHand(r(two))), 6);
+  const out = run.feed(run.board([]), 10).filter((e) => e.type === "takeout");
+  assert.ok(out.length === 1 && out[0].darts === 2, "and the pull counts the two that were there");
+  // The same in front of an empty board: nothing to tell a dart from a hand by, so it is no dart.
+  const { views, renders } = rig(72);
+  const detector = V.createDetector(views);
+  let now = 0;
+  const events = [];
+  const feed = (make, times) => { for (let i = 0; i < times; i += 1) { now += 100; events.push(...detector.push(make(), now)); } };
+  feed(() => renders.map((r) => r([])), 10);
+  feed(() => renders.map((r, i) => withFingers(r([]), views[i], { x: 30, y: -60 })), 2);
+  feed(() => renders.map((r, i) => withFingers(r([]), views[i], { x: 50, y: -40 })), 3);
+  feed(() => renders.map((r) => r([])), 8);
+  assert.equal(events.filter((e) => e.type === "dart").length, 0, "no dart from a hand passing an empty board");
+});
+
+test("a dart still swaying when it is first seen is read once, at rest, the usual way", () => {
+  // A dart quivers for a few tenths of a second after it lands: the picture it is first caught
+  // in is not the picture at rest. Read from that one and then looked at again, what differs
+  // between the two would be dart-sized and read as another dart, somewhere else. So a dart that
+  // is still in the board is read from the picture now, as always.
+  const d = visit[2];
+  const swayed = (k) => Object.assign({}, d, { lean: { x: d.lean.x + k, y: d.lean.y - k * 0.5 } });
+  for (const [name, sways] of [["a long quiver", [0.1, -0.08, 0.06, -0.05, 0.03, -0.02]], ["a short one", [0.06, -0.03]], ["one that pauses and starts again", [0.08, 0.08, 0.08, -0.05, 0.03]]]) {
+    const run = twoIn(64);
+    sways.forEach((k) => run.feed(run.board(visit.slice(0, 2).concat([swayed(k)])), 1));
+    run.feed(run.board(visit), 10);
+    const read = run.events.filter((e) => e.type === "dart");
+    assert.equal(read.length, 1, `${name}: one dart (${run.events.map((e) => e.type).join(",")})`);
+    assert.ok(!read[0].early && read[0].index === 3, `${name}: read from the picture at rest`);
+    const off = Math.hypot(read[0].real.x * S.R - d.at.x, read[0].real.y * S.R - d.at.y);
+    assert.ok(off < 5, `${name}: read where it is (${off.toFixed(1)} mm off)`);
+    // Nothing more while the darts stay in, and the pull is three darts with no dart added.
+    run.events.length = 0;
+    run.feed(run.board(visit), 30);
+    run.feed(() => run.renders.map((r) => withHand(r(visit))), 6);
+    run.feed(run.board([]), 12);
+    assert.equal(run.events.filter((e) => e.type === "dart").length, 0, `${name}: no dart after it (${run.events.map((e) => e.type).join(",")})`);
+    const out = run.events.filter((e) => e.type === "takeout");
+    assert.ok(out.length === 1 && out[0].darts === 3, `${name}: the take-out counts three`);
+  }
+});
+
+test("a hand over the darts that goes away again leaves the third dart to be counted when they come out", () => {
+  // The third dart lands, a hand covers the board before it could be read and holds still, then
+  // goes away with the darts still in. Nothing is read twice and nothing is made up: the dart
+  // waits, and is counted as the darts come out.
+  const run = twoIn(65);
+  run.feed(run.board(visit), 2);
+  run.feed(() => run.renders.map((r) => withHand(r(visit))), 12);
+  run.feed(run.board(visit), 10);
+  assert.ok(run.events.filter((e) => e.type === "dart").length <= 1, "never two darts for one: " + run.events.map((e) => e.type).join(","));
+  run.feed(() => run.renders.map((r) => withHand(r(visit))), 6);
+  run.feed(run.board([]), 12);
+  const read = run.events.filter((e) => e.type === "dart");
+  assert.equal(read.length, 1, "the third dart is counted once: " + run.events.map((e) => e.type).join(","));
+  const off = Math.hypot(read[0].real.x * S.R - visit[2].at.x, read[0].real.y * S.R - visit[2].at.y);
+  assert.ok(read[0].index === 3 && off < 5, `where it is (${off.toFixed(1)} mm off)`);
+  const out = run.events.filter((e) => e.type === "takeout");
+  assert.ok(out.length === 1 && out[0].darts === 3, "and the take-out counts three");
+  assert.ok(run.events.findIndex((e) => e.type === "dart") < run.events.findIndex((e) => e.type === "takeout"), "the dart before the take-out");
+  // A dart that waited too long is forgotten (the next visit's darts are never mixed up with it).
+  const late = twoIn(66, { handMs: 3000 });
+  late.feed(late.board(visit), 2);
+  late.feed(() => late.renders.map((r) => withHand(r(visit))), 40);
+  late.feed(late.board([]), 12);
+  assert.equal(late.events.filter((e) => e.type === "dart").length, 0, "forgotten after a long while: " + late.events.map((e) => e.type).join(","));
+});
+
+test("the cameras' noise setting the detector off: it asks for a bigger change, settles, and reads darts again", () => {
+  // A threshold finer than the cameras' noise (the rig's noise needs about 10; on Nov 16, 2026 a
+  // learned 22 was under the real cameras' 30): every picture "differs" from the last, so it looks
+  // again and again and finds no dart. Four such looks and it stops trusting so fine a threshold.
+  // Its own pretend cameras, drawing no shadow: the rig's faint one (5% darker) is in the picture
+  // at thresholds this low and pulls a dart's point about, which is not what this is about.
+  const { views, cams } = rig(81);
+  const renders = cams.map((cam, i) => S.renderer(cam, views[i], { noise: 3, seed: 81 + i, shadow: 1 }));
+  const board = (darts) => renders.map((r) => r(darts));
+  const dart = { at: { x: 4, y: -103 }, lean: { x: 0.05, y: -0.25 }, spin: 1.1 };
+  const fine = V.createDetector(views, { threshold: 8 });
+  let now = 0;
+  const feed = (detector, darts, times) => { const out = []; for (let i = 0; i < times; i += 1) { now += 100; out.push(...detector.push(board(darts), now)); } return out; };
+  const start = feed(fine, [], 80);
+  const coarser = start.filter((e) => e.type === "coarser");
+  assert.ok(coarser.length >= 1 && coarser[coarser.length - 1].threshold > 8, "it asked for a bigger change: " + coarser.map((e) => e.threshold).join(","));
+  assert.equal(start.filter((e) => e.type === "dart").length, 0, "noise is never a dart");
+  assert.equal(feed(fine, [], 40).filter((e) => e.type === "moving").length, 0, "and then the empty board is left alone");
+  const read = feed(fine, [dart], 10).filter((e) => e.type === "dart");
+  assert.ok(read.length === 1 && read[0].label === "T20", "a dart is read, and read right: " + read.map((e) => e.label).join(","));
+  assert.equal(fine.options.threshold, 8, "the setting itself is as it was (the station's to change)");
+  // A sound threshold is left as it is, through a whole visit and its pull.
+  const sound = V.createDetector(views);
+  const all = feed(sound, [], 20).concat(feed(sound, [dart], 10), feed(sound, [], 10));
+  assert.ok(!all.some((e) => e.type === "coarser"), "nothing to change with a threshold above the noise");
+  // How long each look took is told (for the station's trace).
+  assert.ok(all.filter((e) => e.type === "dart" || e.type === "takeout").every((e) => typeof e.ms === "number"));
+});

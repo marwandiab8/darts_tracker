@@ -14,7 +14,7 @@
 // up), and by the tests (module.exports).
 (function (root, factory) {
   const inWorker = typeof WorkerGlobalScope !== "undefined" && root instanceof WorkerGlobalScope;
-  if (inWorker && !root.BoardVision) root.importScripts("board-vision.js?v=9");
+  if (inWorker && !root.BoardVision) root.importScripts("board-vision.js?v=11");
   if (typeof module === "object" && module.exports) module.exports = factory(require("./board-vision.js"), false);
   else root.BoardLearn = factory(root.BoardVision, inWorker);
 })(typeof self !== "undefined" ? self : this, function (V, inWorker) {
@@ -23,7 +23,10 @@
   // The settings it may change, and the values it tries: around the ones tuned on the real board
   // (docs/camera-scoring.md). `stage`: which part of reading a dart uses it.
   const SEARCH = [
-    { key: "threshold", values: [22, 26, 30, 34, 38], stage: "mask" },
+    // (22 was tried until Nov 16, 2026, when it was learned from the kept darts and then set off by
+    // the cameras' own noise on the live board: an empty board differed from itself by more pixels
+    // than a dart. The kept darts can't show that, so a floor comes from the live cameras: see learn.)
+    { key: "threshold", values: [26, 30, 34, 38], stage: "mask" },
     { key: "blobArea", values: [0.0003, 0.0006, 0.0012], stage: "read" },
     { key: "joinGap", values: [0.1, 0.15, 0.22], stage: "read" },
     { key: "thickR", values: [0.02, 0.03, 0.045], stage: "read" },
@@ -86,14 +89,24 @@
     return { right, wrong, n };
   }
 
-  // Option sets around `base`: base itself first, then each setting changed on its own.
-  function variations(base, skip = []) {
+  // Option sets around `base`: base itself first, then each setting changed on its own. No
+  // threshold below `minThreshold` (what the live cameras' noise allows).
+  function variations(base, skip = [], minThreshold = 0) {
     const out = [Object.assign({}, base)];
     for (const p of SEARCH) {
       if (skip.includes(p.key)) continue;
-      for (const v of p.values) if (base[p.key] !== v) out.push(Object.assign({}, base, { [p.key]: v }));
+      for (const v of p.values) {
+        if (p.key === "threshold" && v < minThreshold) continue;
+        if (base[p.key] !== v) out.push(Object.assign({}, base, { [p.key]: v }));
+      }
     }
     return out;
+  }
+  // The lowest threshold it may use, given the floor the cameras' noise sets: the first of its own
+  // values at or above it (the highest, if the floor is above them all).
+  function thresholdFrom(minThreshold) {
+    const values = SEARCH.find((p) => p.key === "threshold").values;
+    return values.find((v) => v >= minThreshold) || values[values.length - 1];
   }
   const best = (right) => right.reduce((b, r, k) => (r > right[b] ? k : b), 0); // ties: the earlier one
 
@@ -101,29 +114,43 @@
   // setup options, what was learned before). samples(): the darts, afresh for each pass. Tries each
   // setting changed on its own (and going back to the defaults), keeps the best change, then once
   // more from there. Returns { options (the learned settings), right, was, n, changed, wrong }.
-  async function learn(current, samples, { onProgress } = {}) {
-    const start = Object.assign({}, BASE, current);
+  //
+  // minThreshold: the lowest change threshold the live cameras' noise allows (the station measures
+  // it: createLearning in board-camera.js). The kept darts alone would always like a finer
+  // threshold, and can't show that it sets the detector off with nothing going on. Nothing below
+  // it is tried; and when the threshold in use is itself below it, the result starts from the floor
+  // and says `forced`: it is to be used whether or not it reads more of the kept darts right.
+  async function learn(current, samples, { onProgress, minThreshold = 0 } = {}) {
+    const inUse = Object.assign({}, BASE, current);
+    const forced = inUse.threshold < minThreshold;
+    const start = forced ? Object.assign({}, inUse, { threshold: thresholdFrom(minThreshold) }) : inUse;
+    // Back to the usual settings is tried too (with a threshold the floor allows).
     const reset = Object.assign({}, start, defaults());
-    let sets = variations(start);
+    if (minThreshold) reset.threshold = Math.max(reset.threshold, thresholdFrom(minThreshold));
+    let sets = variations(start, [], minThreshold);
     if (KEYS.some((k) => reset[k] !== start[k])) sets.push(reset);
+    // What is in use now, for comparing with (it isn't chosen when it is below the floor).
+    if (forced) sets.push(inUse);
     let pass = 1;
     const progress = (n) => onProgress && onProgress({ pass, dart: n });
     let scored = await scoreSets(sets, samples(), progress);
-    const was = scored.right[0], n = scored.n;
-    let k = best(scored.right), chosen = sets[k], right = scored.right[k], wrong = scored.wrong[k];
-    const changedKeys = () => KEYS.filter((key) => chosen[key] !== start[key]);
+    const n = scored.n, was = forced ? scored.right[sets.length - 1] : scored.right[0];
+    const allowed = forced ? scored.right.slice(0, -1) : scored.right;
+    let k = best(allowed), chosen = sets[k], right = scored.right[k], wrong = scored.wrong[k];
+    const changedKeys = () => KEYS.filter((key) => chosen[key] !== inUse[key]);
     if (k !== 0 && n) {
       pass = 2;
-      sets = variations(chosen, changedKeys());
+      sets = variations(chosen, KEYS.filter((key) => chosen[key] !== start[key]), minThreshold);
       scored = await scoreSets(sets, samples(), progress);
       k = best(scored.right);
       if (scored.right[k] > right) { chosen = sets[k]; right = scored.right[k]; wrong = scored.wrong[k]; }
     }
-    return { options: cleanLearned(pick(chosen)), right, was, n, changed: changedKeys(), wrong: wrong.slice(0, 40) };
+    return { options: cleanLearned(pick(chosen)), right, was, n, changed: changedKeys(), wrong: wrong.slice(0, 40), forced };
   }
 
-  // Whether a run's settings should be used: enough darts, and clearly better than now.
-  const better = (result) => !!result && result.n >= MIN_DARTS && result.right - result.was >= needed(result.n);
+  // Whether a run's settings should be used: enough darts, and clearly better than now; or the
+  // threshold in use is below what the cameras' noise allows (then whatever was read).
+  const better = (result) => !!result && (!!result.forced || (result.n >= MIN_DARTS && result.right - result.was >= needed(result.n)));
 
   // --- the darts kept on the station's computer -------------------------------------------------------
   // IndexedDB "dart-learning", store "samples", one record per dart (by the station's seq):
@@ -227,7 +254,7 @@
   async function* decoded(records) { for (const r of records) yield await decode(r).catch(() => null); }
 
   // --- the worker -----------------------------------------------------------------------------------
-  // { type: "learn", current } -> { type: "progress", pass, dart, of } ... { type: "done", result }
+  // { type: "learn", current, minThreshold } -> { type: "progress", pass, dart, of } ... { type: "done", result }
   if (inWorker) {
     self.onmessage = async (event) => {
       const msg = event.data || {};
@@ -235,6 +262,7 @@
       try {
         const records = (await allSamples()).filter((r) => r.truth && r.truth.label && Array.isArray(r.cams) && r.cams.length);
         const result = await learn(msg.current || {}, () => decoded(records), {
+          minThreshold: Number(msg.minThreshold) || 0,
           onProgress: (p) => { if (p.dart % 10 === 0) self.postMessage(Object.assign({ type: "progress", of: records.length }, p)); },
         });
         result.corrected = records.filter((r) => r.outcome !== "kept").length;
@@ -246,7 +274,7 @@
   }
 
   return {
-    SEARCH, KEYS, BASE, MIN_DARTS, defaults, pick, cleanLearned, variations, readWith, scoreSets, learn, better, needed,
+    SEARCH, KEYS, BASE, MIN_DARTS, defaults, pick, cleanLearned, variations, thresholdFrom, readWith, scoreSets, learn, better, needed,
     openDb, putSample, getSample, allSamples, trimSamples, counts, toImage, fromImage, viewsFor, decode,
   };
 });

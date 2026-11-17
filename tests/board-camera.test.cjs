@@ -493,3 +493,13 @@ test("a station set up on OBS's own picture reads it: OBS running is no reason t
   r.st.rest();
   assert.equal(r.st.resting, false, "nothing to hand over");
 });
+
+test("the finest change threshold is the one the cameras' own noise allows", () => {
+  // As measured on the real cameras on Nov 16, 2026 (noise as a share of what starts a look):
+  const levels = [{ threshold: 22, share: 2.36 }, { threshold: 26, share: 0.7 }, { threshold: 30, share: 0.29 }, { threshold: 34, share: 0.11 }, { threshold: 38, share: 0.05 }];
+  assert.equal(C.thresholdFloor(levels), 30, "22 and 26 are set off by noise; 30 is the finest that isn't");
+  assert.equal(C.thresholdFloor(levels.slice(3)), 34);
+  assert.equal(C.thresholdFloor([{ threshold: 30, share: 0.9 }, { threshold: 38, share: 0.6 }]), 42, "all too noisy: a step above the coarsest");
+  assert.equal(C.thresholdFloor(null), null);
+  assert.equal(C.thresholdFloor([]), null);
+});

@@ -439,8 +439,8 @@
 <script src="board-mode.js?v=5"></script>
 <script src="practice-timer.js?v=2"></script>
 <script src="live-sync.js?v=1"></script>
-<script src="board-vision.js?v=10"></script>
-<script src="board-camera.js?v=12"></script>
+<script src="board-vision.js?v=11"></script>
+<script src="board-camera.js?v=13"></script>
 <script>
 (function () {
   "use strict";
@@ -2068,7 +2068,12 @@
         rememberCamDart({ seq: o.ev.seq, label, x: pts.x, y: pts.y, fill: o.t === "miss", v, i });
         lastMessage = visitText(o.result);
         if (o.t === "dart") { said.push(describe(label) + (o.ev.unsure ? "? It wasn't sure: if it's wrong, Undo and tap where it landed" : "")); if (o.ev.unsure) warn = true; }
-        else said.push(o.why === "unread" ? "the dart it couldn't read, never tapped in: a miss" : "a dart it didn't see: a miss");
+        else {
+          // A dart counted as a miss because the cameras had nothing for it: said as a warning, since
+          // a dart that did score is 0 until the visit is put right.
+          said.push(o.why === "unread" ? "the dart it couldn't read, never tapped in: a miss" : "a dart it didn't see, counted as a miss (if it scored, edit the visit)");
+          warn = true;
+        }
       } else if (o.t === "queued") said.push(o.ev.k === "d" ? describe(o.ev.label) + ", for your turn once the bot is done" : o.ev.k === "u" ? "a dart it couldn't read, for your turn" : "darts out, for your turn");
       else if (o.t === "held") { said.push((o.ev.k === "d" ? describe(o.ev.label) : "another dart it couldn't read") + ", held until you tap in the dart it couldn't read"); warn = true; }
       else if (o.t === "wait") { said.push("a dart it couldn't read: tap where it landed (or Missed the board)"); warn = true; }

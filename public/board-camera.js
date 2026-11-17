@@ -141,6 +141,14 @@
   }
 
   const pixelsOf = (canvas) => canvas.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, canvas.width, canvas.height);
+  // Whether a camera's picture is black: no picture yet, not a dark room (which still shows something).
+  function isBlack(canvas) {
+    if (!canvas || !canvas.width) return true;
+    const { data } = pixelsOf(canvas);
+    let sum = 0, n = 0;
+    for (let i = 0; i < data.length; i += 4 * 97) { sum += Math.max(data[i], data[i + 1], data[i + 2]); n += 1; }
+    return n === 0 || sum / n < 6;
+  }
 
   // Whether a camera's picture is shared with another camera (OBS's virtual camera showing both
   // side by side), and so where its lens's middle is: the middle of its own half.
@@ -347,6 +355,12 @@
         // What each camera shows now, once its exposure has settled.
         await Promise.all([...byDevice.values()].map((entry) => settled(entry.video, 600)));
         if (stopped()) return;
+        // A camera opened again the moment it was let go of (the station page loading itself anew)
+        // can show black for a second or two: wait for a real picture, three seconds at most.
+        for (let k = 0; k < 12 && [...byDevice.values()].some((entry) => isBlack(still(entry.video))); k += 1) {
+          await pause(250);
+          if (stopped()) return;
+        }
         for (const entry of byDevice.values()) entry.still = still(entry.video);
         // A camera sharing its picture with another (OBS side by side) has its lens in the middle
         // of its own half.
@@ -461,6 +475,37 @@
         const frames = grab();
         if (detector && frames.every(Boolean)) detector.markEmpty(frames);
       },
+      // How much the cameras' pictures differ from themselves a second later with nothing going on,
+      // for each change threshold in `thresholds`: the pixels that count as changed, as a share of
+      // what starts the detector looking (1 is as much as a look takes), for the worse camera.
+      // The middle one of three goes, so somebody walking past once doesn't count. Null when it
+      // can't be told now (not watching, darts in the board, something moving).
+      async noise(thresholds) {
+        const quiet = () => running && detector && detector.state === "watching" && !detector.darts;
+        if (!quiet()) return null;
+        const shots = [];
+        for (let k = 0; k < 4; k += 1) {
+          if (k) await pause(1000);
+          if (!quiet()) return null;
+          const frames = grab();
+          if (!frames.every(Boolean)) return null;
+          shots.push(frames.map((f) => f.data));
+        }
+        const look = detector.options.changeArea;
+        return thresholds.map((threshold) => {
+          const shares = [];
+          for (let k = 1; k < shots.length; k += 1) {
+            let worst = 0;
+            views.forEach((view, i) => {
+              const changed = V.countChanged(shots[k - 1][i], shots[k][i], view, threshold, 3, V.gainOf(shots[k - 1][i], shots[k][i], view));
+              worst = Math.max(worst, changed / (look * view.pxPerR * view.pxPerR));
+            });
+            shares.push(worst);
+          }
+          shares.sort((a, b) => a - b);
+          return { threshold, share: Math.round(shares[1] * 100) / 100 };
+        });
+      },
       // What each camera shows now, as a whole picture (canvas), one per camera watched.
       snapshot() {
         const byVideo = new Map();
@@ -519,6 +564,15 @@
   // this is the computer with the cameras, and a game page can offer to open the station.
   function stationHere() {
     try { return !!localStorage.getItem("dt_station"); } catch (_) { return false; }
+  }
+
+  // The finest change threshold the cameras' noise allows: the lowest of `levels` ([{ threshold,
+  // share }], as watcher.noise gives them) whose noise is at most `limit` of what starts a look.
+  // With none that quiet, a step above the highest. Null with nothing to go on.
+  function thresholdFloor(levels, limit = 0.35) {
+    if (!levels || !levels.length) return null;
+    const quiet = levels.filter((l) => l.share <= limit).map((l) => l.threshold);
+    return quiet.length ? Math.min(...quiet) : Math.max(...levels.map((l) => l.threshold)) + 4;
   }
 
   // This browser, for telling two tabs of it from two computers (kept in localStorage).
@@ -614,8 +668,47 @@
     // For each chosen camera: the picture its calibration was last checked on, how that went, and
     // when the board was last found from scratch in it (not again straight away if that didn't hold).
     let shots = [], results = [], foundAt = [];
-    const beatT = backTimer(), turnT = backTimer(), retryT = backTimer(), obsT = backTimer();
+    const beatT = backTimer(), turnT = backTimer(), retryT = backTimer(), obsT = backTimer(), checkT = backTimer();
     const learning = createLearning();
+
+    // What the detector made of each change, lately (station.trace, sent with the sign of life): for
+    // finding out afterwards why a dart wasn't read. One short line each: the time, what it was
+    // ("dart T20 overlap 0.94", "hand S5", "takeout 2", "quiet", "unreadable", "blocked", "removed",
+    // "coarser 42"), and how long the picture took to hold still. "early no: big" and the like: a
+    // picture that held still for a moment before something else moved in, and why no dart was
+    // read from it (see earlierDart in board-vision.js). Kept in this browser too, so the page
+    // loading itself anew (an update) doesn't lose the evening's lines.
+    const TRACE_KEY = "dt_station_trace:" + uid;
+    let trace = [], quiets = 0, traceRev = 0, traceSent = 0;
+    try {
+      const kept = JSON.parse(localStorage.getItem(TRACE_KEY) || "[]");
+      if (Array.isArray(kept)) trace = kept.filter((line) => typeof line === "string").slice(-400);
+      if (trace.length) traceRev = 1; // sent again with the first sign of life
+    } catch (_) { trace = []; }
+    // How long the dart shows in each camera (board radii), for an early dart: what there is to
+    // tell a dart from fingers by, should one ever be counted that wasn't there.
+    const lengths = (e) => " len " + (e.readings || []).map((r) => (r && typeof r.lengthR === "number" ? r.lengthR.toFixed(2) : "-")).join("/");
+    function traced(e) {
+      if (!e || e.type === "moving" || e.type === "status" || e.type === "ready" || e.type === "check") return;
+      const d = new Date(), two = (v) => String(v).padStart(2, "0");
+      const at = `${d.getHours()}:${two(d.getMinutes())}:${two(d.getSeconds())}.${Math.floor(d.getMilliseconds() / 100)}`;
+      let what = e.type;
+      if (e.type === "dart" || e.type === "hand") what += ` ${e.label || "?"}${e.method ? " " + e.method : ""}${typeof e.confidence === "number" ? " " + e.confidence.toFixed(2) : ""}${e.early ? " early" + lengths(e) : ""}`;
+      else if (e.type === "takeout") what += ` ${e.darts || 0}${e.late ? " late" : ""}`;
+      else if (e.type === "coarser") what += ` ${e.threshold}`;
+      else if (e.type === "error") what += " " + String(e.text || "").slice(0, 60);
+      else if (e.type === "early") what += ` no: ${e.why}${e.extra ? " " + JSON.stringify(e.extra).slice(0, 40) : ""}`;
+      else if (e.type === "started") what = `started ${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
+      const line = `${at} ${what}${typeof e.ms === "number" ? " " + e.ms + "ms" : ""}`;
+      traceRev += 1;
+      // Looks that found nothing can come in runs: one line for the run, with how many.
+      if (e.type === "quiet" && quiets > 0 && trace.length) { quiets += 1; trace[trace.length - 1] = `${line} x${quiets}`; return; }
+      quiets = e.type === "quiet" ? 1 : 0;
+      trace = trace.concat([line]).slice(-400);
+    }
+    // From the detector: a picture it might have read a dart from, and why it didn't. (Not when it
+    // simply wasn't a dart's turn: after a visit's third dart, that is every hand at the board.)
+    const earlyNo = (kind, why, extra) => { if (kind === "early" && why !== "not a dart's turn") traced({ type: "early", why, extra }); };
 
     // What it is doing, here and (for the other computers, while this is the account's station) in
     // the account.
@@ -692,7 +785,7 @@
     function standBy(s) {
       const gaveWay = active;
       active = false;
-      beatT.clear(); retryT.clear(); obsT.clear();
+      beatT.clear(); retryT.clear(); obsT.clear(); checkT.clear();
       if (watcher) watcher.stop();
       watcher = null; watchingKey = ""; live = false;
       resting = null; // whether OBS has the cameras is the other station's to see now
@@ -773,6 +866,7 @@
 
     function publish(e) {
       onEvent(e);
+      traced(e);
       const slim = slimEvent(e);
       if (!slim) return;
       seq = Math.max(seq + 1, Date.now());
@@ -835,6 +929,12 @@
       try { devices = (await listCameras()).map((d) => ({ deviceId: d.deviceId, label: d.label })); } catch (_) { /* keep going */ }
       const frame = watcher && watcher.views[0] ? [watcher.views[0].frameW, watcher.views[0].frameH] : null;
       const sign = { name, seen: Date.now(), on: true, running: watchingNow(), resting: !!resting, status: status.slice(0, 200), devices: devices.slice(0, 8), frame };
+      // The trace only when it has new lines (it is most of what this writes).
+      if (traceRev !== traceSent) {
+        traceSent = traceRev;
+        sign.trace = trace;
+        try { localStorage.setItem(TRACE_KEY, JSON.stringify(trace)); } catch (_) { /* not kept, then */ }
+      }
       // The claim, again, should the account have lost it (the document written over from elsewhere).
       if (!(doc && doc.station && doc.station.id)) Object.assign(sign, { id: me, host });
       await ref.set({ uid, station: sign }, { merge: true }).catch(() => {});
@@ -1007,7 +1107,7 @@
       if (key === watchingKey && (watcher || waiting || !calibrated.length)) return;
       if (watcher) { watcher.stop(); watcher = null; }
       live = false;
-      stopWaiting(); retryT.clear();
+      stopWaiting(); retryT.clear(); checkT.clear();
       watchingKey = key;
       if (!setup.cameras.length) { say("Choose this computer's cameras."); tellCameras(); return; }
       // A camera with no calibration yet is calibrated from what it shows: no taps. Saved, it comes
@@ -1020,12 +1120,13 @@
       // The previews of cameras about to be watched are closed; one still waiting for its
       // calibration keeps its own.
       for (const p of previews.slice()) if (calibrated.some((c) => (c.deviceId || c.label) === p.key)) { closePreview(p); previews = previews.filter((x) => x !== p); }
-      const w = createWatcher(setup, { onEvent: publish, fps, background: true, onFrames: null });
+      const w = createWatcher(setup, { onEvent: publish, fps, background: true, onFrames: null, options: { trace: earlyNo } });
       watcher = w;
       try {
         await w.start();
         if (watcher !== w) { w.stop(); return; } // stopped, or given way, while the cameras were opening
         live = true;
+        traced({ type: "started" });
         const again = settle(w, setup, calibrated);
         if (!again) {
           const wrong = trouble();
@@ -1096,7 +1197,35 @@
       }
       tellCameras();
       if (again) say("A camera had moved too far for its calibration: found the board again in its picture, and starting with that.");
+      else if (results.some((r) => r && r.ok === false)) checkT.set(() => { busy = busy.then(() => recheck()).catch(() => {}); }, 40000);
       return again;
+    }
+
+    // A camera whose calibration couldn't be checked as watching started (something in front of the
+    // board, or no picture from the camera yet) is checked again once the board is quiet, so the
+    // page doesn't go on saying so all evening. Only looked at: nothing is saved or started again.
+    async function recheck() {
+      if (!running || !active || resting || !watchingNow()) return;
+      const cams = chosen(), det = watcher.detector;
+      const later = (ms) => checkT.set(() => { busy = busy.then(() => recheck()).catch(() => {}); }, ms);
+      if (det && (det.state !== "watching" || det.darts)) { later(20000); return; }
+      const pics = await pictures().catch(() => cams.map(() => null));
+      if (!running || !active || resting || !watchingNow()) return;
+      let better = false, left = false;
+      cams.forEach((cam, i) => {
+        if (!hasCal(cam) || !results[i] || results[i].ok !== false) return;
+        const got = pics[i] ? calibrateFrom(cam.cal, pics[i], sharedIn(cams, i), i) : null;
+        if (!got) { left = true; return; }
+        shots[i] = pics[i];
+        results[i] = { ok: true, how: "checked", moved: got.moved, edges: got.cal.refined.edges, rms: got.cal.refined.rms, at: Date.now() };
+        better = true;
+      });
+      if (better) {
+        const n = cams.filter(hasCal).length, wrong = trouble();
+        say(`Watching with ${n} camera${n > 1 ? "s" : ""}. Darts go to your games on any computer.` + wrong, !!wrong);
+        tellCameras();
+      }
+      if (left) later(60000);
     }
 
     function onDoc(snap) {
@@ -1153,8 +1282,10 @@
 
       // What a dart was read from: each camera's crop before and after it, and the views' calibrations.
       function keep(dartSeq, e) {
-        if (!BL || !watcher || !watcher.detector || !watcher.detector.last) return;
-        const last = watcher.detector.last, views = watcher.views, cams = watcher.cameras;
+        if (!BL || !watcher || !watcher.detector || !(e.from || watcher.detector.last)) return;
+        // (A dart read from the picture before a hand came in brings its own pictures: the
+        // detector's last look is then the take-out.)
+        const last = e.from || watcher.detector.last, views = watcher.views, cams = watcher.cameras;
         if (!last.before || !last.after || views.length !== cams.length) return;
         pictures.set(dartSeq, {
           label: e.label, before: last.before.slice(), after: last.after.slice(),
@@ -1192,10 +1323,10 @@
       }
 
       // A worker reads the darts again, so the cameras aren't held up meanwhile.
-      function inWorker(current) {
+      function inWorker(current, minThreshold) {
         return new Promise((resolve, reject) => {
           let w;
-          try { w = new Worker("board-learn.js?v=3"); } catch (error) { reject(error); return; }
+          try { w = new Worker("board-learn.js?v=4"); } catch (error) { reject(error); return; }
           const end = (fn, value) => { w.terminate(); fn(value); };
           w.onmessage = (event) => {
             const m = event.data || {};
@@ -1204,8 +1335,18 @@
             else if (m.type === "error") end(reject, new Error(m.text));
           };
           w.onerror = (event) => end(reject, new Error(event.message || "The learning worker stopped."));
-          w.postMessage({ type: "learn", current });
+          w.postMessage({ type: "learn", current, minThreshold });
         });
+      }
+
+      // The finest change threshold the cameras' noise allows right now (see thresholdFloor). When
+      // that can't be measured (not watching, darts in the board), nothing finer than what is in use.
+      async function floorNow(current) {
+        const tried = BL.SEARCH.find((p) => p.key === "threshold").values;
+        let levels = null;
+        try { levels = watcher && watcher.noise ? await watcher.noise(tried) : null; } catch (_) { levels = null; }
+        const inUse = Math.max(BL.BASE.threshold, Number(current.threshold) || 0);
+        return { floor: levels ? thresholdFloor(levels) : inUse, levels };
       }
 
       // Learns when there is something new to learn from: three more corrected darts, or thirty more darts.
@@ -1219,10 +1360,12 @@
         try {
           const setup = (doc && doc.setup) || {};
           const current = Object.assign({}, learnedOptions(setup), setup.options || {});
-          const result = await inWorker(current);
+          // The kept darts would always like a finer threshold; the live cameras' noise says how fine it may be.
+          const { floor, levels } = await floorNow(current);
+          const result = await inWorker(current, floor);
           saveRun(c);
           const use = BL.better(result);
-          const summary = { at: Date.now(), n: result.n, corrected: result.corrected, right: result.right, was: result.was, used: use, changed: use ? result.changed : [] };
+          const summary = { at: Date.now(), n: result.n, corrected: result.corrected, right: result.right, was: result.was, used: use, changed: use ? result.changed : [], floor, noise: levels || null, forced: !!result.forced };
           const update = { setup: { learning: summary } };
           if (use) update.setup.learned = { options: result.options, at: summary.at, n: result.n, right: result.right, was: result.was };
           await ref.set(update, { merge: true });
@@ -1297,7 +1440,7 @@
         running = false; active = false;
         if (unsub) unsub();
         unsub = null;
-        beatT.clear(); turnT.clear(); retryT.clear(); obsT.clear();
+        beatT.clear(); turnT.clear(); retryT.clear(); obsT.clear(); checkT.clear();
         if (watcher) watcher.stop();
         watcher = null; watchingKey = ""; live = false;
         stopWaiting();
@@ -1607,7 +1750,7 @@
 
   root.DartCamera = {
     KEY, load, save, ready, listCameras, requestAccess, openStream, videoFor, still, pixelsOf, lensOptions, snap, explain, resolve, matchCameras, otherWayFits, createWatcher,
-    isOnline, hasStation, stationHere, slimEvent, createStation, createRemoteWatcher, createLocalWatcher, getStation, chooseWatcher, requestStills, requestCalibration, saveStationSetup, setStationOptions,
+    isOnline, hasStation, stationHere, thresholdFloor, slimEvent, createStation, createRemoteWatcher, createLocalWatcher, getStation, chooseWatcher, requestStills, requestCalibration, saveStationSetup, setStationOptions,
     calibrateFrom, findBoardCameras, GOOD_EDGES, GOOD_RMS,
     noteDart, forgetLearned, learnedOptions,
   };
