@@ -87,7 +87,7 @@ const { check, failed } = H.checker();
     await until(async () => /Bot's turn/i.test(await statusText()), 4000);
     await H.sleep(600);
     await camDart("T20", "S1");                                 // your next visit, the bot still throwing (the station mislabelled it)
-    check(/Treble 20/.test(await camText()) && !/Single 1/.test(await camText()), "bug 10: the camera line says what the game read (Treble 20): " + (await camText()));
+    check(/Triple 20/.test(await camText()) && !/Single 1/.test(await camText()), "bug 10: the camera line says what the game read (Triple 20): " + (await camText()));
     await camDart("S20");
     s = await until(async () => { const v = await liveGame(); return v && v.game.turn === "player" && v.game.visits.length === 2 ? v : null; }, 10000);
     check(s && s.game.visitDarts.join(" ") === "T20 S20", "bug 3: the two darts thrown during the bot's turn are in your visit: " + (s && s.game.visitDarts.join(" ")));

@@ -396,7 +396,7 @@
     const partMax = { part1: 1050, part2: 1050, part3: 1230 };
     const gap = js.parts.filter((x) => x.last10 != null).sort((a, b) => (partMax[b.key] - b.last10) - (partMax[a.key] - a.last10))[0];
     items.push({ game: "jdc", title: "A JDC Challenge round", href: "challenge.html",
-      why: gap ? `Most points are left in ${CE.PART_NAMES[{ part1: 1, part2: 2, part3: 3 }[gap.key]]} (${Math.round(gap.last10)} of ${partMax[gap.key]} lately).` : "Scoring, trebles and every double in one round.",
+      why: gap ? `Most points are left in ${CE.PART_NAMES[{ part1: 1, part2: 2, part3: 3 }[gap.key]]} (${Math.round(gap.last10)} of ${partMax[gap.key]} lately).` : "Scoring, triples and every double in one round.",
       done: playedToday(data.challengeGames) });
     return items;
   }

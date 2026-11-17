@@ -107,11 +107,11 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
-<script src="tracker-engine.js?v=2"></script>
-<script src="practice-engine.js?v=9"></script>
-<script src="challenge-engine.js?v=3"></script>
-<script src="board-mode.js?v=5"></script>
-<script src="stats-engine.js?v=1"></script>
+<script src="tracker-engine.js?v=3"></script>
+<script src="practice-engine.js?v=10"></script>
+<script src="challenge-engine.js?v=4"></script>
+<script src="board-mode.js?v=6"></script>
+<script src="stats-engine.js?v=2"></script>
 <script src="nav.js?v=1"></script>
 <script>
 (function () {
@@ -248,7 +248,7 @@
       + st.parts.map((p, i) => kpi(CE.PART_NAMES[i + 1], fmt(p.last10), `Last 10 rounds' average, of ${fmt(partMax[p.key])}.`)).join("")
       + `</div>`;
     html += `<h3>Score per round</h3>` + lineChart(st.series, { label: "Score per round", what: "each round", window: 5 });
-    html += `<h3>Each number</h3><p class="muted small">Points: the average at that number per round (a Shanghai adds 100). Marks per dart: 1 a single, 2 a double, 3 a treble.</p><div class="table-wrap"><table><thead><tr><th>Number</th><th class="num">Points</th><th class="num">Marks per dart</th><th class="num">Shanghais</th></tr></thead><tbody>`
+    html += `<h3>Each number</h3><p class="muted small">Points: the average at that number per round (a Shanghai adds 100). Marks per dart: 1 a single, 2 a double, 3 a triple.</p><div class="table-wrap"><table><thead><tr><th>Number</th><th class="num">Points</th><th class="num">Marks per dart</th><th class="num">Shanghais</th></tr></thead><tbody>`
       + st.numbers.map((n) => `<tr><td>${n.target} <span class="muted small">part ${n.part}</span></td><td class="num">${fmt(n.avgPoints, 1)}</td><td class="num">${fmt(n.marksPerDart, 2)}</td><td class="num">${n.shanghais}</td></tr>`).join("") + `</tbody></table></div>`;
     html += `<h3>Doubles</h3><p class="muted small">Hit rate of each double's one dart; red below 25%. The bull counts the bullseye only.</p>`
       + `<div class="bars">${st.doubles.map((d) => `<div class="${d.rate != null && d.rate < 0.25 ? "low" : ""}" style="height:${d.rate == null ? 0 : Math.max(2, d.rate * 100)}%" title="${d.label}: ${d.rate == null ? "no darts" : pc(d.rate)}"></div>`).join("")}</div><div class="barlabels">${st.doubles.map((d) => `<div>${d.target === CE.BULL ? "B" : d.target}</div>`).join("")}</div>`;

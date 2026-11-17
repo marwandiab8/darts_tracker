@@ -428,7 +428,9 @@
   // ---- Board mode -----------------------------------------------------------------------------------
   const SEG = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5];
   const neighbours = (n) => { const i = SEG.indexOf(Number(n)); return i < 0 ? [] : [String(SEG[(i + 19) % 20]), String(SEG[(i + 1) % 20])]; };
-  const RING_WORD = { S: "single", D: "double", T: "treble" };
+  // ("Triple", not "treble", everywhere the app shows or says it: the owner's choice, Nov 17, 2026.
+  // It is what players say.)
+  const RING_WORD = { S: "single", D: "double", T: "triple" };
   const BULL_WORD = { S: "outer bull", D: "bullseye" };
   const shortName = (t) => (t === "BULL" ? "Bull" : t);
   const readOf = (l) => (l === "DB" ? "Bull" : l === "SB" ? "25" : l === "MISS" ? "Miss" : l);
@@ -574,8 +576,10 @@
   // ---- the voice --------------------------------------------------------------------------------------
   const wordOf = (t, d, mode) => (d.r === "-" ? "miss" : normMode(mode) === "single" ? "hit" : t === "BULL" ? BULL_WORD[d.r] || "bull" : RING_WORD[d.r] || "hit");
   // What a change sounds like. what: { k: "dart", aim, dartNo } | { k: "fill", target } | { k: "fix",
-  // target } | { k: "undo" }. A number's third dart says the whole visit and the running total:
-  // "20: treble, single, miss. 5 in all. Next, 19."
+  // target } | { k: "undo" }. A number's third dart says the number, the visit and what is next, in
+  // short sentences (the page stops for a moment between sentences, so it doesn't run together):
+  // "20. Triple, single, miss. Next, 19." Three alike are said as one: "20. Three misses. Next, 19."
+  // The running total is not said (it was, as "5 in all", until Nov 17, 2026): it is on the screen.
   function voiceLine(s, what, mode) {
     normalize(s);
     if (!what) return "";
@@ -592,11 +596,12 @@
       return d ? wordOf(t, d, mode)[0].toUpperCase() + wordOf(t, d, mode).slice(1) + "." : "";
     }
     if (list.length < 3) return "";
-    const words = list.map((d) => wordOf(t, d, mode)).join(", ");
+    const words = list.map((d) => wordOf(t, d, mode));
+    const alike = words.every((w) => w === words[0]);
+    const visit = alike ? `three ${words[0]}${/s$/.test(words[0]) ? "es" : "s"}` : words.join(", ");
     const aim = aimOf(s);
-    const total = totalOf(s.entry, mode);
-    const next = aim ? `Next, ${shortName(aim)}.` : `That's all 21: ${total}.`;
-    return `${shortName(t)}: ${words}. ${aim ? `${total} in all. ` : ""}${next}`;
+    const next = aim ? `Next, ${shortName(aim)}.` : `That's the session. Total, ${totalOf(s.entry, mode)}.`;
+    return `${shortName(t)}. ${visit[0].toUpperCase()}${visit.slice(1)}. ${next}`;
   }
 
   // ---- saving -----------------------------------------------------------------------------------------

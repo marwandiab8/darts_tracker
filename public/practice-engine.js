@@ -21,7 +21,7 @@
     { id: "beginner", name: "Beginner", sigma: 0.3, blurb: "Scatters darts all over the board." },
     { id: "casual", name: "Casual", sigma: 0.18, blurb: "Pub player. Hits the 20s now and then." },
     { id: "club", name: "Club", sigma: 0.12, blurb: "Steady, finishes most games with a few tries." },
-    { id: "league", name: "League", sigma: 0.085, blurb: "Hits treble 20 often and checks out well." },
+    { id: "league", name: "League", sigma: 0.085, blurb: "Hits triple 20 often and checks out well." },
     { id: "pro", name: "Pro", sigma: 0.062, blurb: "Very tight grouping. Hard to beat." },
   ];
 

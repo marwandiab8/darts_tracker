@@ -331,7 +331,7 @@
   const undoCount = (r) => (r && Array.isArray(r.undo) ? r.undo.length : 0);
 
   // ---- what Board mode shows, and what the voice says ----------------------------------------------
-  const NUM_WORD = { 1: "single", 2: "double", 3: "treble" };
+  const NUM_WORD = { 1: "single", 2: "double", 3: "triple" };
   const shortDouble = (t) => (t === BULL ? "Bull" : "D" + t);
   // One dart's box: { read, sub, kind }.
   function dartBox(i, value, meta) {

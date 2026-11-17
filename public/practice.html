@@ -435,8 +435,8 @@
      Cache-Control: no-cache (a real, previously-seen failure mode - see docs/bot-practice.md) is
      still forced to fetch the matching engine instead of silently pairing a new page with a stale
      one, which throws inside announce()'s catch-all and looks like "no sound at all". -->
-<script src="practice-engine.js?v=9"></script>
-<script src="board-mode.js?v=5"></script>
+<script src="practice-engine.js?v=10"></script>
+<script src="board-mode.js?v=6"></script>
 <script src="practice-timer.js?v=2"></script>
 <script src="live-sync.js?v=1"></script>
 <script src="board-vision.js?v=11"></script>
@@ -902,7 +902,7 @@
     const s = E.heatStats(points);
     const pct = (n) => Math.round((n / s.total) * 100) + "%";
     const grid = el("div", "stats");
-    for (const [value, label] of [[s.total, "darts"], [pct(s.triples), "trebles"], [pct(s.doubles), "doubles"], [pct(s.bulls), "bull"], [pct(s.misses), "missed the board"], [pct(s.singles), "singles"]]) {
+    for (const [value, label] of [[s.total, "darts"], [pct(s.triples), "triples"], [pct(s.doubles), "doubles"], [pct(s.bulls), "bull"], [pct(s.misses), "missed the board"], [pct(s.singles), "singles"]]) {
       const cell = el("div", "stat"); cell.append(el("b", "", String(value)), el("span", "", label)); grid.append(cell);
     }
     box.append(grid);
@@ -1075,7 +1075,7 @@
   }
 
   // --- a game ------------------------------------------------------------------------------------------------
-  const NAMES = { S: "Single ", D: "Double ", T: "Treble " };
+  const NAMES = { S: "Single ", D: "Double ", T: "Triple " };
   function describe(label) {
     if (label === "MISS") return "Missed the board";
     if (label === "DB") return "Bullseye";
@@ -2538,7 +2538,7 @@
       const n = m[2];
       const cricket = game.kind === "cricket", inPlay = cricket && E.CRICKET_NUMBERS.includes(Number(n));
       const worth = (k) => (cricket ? (inPlay ? `${k} mark${k === 1 ? "" : "s"}` : "nothing") : String(Number(n) * k));
-      [["T", "Treble", 3], ["D", "Double", 2], ["S", "Single", 1]].forEach(([r, w, k]) => opts.push({ id: r + n, text: `${w} ${n}: ${worth(k)}`, hit: true, cur: d.label === r + n }));
+      [["T", "Triple", 3], ["D", "Double", 2], ["S", "Single", 1]].forEach(([r, w, k]) => opts.push({ id: r + n, text: `${w} ${n}: ${worth(k)}`, hit: true, cur: d.label === r + n }));
     } else if (d.label === "SB" || d.label === "DB") {
       const cricket = game.kind === "cricket";
       opts.push({ id: "DB", text: cricket ? "Bullseye: 2 marks" : "Bullseye: 50", hit: true, cur: d.label === "DB" }, { id: "SB", text: cricket ? "Outer bull: 1 mark" : "Outer bull: 25", hit: true, cur: d.label === "SB" });

@@ -489,7 +489,7 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
             <summary>How it works</summary>
             <ul>
               <li><b>Three darts at each number,</b> 20 down to 1, then the bull. Only the number you're throwing at counts; any other dart is a miss.</li>
-              <li><b>Standard scoring:</b> a single is 1 mark, a double 2, a treble 3; at the bull the outer ring is 1 and the bullseye 2. Singles mode counts hits.</li>
+              <li><b>Standard scoring:</b> a single is 1 mark, a double 2, a triple 3; at the bull the outer ring is 1 and the bullseye 2. Singles mode counts hits.</li>
               <li><b>Enter darts</b> by tapping where they landed, the S/D/T/Miss buttons in Board mode, typing a row in the table, or the cameras. With the cameras, a visit belongs to the number at its first dart; pulling the darts out counts any not seen as misses there.</li>
               <li><b>Board mode</b> shows the number huge, each dart's box (tap one to fix it), your pace against your average and best, and a recap at the end. The voice says each dart and each number's total.</li>
               <li><b>Saving part way through</b> asks whether to save it as partial (kept out of your averages and best) or count the rest as misses.</li>
@@ -588,11 +588,11 @@ input, select, button { background: var(--chip); color: #fff; border: 1px solid 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="practice-timer.js?v=2"></script>
 <script src="live-sync.js?v=1"></script>
-<script src="tracker-engine.js?v=2"></script>
-<script src="board-mode.js?v=5"></script>
-<script src="practice-engine.js?v=9"></script>
-<script src="challenge-engine.js?v=3"></script>
-<script src="stats-engine.js?v=1"></script>
+<script src="tracker-engine.js?v=3"></script>
+<script src="board-mode.js?v=6"></script>
+<script src="practice-engine.js?v=10"></script>
+<script src="challenge-engine.js?v=4"></script>
+<script src="stats-engine.js?v=2"></script>
 <script src="board-vision.js?v=11"></script>
 <script src="board-camera.js?v=13"></script>
 
@@ -1423,7 +1423,14 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
   let __ttsUnlocked = false;
   let __speakTimer = null;
   let __speakRetryTimer = null;
+  let __speakGapTimer = null;
+  let __speakKeep = null;
   let __speakSeq = 0;
+  // How it talks: a little slower than the voice's own pace, and a line of several sentences
+  // ("20. Triple, single, miss. Next, 19.") is said a sentence at a time with a short stop between,
+  // so it doesn't run together.
+  const VOICE_RATE = 0.9, VOICE_GAP_MS = 350;
+  const sentencesOf = (text) => (String(text).match(/[^.!?]+(?:[.!?]+|$)/g) || []).map((part) => part.trim()).filter(Boolean);
 
   // 1) Better Voice Loading
   function initTTS() {
@@ -1485,13 +1492,14 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
       utterance.lang = "en-US";
     }
 
-    utterance.rate = 1.0;
+    utterance.rate = VOICE_RATE;
     utterance.pitch = 1.0;
     utterance.volume = 1.0;
     return utterance;
   }
 
-  function speakNow(text, seq, allowRetry){
+  // `then`: what to do once this has been said (the next sentence of the line).
+  function speakNow(text, seq, allowRetry, then){
     if (!tapVoiceEnabled || !("speechSynthesis" in window)) return;
     if (seq !== __speakSeq) return;
 
@@ -1504,24 +1512,34 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
     try { __ttsVoices = synth.getVoices() || __ttsVoices; } catch (e) {}
 
     const utterance = buildUtterance(text);
-    let started = false;
+    __speakKeep = utterance; // held on to, so its "end" still comes (a browser can drop one nobody holds)
+    let started = false, watch = null;
+    const unwatch = () => { if (watch) { clearInterval(watch); watch = null; } };
+    // It has been said: its end, or (for a browser that doesn't tell) the voice gone quiet after it began.
+    const said = () => { unwatch(); if (then && seq === __speakSeq) then(); };
     utterance.onstart = () => { started = true; __ttsUnlocked = true; };
+    utterance.onend = said;
     utterance.onerror = (e) => {
+      unwatch();
       // Cut off by a newer word: nothing wrong with the voice.
       if (e && (e.error === "interrupted" || e.error === "canceled")) return;
       __ttsUnlocked = false;
       if (allowRetry && seq === __speakSeq) {
-        __speakRetryTimer = setTimeout(() => speakNow(text, seq, false), 140);
+        __speakRetryTimer = setTimeout(() => speakNow(text, seq, false, then), 140);
       }
     };
 
     try { synth.speak(utterance); } catch (e) {
       __ttsUnlocked = false;
       if (allowRetry && seq === __speakSeq) {
-        __speakRetryTimer = setTimeout(() => speakNow(text, seq, false), 140);
+        __speakRetryTimer = setTimeout(() => speakNow(text, seq, false, then), 140);
       }
       return;
     }
+    if (then) watch = setInterval(() => {
+      if (seq !== __speakSeq) { unwatch(); return; }
+      if (started && !synth.speaking && !synth.pending) said();
+    }, 150);
 
     if (allowRetry) {
       __speakRetryTimer = setTimeout(() => {
@@ -1530,10 +1548,24 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
           // Never started: blocked (an iPad says nothing), so the next tap unlocks it again. (A short
           // word can be over already: started says it was heard.)
           __ttsUnlocked = false;
-          speakNow(text, seq, false);
+          unwatch();
+          speakNow(text, seq, false, then);
         }
       }, 260);
     }
+  }
+
+  // A line's sentences, one after another, with a short stop between them.
+  function speakParts(parts, seq, allowRetry){
+    if (!parts.length || seq !== __speakSeq) return;
+    const rest = parts.slice(1);
+    let went = false;
+    const next = rest.length ? () => {
+      if (went) return;
+      went = true;
+      __speakGapTimer = setTimeout(() => speakParts(rest, seq, false), VOICE_GAP_MS);
+    } : null;
+    speakNow(parts[0], seq, allowRetry, next);
   }
 
   // 3) Updated Speak Function (more iOS-stable)
@@ -1550,11 +1582,12 @@ document.getElementById("mainEntryTable").addEventListener("input", (e) => {
 
     if (__speakTimer) clearTimeout(__speakTimer);
     if (__speakRetryTimer) clearTimeout(__speakRetryTimer);
+    if (__speakGapTimer) clearTimeout(__speakGapTimer);
 
     // Crucial for iOS: cancel any pending speech before starting new one
     try { synth.cancel(); } catch (e) {}
     __speakTimer = setTimeout(() => {
-      speakNow(text, seq, true);
+      speakParts(sentencesOf(text), seq, true);
     }, delay);
   }
 
@@ -2119,7 +2152,7 @@ function applyBoardHit(hit){
       opts.push({ id: "D", text: "Bullseye: 2 marks", hit: true, cur: d.ring === "D" });
       opts.push({ id: "S", text: "Outer bull: 1 mark", hit: true, cur: d.ring === "S" });
     } else {
-      opts.push({ id: "T", text: `Treble ${t}`, hit: true, cur: d.ring === "T" });
+      opts.push({ id: "T", text: `Triple ${t}`, hit: true, cur: d.ring === "T" });
       opts.push({ id: "D", text: `Double ${t}`, hit: true, cur: d.ring === "D" });
       opts.push({ id: "S", text: `Single ${t}`, hit: true, cur: d.ring === "S" });
     }
@@ -2210,7 +2243,7 @@ function applyBoardHit(hit){
     else if (r.avg != null) { const d = r.total - r.avg; sub = `${f1(Math.abs(d))} ${d >= 0 ? "above" : "below"} your average of ${f1(r.avg)} · best ${r.pb}`; }
     else sub = "Your first session in this game.";
     const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
-    let html = `<p><b>${r.hits} of ${r.darts}</b> darts hit (${pct(r.hitPct)})${scoreMode === "single" ? "" : ` · ${plural(r.trebles, "treble")} · ${plural(r.doubles, "double")}`}.</p>`;
+    let html = `<p><b>${r.hits} of ${r.darts}</b> darts hit (${pct(r.hitPct)})${scoreMode === "single" ? "" : ` · ${plural(r.trebles, "triple")} · ${plural(r.doubles, "double")}`}.</p>`;
     if (r.improved.length) html += `<p class="m">Better than usual</p><div class="tags">${r.improved.map(x => `<span class="tag good">${tName(x.t)}: ${x.score} <span class="m">(usually ${f1(x.avg)})</span></span>`).join("")}</div>`;
     html += `<p class="m">Practise next: the lowest hit rate lately</p><div class="tags">${r.practise.map(x => `<span class="tag work">${tName(x.t)} · ${pct(x.pct)}</span>`).join("")}</div>`;
     return {
@@ -2224,7 +2257,7 @@ function applyBoardHit(hit){
     modeLabel: "Tracker",
     heroAria: "The number to throw at",
     stripAria: "The 21 numbers",
-    pad: [{ man: "S", text: "Single" }, { man: "D", text: "Double" }, { man: "T", text: "Treble" }, { man: "-", text: "Miss", cls: "m" }],
+    pad: [{ man: "S", text: "Single" }, { man: "D", text: "Double" }, { man: "T", text: "Triple" }, { man: "-", text: "Miss", cls: "m" }],
     doneBig: "Done",
     big: (t) => (t === "BULL" ? "BULL" : t || ""),
     longTarget: (t) => t === "BULL",
@@ -2276,7 +2309,7 @@ function applyBoardHit(hit){
       dartsText: p.darts ? `${p.darts} dart${p.darts === 1 ? "" : "s"}` : "",
       modeLabel: scoreMode === "single" ? "Tracker · singles" : "Tracker · standard scoring",
       info: v.finished ? "" : paceHtml(g, hist),
-      pad: v.target === "BULL" ? [{ man: "S", text: "Outer bull" }, { man: "D", text: "Bullseye" }, { man: "T", text: "Treble", disabled: true }] : null,
+      pad: v.target === "BULL" ? [{ man: "S", text: "Outer bull" }, { man: "D", text: "Bullseye" }, { man: "T", text: "Triple", disabled: true }] : null,
       pauseOff: !sessionTimer,
     };
     if (v.finished) Object.assign(model, recapModel(g, hist));

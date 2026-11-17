@@ -329,12 +329,12 @@ test("Board mode shows the visit's darts, the next numbers, and the finished vis
   assert.equal(v.target, "20");
   assert.equal(v.dartNo, 2);
   assert.deepEqual(v.next, ["19", "18", "17"]);
-  assert.deepEqual(v.darts.map((d) => d.read + "|" + d.sub), ["T20|Treble: 3 marks"]);
+  assert.deepEqual(v.darts.map((d) => d.read + "|" + d.sub), ["T20|Triple: 3 marks"]);
   E.addDart(s, hit("5", "S", -0.1, -0.7)); E.addDart(s, null);
   v = E.boardView(s, "standard");
   assert.equal(v.target, "19");
   assert.ok(v.pullOut, "after the third dart: pull your darts out");
-  assert.deepEqual(v.darts.map((d) => d.read + "|" + d.sub), ["T20|Treble: 3 marks", "S5|Next door, in the 5", "Miss|Off the board"]);
+  assert.deepEqual(v.darts.map((d) => d.read + "|" + d.sub), ["T20|Triple: 3 marks", "S5|Next door, in the 5", "Miss|Off the board"]);
   assert.equal(v.cells[0].state, "h1");
   assert.equal(v.cells[0].sub, "T––");
   assert.equal(v.cells[1].state, "current");
@@ -397,14 +397,26 @@ test("the recap: total against your average and best, what went better, the thre
   assert.deepEqual(r.practise.map((x) => x.t), ["18", "17", "16"], "never hit: the first three in order");
 });
 
-test("the voice: each dart's word, and a number's third dart says the visit and the total", () => {
+test("the voice: each dart's word, and a number's third dart says the number, the visit and what is next", () => {
   const s = E.blank();
   let d = E.addDart(s, hit("20", "T"));
-  assert.equal(E.voiceLine(s, { k: "dart", aim: d.aim, dartNo: d.dartNo }, "standard"), "Treble.");
+  assert.equal(E.voiceLine(s, { k: "dart", aim: d.aim, dartNo: d.dartNo }, "standard"), "Triple.", "triple, never treble");
   E.addDart(s, hit("20", "S"));
   d = E.addDart(s, null);
-  assert.equal(E.voiceLine(s, { k: "dart", aim: d.aim, dartNo: d.dartNo }, "standard"), "20: treble, single, miss. 4 in all. Next, 19.");
-  assert.equal(E.voiceLine(s, { k: "dart", aim: "20", dartNo: 3 }, "single"), "20: hit, hit, miss. 2 in all. Next, 19.");
+  // Short sentences (the page stops between them), and no running total.
+  assert.equal(E.voiceLine(s, { k: "dart", aim: d.aim, dartNo: d.dartNo }, "standard"), "20. Triple, single, miss. Next, 19.");
+  assert.equal(E.voiceLine(s, { k: "dart", aim: "20", dartNo: 3 }, "single"), "20. Hit, hit, miss. Next, 19.");
+  // Three alike are said as one.
+  const alike = (rings, mode = "standard") => { const x = E.blank(); let last = null; rings.forEach((r) => { last = E.buttonDart(x, r); }); return E.voiceLine(x, { k: "dart", aim: last.aim, dartNo: last.dartNo }, mode); };
+  assert.equal(alike(["-", "-", "-"]), "20. Three misses. Next, 19.");
+  assert.equal(alike(["T", "T", "T"]), "20. Three triples. Next, 19.");
+  assert.equal(alike(["S", "S", "S"], "single"), "20. Three hits. Next, 19.");
+  // The last number ends the session, with the total.
+  const whole = E.blank();
+  let end = null;
+  for (let k = 0; k < 20; k += 1) ["S", "-", "-"].forEach((r) => E.buttonDart(whole, r));
+  ["S", "D", "-"].forEach((r) => { end = E.buttonDart(whole, r); });
+  assert.equal(E.voiceLine(whole, { k: "dart", aim: end.aim, dartNo: end.dartNo }, "standard"), "Bull. Outer bull, bullseye, miss. That's the session. Total, 23.");
   const out = E.fixDart(s, "20", 2, { ring: "D", label: "D20" });
   assert.equal(E.voiceLine(s, { k: "fix", target: out.target, index: out.index }, "standard"), "Fixed: double.");
 });

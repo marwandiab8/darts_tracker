@@ -6,12 +6,12 @@ checked by `tests/challenge-engine.test.cjs`.
 
 ## The round (57 darts, maximum 3,330)
 
-1. **Shanghai 10-15:** three darts at each number. Single, double and treble score 1x, 2x and 3x the number. A single,
-   a double and a treble of the same number in one visit is a Shanghai: +100.
+1. **Shanghai 10-15:** three darts at each number. Single, double and triple score 1x, 2x and 3x the number. A single,
+   a double and a triple of the same number in one visit is a Shanghai: +100.
 2. **Doubles:** one dart at each of D1-D20, then the bull. Each hit scores 50.
 3. **Shanghai 15-20:** as part 1.
 
-Each dart is entered with a key (Miss / Single / Double / Treble, or Miss / Hit for a double, and **3 misses** for the
+Each dart is entered with a key (Miss / Single / Double / Triple, or Miss / Hit for a double, and **3 misses** for the
 rest of a visit), or 0-3, X and Backspace on a keyboard, or by the cameras. While playing, the score is compared with
 your best round at the end of each visit (`pace`: the same finished visits on both sides, so the visit you're in never
 counts against the best round's total from before it). Only finished rounds are saved.
@@ -46,8 +46,8 @@ dot) to fix it. The screen stays on.
 **Moments** fill the screen for a couple of seconds (a tap skips one): a Shanghai, all three doubles of a visit, going
 ahead of your best, a part beating your best for that part, and a new best round.
 
-**The voice** (Voice on the play card, per device) says each dart ("Treble.", "Hit.") and each visit with its score and
-how it stands against your best ("17: treble, single, miss. 68. 40 ahead of your best.", "D 7, D 8, D 9: hit, miss,
+**The voice** (Voice on the play card, per device) says each dart ("Triple.", "Hit.") and each visit with its score and
+how it stands against your best ("17: triple, single, miss. 68. 40 ahead of your best.", "D 7, D 8, D 9: hit, miss,
 miss. 50.", "SHANGHAI! 160."). The line goes with the round, so every device with Voice on says it once.
 
 **After the 57th dart** (since Nov 13, 2026) the round isn't saved at once: it says "Round complete" and saves after

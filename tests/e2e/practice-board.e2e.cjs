@@ -74,7 +74,7 @@ const { check, failed } = H.checker();
     await ipad.click("#boardMode .bm-slot[data-i='0']");
     await ipad.waitForSelector("#boardMode [data-ref=sheet]:not([hidden])", { timeout: 5000 });
     const options = await ipad.$$eval("#boardMode [data-fix]", (els) => els.map((e) => e.textContent));
-    check(options.join(" / ") === "Treble 20: 60 (what it is now) / Double 20: 40 / Single 20: 20 / Missed the board / Another number", "the fix sheet: " + options.join(" / "));
+    check(options.join(" / ") === "Triple 20: 60 (what it is now) / Double 20: 40 / Single 20: 20 / Missed the board / Another number", "the fix sheet: " + options.join(" / "));
     await ipad.click("#boardMode [data-fix='other']");
     await ipad.click("#boardMode [data-num='19']");
     await ipad.click("#boardMode [data-fix='T19']");

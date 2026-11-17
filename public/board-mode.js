@@ -272,7 +272,7 @@
     }
     function ringPicker(n) {
       ref.sheetSub.textContent = `Where in the ${n}?`;
-      ref.opts.innerHTML = [["T", "Treble"], ["D", "Double"], ["S", "Single"]].map(([r, w]) => `<button type="button" class="bm-opt" data-fix="${r}${n}">${w} ${n}</button>`).join("");
+      ref.opts.innerHTML = [["T", "Triple"], ["D", "Double"], ["S", "Single"]].map(([r, w]) => `<button type="button" class="bm-opt" data-fix="${r}${n}">${w} ${n}</button>`).join("");
     }
     const closeFix = () => { fixing = null; show(ref.sheet, false); };
 

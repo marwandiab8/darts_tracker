@@ -177,8 +177,8 @@ test("Board mode: the dart boxes, the Shanghai so far, the most still possible",
 
 test("the voice: each dart, the visit with its score and against your best, a Shanghai", () => {
   const best = Array(57).fill(1).map((v, i) => (C.stepAt(i).kind === "double" ? 0 : 1));
-  assert.equal(C.voiceLine([3], { k: "dart", index: 0 }, best), "Treble.");
-  assert.equal(C.voiceLine([3, 1, 0], { k: "dart", index: 2 }, best), "10: treble, single, miss. 40. 10 ahead of your best.");
+  assert.equal(C.voiceLine([3], { k: "dart", index: 0 }, best), "Triple.");
+  assert.equal(C.voiceLine([3, 1, 0], { k: "dart", index: 2 }, best), "10: triple, single, miss. 40. 10 ahead of your best.");
   assert.equal(C.voiceLine([3, 1, 2], { k: "dart", index: 2 }, best), "SHANGHAI! 160.");
   const dbl = Array(18).fill(0).concat([1, 0, 0]);
   assert.equal(C.voiceLine(dbl, { k: "dart", index: 20 }, null), "D 1, D 2, D 3: hit, miss, miss. 50.");

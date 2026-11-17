@@ -73,7 +73,7 @@ const { check, failed } = H.checker();
     await ipad.click("#boardMode .bm-slot[data-i='1']");
     await ipad.waitForSelector("#boardMode [data-ref=sheet]:not([hidden])", { timeout: 5000 });
     const options = await ipad.$$eval("#boardMode [data-fix]", (els) => els.map((e) => e.textContent));
-    check(options.join(" / ") === "Treble 11: 33 / Double 11: 22 / Single 11: 11 / Miss (what it is now)", "the fix sheet: " + options.join(" / "));
+    check(options.join(" / ") === "Triple 11: 33 / Double 11: 22 / Single 11: 11 / Miss (what it is now)", "the fix sheet: " + options.join(" / "));
     await ipad.click("#boardMode [data-fix='2']");
     r = await until(async () => { const x = await live(); return x && x.darts[4] === 2 ? x : null; }) || await live();
     check(r.darts.slice(3).join("") === "121" && r.meta[4].f === 1, "fixed: a double 11, so S D S (" + r.darts.slice(3).join("") + ")");

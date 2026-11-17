@@ -674,7 +674,7 @@
     let sub = `A miss at ${key}`;
     if (d.l === "MISS" && where === num && off) sub = `Just past the ${key} wire`;
     else if (d.l === "MISS" && off) sub = "Off the board";
-    else if (num !== "BULL" && /^[ST]\d/.test(d.l) && d.l.slice(1) === num) sub = d.l[0] === "S" ? "Inside the wire" : "In the treble";
+    else if (num !== "BULL" && /^[ST]\d/.test(d.l) && d.l.slice(1) === num) sub = d.l[0] === "S" ? "Inside the wire" : "In the triple";
     else if (num !== "BULL" && where && neighbours(num).map(String).includes(where)) sub = `Next door, in the ${where}`;
     return { read, sub, kind: "miss" };
   }

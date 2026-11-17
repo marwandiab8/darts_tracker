@@ -134,11 +134,11 @@
   <div id="app" class="hidden">
     <section class="card" id="startCard">
       <h2>The best all-round practice round</h2>
-      <p class="muted">One round tests scoring, trebles and doubles, and always scores out of <b id="maxScore"></b>, so you can see exactly how you're improving. It takes about 10-15 minutes and 57 darts.</p>
+      <p class="muted">One round tests scoring, triples and doubles, and always scores out of <b id="maxScore"></b>, so you can see exactly how you're improving. It takes about 10-15 minutes and 57 darts.</p>
       <details class="rules">
         <summary>How it works</summary>
         <ol>
-          <li><b>Part 1 - Shanghai 10 to 15:</b> three darts at each number. A single scores the number, a double twice it, a treble three times. Hit a single, a double <i>and</i> a treble of the same number in one visit (a <b>Shanghai</b>) for a <b>+100</b> bonus.</li>
+          <li><b>Part 1 - Shanghai 10 to 15:</b> three darts at each number. A single scores the number, a double twice it, a triple three times. Hit a single, a double <i>and</i> a triple of the same number in one visit (a <b>Shanghai</b>) for a <b>+100</b> bonus.</li>
           <li><b>Part 2 - Doubles:</b> one dart at each double, D1 to D20, then one at the bull. Every hit scores <b>50</b>.</li>
           <li><b>Part 3 - Shanghai 15 to 20:</b> the same as Part 1.</li>
           <li>Throw each dart, then tap what it hit, or let the cameras enter them. Every visit is 3 darts: three at one number, or one at each of three doubles in order (D1, D2, D3...). The bull is the bullseye only. "3 misses" ends a visit; "Undo" takes back the last change (up to 10), from any device; tap a dart in Board mode to fix it.</li>
@@ -186,7 +186,7 @@
         <button type="button" class="danger" id="quitBtn">Quit round</button>
       </div>
       <div class="track" id="track"></div>
-      <p class="muted small">Keyboard: 0 miss, 1 single, 2 double, 3 treble (doubles: 1 hit, 0 miss), X the rest of the visit missed, Backspace undo.</p>
+      <p class="muted small">Keyboard: 0 miss, 1 single, 2 double, 3 triple (doubles: 1 hit, 0 miss), X the rest of the visit missed, Backspace undo.</p>
     </section>
 
     <section class="card hidden" id="resultCard">
@@ -226,12 +226,12 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
-<script src="challenge-engine.js?v=3"></script>
+<script src="challenge-engine.js?v=4"></script>
 <script src="practice-timer.js?v=2"></script>
 <script src="live-sync.js?v=1"></script>
 <script src="board-vision.js?v=11"></script>
 <script src="board-camera.js?v=13"></script>
-<script src="board-mode.js?v=5"></script>
+<script src="board-mode.js?v=6"></script>
 <script>
 (function () {
   "use strict";
@@ -423,7 +423,7 @@
   }
 
   // ---- playing -----------------------------------------------------------------------------
-  const RING = ["Miss", "Single", "Double", "Treble"];
+  const RING = ["Miss", "Single", "Double", "Triple"];
   function showCard(which) {
     $("playCard").classList.toggle("hidden", which !== "play");
     $("resultCard").classList.toggle("hidden", which !== "result");
@@ -675,7 +675,7 @@
       ["Shanghai 10-15", fmt(rec.part1), ""],
       ["Doubles", fmt(rec.part2), `${rec.doublesHit} of 21 hit`],
       ["Shanghai 15-20", fmt(rec.part3), ""],
-      ["Trebles", fmt(rec.trebles), "of 36 darts"],
+      ["Triples", fmt(rec.trebles), "of 36 darts"],
       ["Shanghais", fmt(rec.shanghais), "of 12 numbers"],
       ["Number hit", `${fmt(s.hitRate * 100)}%`, "Shanghai darts on the number"],
       ["Time", rec.durationSec != null ? `${Math.floor(rec.durationSec / 60)}:${String(rec.durationSec % 60).padStart(2, "0")}` : "-", ""],
@@ -906,7 +906,7 @@
     modeLabel: "JDC Challenge",
     heroAria: "The target",
     stripAria: "The 19 visits",
-    pad: [{ man: "1", text: "Single" }, { man: "2", text: "Double" }, { man: "3", text: "Treble" }, { man: "0", text: "Miss", cls: "m" }, { man: "x3", text: "3 misses", cls: "m" }],
+    pad: [{ man: "1", text: "Single" }, { man: "2", text: "Double" }, { man: "3", text: "Triple" }, { man: "0", text: "Miss", cls: "m" }, { man: "x3", text: "3 misses", cls: "m" }],
     idleTitle: "JDC Challenge",
     idleSub: "Shanghai 10 to 15, every double and the bull, Shanghai 15 to 20: 57 darts.",
     idleStart: "Start a round",
@@ -1043,7 +1043,7 @@
       info,
       pad: dbl
         ? [{ man: "1", text: `Hit ${C.doubleLabel(step.target)}` }, { man: "2", hidden: true }, { man: "3", hidden: true }, { man: "0", text: "Miss" }, { man: "x3", text: "3 misses" }]
-        : [{ man: "1", text: `Single ${step.target}` }, { man: "2", text: `Double ${step.target}` }, { man: "3", text: `Treble ${step.target}` }, { man: "0", text: "Miss" }, { man: "x3", text: "3 misses" }],
+        : [{ man: "1", text: `Single ${step.target}` }, { man: "2", text: `Double ${step.target}` }, { man: "3", text: `Triple ${step.target}` }, { man: "0", text: "Miss" }, { man: "x3", text: "3 misses" }],
     }));
     board.tick(T.format(round.timer ? T.elapsedMs(round.timer, Date.now()) : 0));
     keepAwake(true);

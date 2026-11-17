@@ -75,12 +75,12 @@ const { check, failed } = H.checker();
     // ---- camera darts: what each counted as -------------------------------------------------
     await send("T20", 20, "T");
     b = await bm(ipad);
-    check(b.slots[0] === "T20|Treble: 3 marks" && b.dots === 1, "dart 1 shows in its box and on the board: " + b.slots[0]);
+    check(b.slots[0] === "T20|Triple: 3 marks" && b.dots === 1, "dart 1 shows in its box and on the board: " + b.slots[0]);
     check(/Throw/.test(b.slots[1]), "the next box waits for the dart: " + b.slots[1]);
     await send("S1", 1, "S");
     b = await bm(ipad);
     check(b.slots[1] === "S1|Next door, in the 1", "a dart in the 1 is a miss next door: " + b.slots[1]);
-    check((await said(ipad)).join(" / ") === "Treble. / Miss.", "the iPad says each dart: " + JSON.stringify(await said(ipad)));
+    check((await said(ipad)).join(" / ") === "Triple. / Miss.", "the iPad says each dart: " + JSON.stringify(await said(ipad)));
     check((await said(computer)).length === 0, "the computer (Voice off) says nothing");
     await station.send({ type: "unreadable" }); await H.sleep(1000);
     b = await bm(ipad);
@@ -89,14 +89,14 @@ const { check, failed } = H.checker();
     b = await until(async () => { const x = await bm(ipad); return /S20/.test(x.slots[2]) ? x : null; }) || await bm(ipad);
     check(b.slots[2] === "S20|Single: 1 mark", "tapped on the board, it fills the box: " + b.slots[2]);
     check(b.target === "19" && /Pull your darts out/.test(b.label), "20 is done: pull your darts out, then 19 (" + b.label + " " + b.target + ")");
-    check(await until(async () => (await said(ipad)).includes("20: treble, miss, single. 4 in all. Next, 19.")), "the iPad says the visit and the total: " + JSON.stringify(await said(ipad)));
+    check(await until(async () => (await said(ipad)).join(" | ").includes("20. | Triple, miss, single. | Next, 19.")), "the iPad says the number, the visit and what is next, a sentence at a time: " + JSON.stringify(await said(ipad)));
     check(/After 20: 4/.test(b.info) && /avg 2\.7/.test(b.info) && /PB pace 4/.test(b.info), "pace after 20 against the saved sessions (1, 3, 4; the best had 4): " + b.info);
 
     // ---- fixing a dart by tapping it --------------------------------------------------------
     await ipad.click("#boardMode .bm-slot[data-i='1']");
     await ipad.waitForSelector("#boardMode [data-ref=sheet]:not([hidden])", { timeout: 5000 });
     const options = await ipad.$$eval("#boardMode [data-fix]", (els) => els.map((e) => e.textContent));
-    check(options.join(" / ") === "Treble 20 / Double 20 / Single 20 / A miss: not in the 20 (what it is now) / Not a dart: remove it", "the fix sheet: " + options.join(" / "));
+    check(options.join(" / ") === "Triple 20 / Double 20 / Single 20 / A miss: not in the 20 (what it is now) / Not a dart: remove it", "the fix sheet: " + options.join(" / "));
     await ipad.click("#boardMode [data-fix='D']");
     b = await until(async () => { const x = await bm(ipad); return /D20/.test(x.slots[1]) ? x : null; }) || await bm(ipad);
     check(b.slots[1] === "D20|Double: 2 marks · fixed", "fixed: dart 2 was a double 20: " + b.slots[1]);
@@ -120,18 +120,18 @@ const { check, failed } = H.checker();
     st = await until(async () => { const v = await live(); return v && v.thrown["19"] === 3 ? v : null; }) || await live();
     check(st.entry["19"].join("") === "TS-", "Treble, Miss, Single go in at 19: " + st.entry["19"].join(""));
     b = await bm(ipad);
-    check(b.slots.join(" / ") === "T19|Treble: 3 marks / Miss|Entered by hand / S19|Single: 1 mark", "their boxes: " + b.slots.join(" / "));
+    check(b.slots.join(" / ") === "T19|Triple: 3 marks / Miss|Entered by hand / S19|Single: 1 mark", "their boxes: " + b.slots.join(" / "));
     // The rest typed in on the computer, down to the bull.
     for (let n = 18; n >= 1; n -= 1) await computer.fill(`#entryBody tr[data-target="${n}"] input`, "S");
     await until(async () => (await bm(ipad)).target === "BULL", 8000);
     b = await bm(ipad);
-    check(b.target === "BULL" && b.pad.join(",") === "Outer bull,Bullseye,Treble(off),Miss", "at the bull the buttons are Outer bull and Bullseye: " + b.pad.join(","));
+    check(b.target === "BULL" && b.pad.join(",") === "Outer bull,Bullseye,Triple(off),Miss", "at the bull the buttons are Outer bull and Bullseye: " + b.pad.join(","));
     for (const m of ["D", "-", "S"]) { await ipad.click(`#boardMode [data-man='${m}']`); await H.sleep(300); }
 
     // ---- the recap, and Save ----------------------------------------------------------------
     b = await until(async () => { const x = await bm(ipad); return x.done ? x : null; }) || await bm(ipad);
     check(/^29/.test(b.done) && /Practise next/.test(b.done) && /Save the session/.test(b.done), "the recap: 29, what to practise, Save: " + b.done.slice(0, 160));
-    check(await until(async () => (await said(ipad)).some((x) => /^Bull: bullseye, miss, outer bull\. That's all 21: 29\.$/.test(x))), "the iPad says the end: " + (await said(ipad)).slice(-1));
+    check(await until(async () => (await said(ipad)).join(" | ").endsWith("Bull. | Bullseye, miss, outer bull. | That's the session. | Total, 29.")), "the iPad says the end: " + (await said(ipad)).slice(-4).join(" | "));
     const wakeBefore = await ipad.evaluate(() => window.__wake);
     await ipad.click("#boardMode [data-act=save]");
     const rec = await until(async () => (await station.list("sessions")).find((s) => s.uid === uid && !/^h\d/.test(s.id)), 10000);
