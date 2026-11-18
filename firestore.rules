@@ -351,5 +351,16 @@ service cloud.firestore {
       allow update: if false;
       allow delete: if signedIn() && resource.data.uid == request.auth.uid;
     }
+
+    // The people you play against (practice.html, public/players.js): each one's name and email
+    // address, kept with your account so they are there on every device. Only you read or change them.
+    match /savedPlayers/{uid} {
+      allow read, delete: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['uid', 'players', 'updatedAt'])
+        && request.resource.data.uid == uid
+        && request.resource.data.players is map && request.resource.data.players.size() <= 60
+        && (!('updatedAt' in request.resource.data) || request.resource.data.updatedAt is number);
+    }
   }
 }

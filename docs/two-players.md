@@ -2,11 +2,22 @@
 
 On `practice.html`, "Play against: Another player" is for two people sharing one phone. The same board and keypad are used, and the two of you take turns. When the game is finished, the result is emailed to both players.
 
-## Adding a player
+## Your players
 
-You type the other player's email address (their name is optional). The email is required: the game cannot start without a valid one, and it cannot be your own.
+The people you play against are kept with your account (since Nov 17, 2026), so each one is typed once and is there on every device: phone, iPad and computer.
 
-The name can also be added or changed during a game (since Nov 14, 2026): **Edit name** under the other player's score, or by their score in Board mode, asks for it. Without one, the name is made from their email address ("ashtrower@..." plays as "Ashtrower"). The new name is used at once on every device showing the game, called out, saved with the game and put in its email, and kept as "Their name" for the next game. Your own name gets a "2" added if typed for them. Once a game is over it can't be renamed: the record is already saved, and saved games are never changed. The first player is whoever is signed in, and their email is the one on the Google account. Names are used everywhere the bot's name would be, and if both are the same the second gets a "2".
+With "Another player" chosen, **Who are you playing?** shows a button for each saved player, the one played or added last first. Tap one and the game is set up with their name and email address; their card shows the address, your games against them ("5 games played: you won 5, David won 0. Last played Nov 16.") and two buttons:
+
+- **Edit** opens their name and address to change. An address another saved player already has is refused.
+- **Remove** takes them off the list (it asks first). The games you played stay in your record.
+
+**+ New player** opens the two boxes: their name (optional) and their email address (needed: the game cannot start without a valid one, and it cannot be your own). **Save player** (or Enter) adds them; so does **Start game**, so a new player can be typed and played straight away and is there next time. Without a name, one is made from the address ("ashtrower@..." is "Ashtrower"). The same address typed again is the same player, whatever its capitals.
+
+The first time, the list starts by itself with the people already in your saved two-player games, each under the latest name you typed for them. It is only started once: someone you remove does not come back.
+
+The name can also be changed during a game (since Nov 14, 2026): **Edit name** under the other player's score, or by their score in Board mode, asks for it. The new name is used at once on every device showing the game, called out, saved with the game and put in its email, and it becomes that saved player's name. Your own name gets a "2" added if typed for them. Once a game is over it can't be renamed: the record is already saved, and saved games are never changed. The first player is whoever is signed in, and their email is the one on the Google account. Names are used everywhere the bot's name would be, and if both are the same the second gets a "2".
+
+How it is kept: one document, `savedPlayers/{uid}`, with a map of players (`name`, `email`, `addedAt`, `usedAt`), at most 50 (the rules take 60). A player's id is made from their email address (`public/players.js`, `idOf`), so the same person added on two devices at once is one player. The page listens to the document, so a change on one device shows on the others by itself. If the list can't be reached (offline, with nothing kept), the two boxes work as before and nothing is written. Rules: only the owner reads or writes it (`match /savedPlayers/{uid}` in `firestore.rules`).
 
 Playing works as it does against the bot, with these differences:
 
@@ -62,4 +73,4 @@ Each saved game is also sent to Time Left To Live by `syncVersusGameToTimeLeft` 
 
 ## Privacy
 
-The other player's email address is stored in your `versusGames` record and, for convenience, in this browser's local storage; it is used only to send that result. Their name (not their address) goes to your own Time Left with each game. Deleting a game removes the record (and its Time Left item), not emails already sent.
+The other player's name and email address are stored in your `versusGames` records, in your saved players (`savedPlayers`, readable only by your account) and, for convenience, in this browser's local storage; the address is used only to send them the result. Removing a player takes them out of your saved players, not out of the games already saved. Their name (not their address) goes to your own Time Left with each game. Deleting a game removes the record (and its Time Left item), not emails already sent.

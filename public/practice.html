@@ -133,6 +133,21 @@
   input[type="text"]:focus-visible, input[type="email"]:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
   .field-note { font-size: 13px; margin-top: 6px; }
   .field-note.bad { color: #fca5a5; }
+  /* Your players: one button each, the one you're playing lit like the choices above. */
+  .player-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .player-chips button { background: var(--chip); color: var(--text); border: 1px solid var(--border); border-radius: 999px; padding: 10px 16px; font-weight: 700; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .player-chips button[aria-pressed="true"] { background: rgba(245,158,11,.16); border-color: var(--accent); color: var(--accent); }
+  .player-chips button.add { border-style: dashed; color: var(--muted); }
+  .player-chips button.add[aria-pressed="true"] { color: var(--accent); }
+  .player-card { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; margin-top: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: rgba(0,0,0,.2); }
+  .player-who { min-width: 0; flex: 1 1 240px; }
+  .player-who strong { display: block; font-size: 17px; overflow-wrap: anywhere; }
+  .player-who span { display: block; font-size: 13px; overflow-wrap: anywhere; }
+  .player-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+  .player-btns button { min-height: 40px; padding: 8px 14px; }
+  #playerForm { margin-top: 12px; }
+  #playerPick.hidden + #playerForm { margin-top: 0; }
+  #playerForm .player-btns { margin-top: 10px; }
   .entry-toggle { display: flex; gap: 6px; justify-content: center; margin-bottom: 12px; }
   .entry-toggle button { min-height: 38px; padding: 6px 16px; }
   .entry-toggle button[aria-pressed="true"] { background: var(--accent); color: #111; border-color: var(--accent); }
@@ -253,14 +268,31 @@
           </div>
         </div>
         <div class="wide hidden" id="humanBox">
-          <div class="form-grid">
-            <div>
-              <label for="oppName">Their name</label>
-              <input type="text" id="oppName" maxlength="40" autocomplete="off" placeholder="Optional (or Edit name in the game)">
+          <div class="hidden" id="playerPick">
+            <label id="playersLabel">Who are you playing?</label>
+            <div class="player-chips" id="playerChips" role="group" aria-labelledby="playersLabel"></div>
+            <div class="player-card hidden" id="playerCard">
+              <div class="player-who"><strong id="playerCardName"></strong><span class="muted" id="playerCardEmail"></span><span class="muted" id="playerCardRecord"></span></div>
+              <div class="player-btns">
+                <button type="button" class="secondary" id="playerEditBtn">Edit</button>
+                <button type="button" class="danger" id="playerRemoveBtn">Remove</button>
+              </div>
             </div>
-            <div>
-              <label for="oppEmail">Their email address (needed)</label>
-              <input type="email" id="oppEmail" inputmode="email" maxlength="254" autocomplete="off" placeholder="name@example.com" aria-describedby="oppHint">
+          </div>
+          <div id="playerForm">
+            <div class="form-grid">
+              <div>
+                <label for="oppName">Their name</label>
+                <input type="text" id="oppName" maxlength="40" autocomplete="off" placeholder="Optional (or Edit name in the game)">
+              </div>
+              <div>
+                <label for="oppEmail">Their email address (needed)</label>
+                <input type="email" id="oppEmail" inputmode="email" maxlength="254" autocomplete="off" placeholder="name@example.com" aria-describedby="oppHint">
+              </div>
+            </div>
+            <div class="player-btns hidden" id="playerFormBtns">
+              <button type="button" class="secondary" id="playerSaveBtn">Save player</button>
+              <button type="button" class="secondary" id="playerCancelBtn">Cancel</button>
             </div>
           </div>
           <div class="muted field-note" id="oppHint"></div>
@@ -438,6 +470,7 @@
 <script src="practice-engine.js?v=10"></script>
 <script src="board-mode.js?v=6"></script>
 <script src="practice-timer.js?v=2"></script>
+<script src="players.js?v=1"></script>
 <script src="live-sync.js?v=1"></script>
 <script src="board-vision.js?v=11"></script>
 <script src="board-camera.js?v=13"></script>
@@ -479,6 +512,13 @@
   let match = { human: false, names: { player: "You", bot: "Bot" }, opponentEmail: "" };
   const versus = () => match.human;
   const nameOf = (who) => match.names[who];
+  // The people you play against (players.js), kept with your account in savedPlayers/{uid}, so they are
+  // on every device and typed once. playersKnown: the saved list has answered (offline with nothing
+  // kept, it hasn't, and nothing is written over it); playersThere: there is a saved list.
+  const P = window.Players;
+  let players = [], playersKnown = false, playersThere = false, playersStop = null, playersStarted = false, gamesLoaded = false;
+  // The two boxes are open for a new player or to change one: { mode: "new" | "edit", id (edit), back: the address chosen before }.
+  let playerEdit = null;
   // The other player's name, added or changed during a game (before one, it's "Their name" on the setup).
   // It goes into this game's record and its email, the games after it, and every device showing the game.
   // Not once the game is over: the record is already saved, and saved games are never changed.
@@ -495,6 +535,7 @@
     settings.oppName = name;
     store.set(SETTINGS_KEY, settings);
     if ($("oppName")) $("oppName").value = name;
+    renamePlayer(name, match.opponentEmail);
     lastMessage = "The other player is " + name + " now.";
     persistGame();
     render();
@@ -958,13 +999,15 @@
       ]);
       savedGames = bots.docs.map((doc) => ({ id: doc.id, coll: "botGames", data: doc.data() }))
         .concat(people.docs.map((doc) => ({ id: doc.id, coll: "versusGames", data: doc.data() })));
+      gamesLoaded = true;
       note.classList.add("hidden");
     } catch (error) {
       note.textContent = "Could not load your games: " + (error && error.message ? error.message : error);
       note.classList.remove("hidden");
     }
     renderHistory(); renderHeat();
-    syncSetupVisibility(); // the ladder's step comes from the saved games
+    startPlayers();
+    syncSetupVisibility(); // the ladder's step, and your games against each player, come from the saved games
   }
 
   // --- setup ---------------------------------------------------------------------------------------------
@@ -977,7 +1020,15 @@
     E.STYLES.forEach((st) => { const o = el("option", "", st.name); o.value = st.id; $("botStyle").append(o); });
     applySettingsToForm();
     for (const id of ["startScore", "outRule", "rank", "first", "entry", "handover", "seriesTarget", "botStyle", "botTarget"]) $(id).addEventListener("change", readForm);
-    for (const id of ["oppName", "oppEmail"]) { $(id).addEventListener("input", readForm); $(id).addEventListener("change", readForm); }
+    for (const id of ["oppName", "oppEmail"]) {
+      $(id).addEventListener("input", readForm); $(id).addEventListener("change", readForm);
+      $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); savePlayer(); } });
+    }
+    $("playerChips").addEventListener("click", (e) => { const b = e.target.closest("button[data-player]"); if (b) pickPlayer(b.dataset.player); });
+    $("playerEditBtn").addEventListener("click", editPlayer);
+    $("playerRemoveBtn").addEventListener("click", removePlayer);
+    $("playerSaveBtn").addEventListener("click", savePlayer);
+    $("playerCancelBtn").addEventListener("click", cancelPlayer);
     document.querySelectorAll('input[name="kind"], input[name="opp"]').forEach((r) => r.addEventListener("change", readForm));
   }
 
@@ -1000,6 +1051,7 @@
     document.querySelectorAll('input[name="opp"]').forEach((r) => { r.checked = r.value === (settings.opponent === "human" ? "human" : "bot"); });
     $("oppName").value = String(settings.oppName || "");
     $("oppEmail").value = String(settings.oppEmail || "");
+    playerEdit = null;
     syncSetupVisibility();
   }
 
@@ -1039,18 +1091,179 @@
     return rankName(b.level) + " bot";
   }
 
+  // --- your players --------------------------------------------------------------------------------------
+  // With "Another player", each saved player is a button. The one chosen fills the name and address the
+  // game is played with (the two boxes, hidden then); the boxes show for a new player and while one is
+  // changed. Starting a game keeps whoever is in the boxes, so nobody is typed twice.
+  const playersRef = () => db.collection("savedPlayers").doc(user.uid);
+  const versusRecords = () => savedGames.filter((g) => g.coll === "versusGames").map((g) => g.data);
+  // What is showing: "pick" (a saved player is chosen), "none" (players to choose from, none chosen yet),
+  // "new" or "edit" (the two boxes).
+  function playerMode() {
+    if (!players.length) return "new";
+    if (playerEdit) return playerEdit.mode;
+    if (P.find(players, settings.oppEmail)) return "pick";
+    return String(settings.oppEmail || "").trim() || String(settings.oppName || "").trim() ? "new" : "none";
+  }
+  function setOpponent(name, email) {
+    $("oppName").value = name; $("oppEmail").value = email;
+    settings.oppName = name; settings.oppEmail = email;
+    store.set(SETTINGS_KEY, settings);
+  }
+  function watchPlayers() {
+    stopPlayers();
+    playersStop = playersRef().onSnapshot((snap) => {
+      playersKnown = snap.exists || !snap.metadata.fromCache;
+      playersThere = snap.exists;
+      players = P.listOf(snap.exists ? snap.data() : null);
+      startPlayers();
+      syncSetupVisibility();
+    }, () => {});
+  }
+  function stopPlayers() {
+    if (playersStop) playersStop();
+    playersStop = null; players = []; playersKnown = false; playersThere = false; playersStarted = false; playerEdit = null;
+  }
+  // The first time, the list starts with the people already in your record (your saved two-player games).
+  function startPlayers() {
+    if (playersStarted || !playersKnown || playersThere || !gamesLoaded || !user) return;
+    playersStarted = true;
+    const found = P.fromGames(versusRecords(), user.email);
+    if (Object.keys(found).length) writePlayers(found);
+  }
+  // { id: a player's fields, or null to remove them }. The list on the screen changes at once.
+  function writePlayers(changes) {
+    if (!user) return;
+    players = P.apply(players, changes);
+    const out = {};
+    for (const id of Object.keys(changes)) out[id] = changes[id] || firebase.firestore.FieldValue.delete();
+    playersRef().set({ uid: user.uid, updatedAt: Date.now(), players: out }, { merge: true })
+      .catch((error) => { console.warn("Your players could not be saved: " + (error && error.message ? error.message : error)); });
+  }
+  // Keeps the player in the two boxes: a new one is added, one being changed is changed, and one already
+  // there keeps their name unless another was typed. used: a game with them is starting.
+  function keepPlayer(used) {
+    const email = String(settings.oppEmail || "").trim();
+    const editing = playerEdit && playerEdit.mode === "edit" ? players.find((p) => p.id === playerEdit.id) : null;
+    playerEdit = null;
+    if (!playersKnown || !looksLikeEmail(email)) return;
+    const was = editing ? null : P.find(players, email);
+    if (!editing && !was && players.length >= P.MAX) return; // a full list: the game is played, the player isn't kept
+    const e = P.entry(editing ? { addedAt: editing.addedAt, usedAt: editing.usedAt } : was, { name: settings.oppName, email }, Date.now(), used);
+    const changes = { [e.id]: e.fields };
+    if (editing && editing.id !== e.id) changes[editing.id] = null;
+    setOpponent(e.fields.name, e.fields.email);
+    const same = editing || was;
+    if (same && same.id === e.id && !used && same.name === e.fields.name && same.email === e.fields.email) return; // nothing changed
+    writePlayers(changes);
+  }
+  // A name changed during a game (Edit name) is that player's name from now on.
+  function renamePlayer(name, email) {
+    if (!playersKnown || !looksLikeEmail(email)) return;
+    const was = P.find(players, email);
+    if (!was && players.length >= P.MAX) return;
+    const e = P.entry(was, { name, email }, Date.now(), false);
+    if (!was || was.name !== e.fields.name) writePlayers({ [e.id]: e.fields });
+  }
+  function pickPlayer(id) {
+    if (id === "new") {
+      if (playerMode() !== "new") {
+        const now = P.find(players, settings.oppEmail);
+        playerEdit = { mode: "new", back: playerEdit ? playerEdit.back : now ? now.email : "" };
+        setOpponent("", "");
+        syncSetupVisibility();
+      }
+      $("oppName").focus();
+      return;
+    }
+    const p = players.find((x) => x.id === id);
+    if (!p) return;
+    playerEdit = null;
+    setOpponent(p.name, p.email);
+    syncSetupVisibility();
+  }
+  const chosenPlayer = () => (playerMode() === "pick" ? P.find(players, settings.oppEmail) : null);
+  function editPlayer() {
+    const p = chosenPlayer();
+    if (!p) return;
+    playerEdit = { mode: "edit", id: p.id, back: p.email };
+    syncSetupVisibility();
+    $("oppName").focus();
+  }
+  function removePlayer() {
+    const p = chosenPlayer();
+    if (!p || !window.confirm("Remove " + p.name + " from your players? The games you played stay in your record.")) return;
+    setOpponent("", "");
+    writePlayers({ [p.id]: null });
+    syncSetupVisibility();
+  }
+  function cancelPlayer() {
+    const back = playerEdit && playerEdit.back ? P.find(players, playerEdit.back) : null;
+    playerEdit = null;
+    setOpponent(back ? back.name : "", back ? back.email : "");
+    syncSetupVisibility();
+  }
+  function savePlayer() {
+    readForm();
+    const problem = setupProblem();
+    if (!playersKnown || !problem.ok || problem.full) return;
+    keepPlayer(false);
+    syncSetupVisibility();
+  }
+  function renderPlayers() {
+    // A player being changed who has gone from the list (removed on another device) is a new player.
+    if (playerEdit && playerEdit.mode === "edit" && !players.some((p) => p.id === playerEdit.id)) playerEdit = { mode: "new", back: "" };
+    if (playerEdit && !players.length) playerEdit = null;
+    const mode = playerMode();
+    const chosen = mode === "pick" ? P.find(players, settings.oppEmail) : null;
+    // The name and address played with are the chosen player's as saved (changed on another device, say).
+    if (chosen && (settings.oppName !== chosen.name || settings.oppEmail !== chosen.email)) setOpponent(chosen.name, chosen.email);
+    const lit = chosen ? chosen.id : mode === "edit" ? playerEdit.id : mode === "new" ? "new" : "";
+    const chips = $("playerChips");
+    const focused = chips.contains(document.activeElement) ? document.activeElement.dataset.player : "";
+    chips.replaceChildren();
+    for (const p of players) {
+      const b = el("button", "", p.name);
+      b.type = "button"; b.dataset.player = p.id; b.title = p.email; b.setAttribute("aria-pressed", String(lit === p.id));
+      chips.append(b);
+    }
+    const add = el("button", "add", "+ New player");
+    add.type = "button"; add.dataset.player = "new"; add.setAttribute("aria-pressed", String(lit === "new"));
+    chips.append(add);
+    if (focused) { const again = [...chips.children].find((b) => b.dataset.player === focused); if (again) again.focus(); }
+    $("playerPick").classList.toggle("hidden", !players.length);
+    $("playerCard").classList.toggle("hidden", !chosen);
+    if (chosen) {
+      $("playerCardName").textContent = chosen.name;
+      $("playerCardEmail").textContent = chosen.email;
+      $("playerCardRecord").textContent = gamesLoaded ? P.recordLine(P.record(versusRecords(), chosen.email), chosen.name, new Date()) : "";
+    }
+    $("playerForm").classList.toggle("hidden", mode === "pick" || mode === "none");
+    $("playerFormBtns").classList.toggle("hidden", !playersKnown);
+    $("playerSaveBtn").textContent = mode === "edit" ? "Save changes" : "Save player";
+    $("playerCancelBtn").classList.toggle("hidden", !players.length);
+  }
+
   // Whether a game against another player can start: their email is needed, and yours has to exist so
   // the result can be sent to both of you.
   function setupProblem() {
     const email = String(settings.oppEmail || "").trim();
     if (!user || !looksLikeEmail(String(user.email || ""))) return { ok: false, text: "Your account has no email address, so the result cannot be sent to you." };
+    if (playerMode() === "none") return { ok: false, text: "Choose who you're playing, or add a new player.", quiet: true };
     if (!email) return { ok: false, text: "Type their email address to add them.", quiet: true };
     if (!looksLikeEmail(email)) return { ok: false, text: "That does not look like an email address." };
     if (email.toLowerCase() === String(user.email).toLowerCase()) return { ok: false, text: "Use their email, not yours." };
-    return { ok: true, text: "When the game is finished, the result is emailed to you (" + user.email + ") and to " + email + "." };
+    const other = playerEdit && playerEdit.mode === "edit" ? P.clash(players, email, playerEdit.id) : null;
+    if (other) return { ok: false, text: "That address is already saved for " + other.name + "." };
+    // Someone not on the list yet is kept when the game starts, unless the list is full.
+    const fresh = playersKnown && !(playerEdit && playerEdit.mode === "edit") && !P.find(players, email);
+    const full = fresh && players.length >= P.MAX;
+    return { ok: true, full, text: "When the game is finished, the result is emailed to you (" + user.email + ") and to " + email + "."
+      + (full ? " Your players list is full (" + P.MAX + "), so they are not kept: remove someone to make room." : fresh ? " They are kept in your players when the game starts." : "") };
   }
 
   function syncSetupVisibility() {
+    renderPlayers();
     const x01 = settings.kind === "x01", human = settings.opponent === "human";
     $("startScoreBox").classList.toggle("hidden", !x01);
     $("outBox").classList.toggle("hidden", !x01);
@@ -1069,6 +1282,7 @@
     $("handover").options[0].textContent = human ? "Pass to the other player automatically" : "Pass to the bot automatically";
     const problem = human ? setupProblem() : { ok: true };
     $("startBtn").disabled = human && !problem.ok;
+    $("playerSaveBtn").disabled = !human || !problem.ok || !!problem.full;
     const hint = $("oppHint");
     hint.textContent = human ? problem.text : "";
     hint.className = "muted field-note" + (human && !problem.ok && !problem.quiet ? " bad" : "");
@@ -1288,6 +1502,7 @@
     cancelAutoPass(); cancelNextGameTimer(); editing = null;
     readForm();
     if (settings.opponent === "human" && !setupProblem().ok) { syncSetupVisibility(); return; }
+    if (settings.opponent === "human") keepPlayer(true);
     match = buildMatch();
     store.remove(SERIES_KEY);
     const target = Number(settings.seriesTarget);
@@ -2880,12 +3095,14 @@
     $("userPill").classList.toggle("hidden", !u);
     renderSound(); syncSetupVisibility();
     renderBotBoard();
-    if (!u) { botToken++; stopLive(); return; }
+    if (!u) { botToken++; stopLive(); stopPlayers(); gamesLoaded = false; renderPlayers(); return; }
     // Looked for the cameras before sign-in finished: look again, for the account's camera station.
     if (camFailed && camText === "setup") { camFailed = false; if (game) render(); }
     const name = u.displayName || u.email || "Signed in";
     $("userName").textContent = name; $("userName").title = name;
     startLive(u.uid);
+    gamesLoaded = false;
+    watchPlayers();
     checkResume();
     drawGameBoard(); drawHeat([]);
     loadGames().then(retryUnsavedFromEarlier);

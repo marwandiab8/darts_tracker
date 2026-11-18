@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 const { assertFails, assertSucceeds, initializeTestEnvironment } = require("@firebase/rules-unit-testing");
-const { addDoc, collection, deleteDoc, doc, getDoc, getDocs, orderBy, query, setDoc, updateDoc, where } = require("firebase/firestore");
+const { addDoc, collection, deleteDoc, deleteField, doc, getDoc, getDocs, orderBy, query, setDoc, updateDoc, where } = require("firebase/firestore");
 
 const [host = "127.0.0.1", port = "8080"] = (process.env.FIRESTORE_EMULATOR_HOST || "127.0.0.1:8080").split(":");
 const rules = fs.readFileSync(path.resolve(__dirname, "../firestore.rules"), "utf8");
@@ -507,6 +507,25 @@ test("the games hidden from your stats: only yours, a list of ids", async () => 
   await assertFails(setDoc(ref, { ids: [], note: "x" }));
   await assertFails(getDoc(doc(asUser(other), "statsHidden", me)));
   await assertFails(setDoc(doc(asUser(other), "statsHidden", me), { ids: [] }));
+});
+
+test("your saved players: only yours, a map of at most 60", async () => {
+  const ref = doc(asUser(me), "savedPlayers", me);
+  const sam = { name: "Sam", email: "sam@example.com", addedAt: 1, usedAt: 0 };
+  await assertSucceeds(setDoc(ref, { uid: me, updatedAt: 1, players: { p1: sam } }));
+  await assertSucceeds(setDoc(ref, { uid: me, updatedAt: 2, players: { p2: { ...sam, email: "ash@example.com" } } }, { merge: true }));
+  assert.deepEqual(Object.keys((await getDoc(ref)).data().players).sort(), ["p1", "p2"]);
+  await assertSucceeds(setDoc(ref, { uid: me, updatedAt: 3, players: { p1: deleteField() } }, { merge: true }));
+  assert.deepEqual(Object.keys((await getDoc(ref)).data().players), ["p2"]);
+  await assertFails(setDoc(ref, { uid: me, players: [sam] }));
+  await assertFails(setDoc(ref, { uid: other, players: {} }));
+  await assertFails(setDoc(ref, { uid: me, players: {}, note: "x" }));
+  await assertFails(setDoc(ref, { uid: me, players: Object.fromEntries(Array.from({ length: 61 }, (_, i) => ["p" + i, sam])) }));
+  await assertSucceeds(setDoc(ref, { uid: me, players: Object.fromEntries(Array.from({ length: 60 }, (_, i) => ["p" + i, sam])) }));
+  await assertFails(getDoc(doc(asUser(other), "savedPlayers", me)));
+  await assertFails(setDoc(doc(asUser(other), "savedPlayers", me), { uid: me, players: {} }));
+  await assertFails(deleteDoc(doc(asUser(other), "savedPlayers", me)));
+  await assertSucceeds(deleteDoc(ref));
 });
 
 test("nobody else can read or change someone's live game", async () => {
