@@ -1024,7 +1024,14 @@
     // the next dart is the next visit's.
     visitDarts: 3,
     handMs: 45000,
-    afterOutMs: 3000, // and just after they are out (nobody throws again that quickly): the hand going away
+    // Just after they are out, something read is the hand going away, or the next dart: with two
+    // players the other one throws as soon as the board is clear (on Nov 17, 2026, eight darts in 14
+    // minutes landed 1.2 to 2.5 s after the take-out, and all eight were thrown away as hands). It
+    // waits to show which: a dart stays where it is. It is counted when the next dart lands somewhere
+    // else with it still there, or once it has sat untouched this long (that night's lone darts, busts,
+    // sat 2.5 to 4.3 s before the thrower came for them); a hand moves, and goes away.
+    afterOutMs: 3000,
+    soonStillMs: 2000,
     // With no darts in the board and nothing going on, the empty board is looked at again this often,
     // so it follows the light (dusk through a window, a lamp switched on).
     emptyRefreshMs: 15000,
@@ -1672,6 +1679,9 @@
     // before it), onset, seen (what was read from it, once looked at) }. See `earlierDart`.
     let pending = null;
     const WAIT = {};
+    // A dart read just after the darts came out, waiting to show it is one (see afterOutMs):
+    // { px, before, at, readings, fused, from, untouched (nothing has moved or been looked at since) }.
+    let soon = null;
     // Looks that found no dart though nothing had moved, one after another: the cameras' own noise
     // is setting the detector off (too fine a threshold for this light; on Nov 16, 2026 a learned
     // threshold of 22 did that all evening, and darts were read twice or not at all). It then asks
@@ -1708,7 +1718,7 @@
     // whole board matches it, so a hand or a person still in the picture is never taken for it).
     function takeout(events, cur, now, asEmpty) {
       const n = darts;
-      darts = 0; inBoard = []; visitCount = 0; pending = null;
+      darts = 0; inBoard = []; visitCount = 0; pending = null; soon = null;
       cams.forEach((c, i) => { c.ref = cur[i]; if (asEmpty) c.empty = cur[i]; });
       // A hand may still be at the board: the empty board is looked at again only after a quiet while,
       // and the pictures from this visit are done with (the next visit's darts are new, wherever they land).
@@ -1716,7 +1726,27 @@
       events.push({ type: "takeout", darts: n });
     }
     // After a visit's third dart, until they are out (or a while has passed): a hand at the board.
-    const handTime = (now) => (visitCount >= o.visitDarts && now - lastDartAt < o.handMs) || now - outAt < o.afterOutMs;
+    const handTime = (now) => visitCount >= o.visitDarts && now - lastDartAt < o.handMs;
+    const justOut = (now) => now - outAt < o.afterOutMs;
+    // The dart that waited (see `soon`), counted now: its event, or null if it has gone again (a hand).
+    function countSoon(cur) {
+      const s = soon;
+      soon = null;
+      if (!s || (cur && pulledOut(s, cur))) return null;
+      darts += 1; visitCount += 1; lastDartAt = s.at;
+      inBoard.push({ px: s.px, before: s.before });
+      last = s.from;
+      return Object.assign({ type: "dart", index: darts, readings: s.readings, soon: true, from: s.from }, s.fused);
+    }
+    // Whether a change (its masks) leaves the waiting dart's spot alone: a dart landing elsewhere does;
+    // a hand that shifts changes the spot itself.
+    const apart = (s, masks) => cams.every((c, i) => {
+      const px = s.px[i];
+      if (!px || !px.length) return true;
+      let hit = 0;
+      for (const k of px) if (masks[i].mask[k]) hit += 1;
+      return hit <= 0.2 * px.length;
+    });
 
     // The dart in a picture that held still for a moment before something else moved in (see
     // `calm`): `c` is that picture and the one before it (`pending`), `cur` the picture now.
@@ -1798,6 +1828,7 @@
         if (idle.length >= 4 && o.threshold + coarser < 46) { coarser += 4; idle = []; events.push({ type: "coarser", threshold: o.threshold + coarser }); }
       };
       state = "watching"; refreshedAt = now;
+      if (soon) soon.untouched = false;
       // What held still for a moment before something else moved in is looked at first (unless a
       // dart from before is still waiting: that one was seen against the board as it really was).
       const held = calm && calm.cut ? calm : first && first.cut ? first : null;
@@ -1833,6 +1864,7 @@
         if ((clear && darts > 0) || allOut(cur)) { idle = []; takeout(events, cur, now, clear); return done(events); }
         cams.forEach((c, i) => { c.ref = cur[i]; });
         darts = inBoard.length || Math.max(0, darts - 1);
+        if (soon && pulledOut(soon, cur)) soon = null; // what went away was the thing that waited: a hand
         if (!early) nothing();
         events.push({ type: "removed" });
         return done(events);
@@ -1855,13 +1887,27 @@
         events.push(Object.assign({ type: "hand", readings }, fused || {}));
         return done(events);
       }
+      // Just after the darts came out: the hand going away, or the next dart. A dart both cameras see
+      // at one spot waits to show which (see afterOutMs); anything else is the hand. Another one
+      // elsewhere, with the first still there and untouched, is two darts.
+      const another = !!soon && !pulledOut(soon, cur) && apart(soon, masks);
+      if (justOut(now) && !another) {
+        idle = [];
+        if (fused && !fused.uncertain && fused.method !== "one camera") {
+          soon = { px: readings.map((r) => sample(r && r.cluster && r.cluster.pixels)), before, at: now, readings, fused, from: last, untouched: true };
+          events.push(Object.assign({ type: "soon", readings }, fused));
+        } else events.push(Object.assign({ type: "hand", readings }, fused || {}));
+        return done(events);
+      }
       if (!fused) {
         nothing();
         events.push({ type: "unreadable", readings });
         return done(events);
       }
-      // A dart, read the usual way: if one was waiting, this is it.
+      // A dart, read the usual way: if one was waiting, this is it. One read just after the darts came
+      // out and still there goes in first.
       idle = []; pending = null;
+      if (soon) { if (another) { const s = countSoon(cur); if (s) events.push(s); } else soon = null; }
       // Long after a visit's third dart, with its take-out never seen: this is the next visit (darts out first).
       if (visitCount >= o.visitDarts) {
         events.push({ type: "takeout", darts, late: true });
@@ -1884,12 +1930,12 @@
       reset(frames, empty) {
         const cur = take(frames);
         cams.forEach((c, i) => { c.ref = cur[i]; c.prev = cur[i]; if (empty || !c.empty) c.empty = cur[i]; });
-        state = "watching"; still = 0; darts = 0; inBoard = []; visitCount = 0; history = []; calm = null; first = null; pending = null; idle = [];
+        state = "watching"; still = 0; darts = 0; inBoard = []; visitCount = 0; history = []; calm = null; first = null; pending = null; soon = null; idle = [];
       },
       markEmpty(frames) {
         const cur = take(frames);
         cams.forEach((c, i) => { c.empty = cur[i]; c.ref = cur[i]; c.prev = cur[i]; });
-        darts = 0; inBoard = []; visitCount = 0; history = []; state = "watching"; calm = null; first = null; pending = null; idle = [];
+        darts = 0; inBoard = []; visitCount = 0; history = []; state = "watching"; calm = null; first = null; pending = null; soon = null; idle = [];
       },
       push(frames, now) {
         if (!frames || frames.length !== cams.length || frames.some((f) => !f)) return [];
@@ -1910,8 +1956,11 @@
         });
         // Learn the flicker while nothing is going on (never from a dart or a hand).
         if (state === "watching" && !changed) cams.forEach((c, i) => { c.noise = Math.min(Math.max(c.noise * 0.98, motion[i]), o.changeArea * c.R2); });
+        if (soon && (moving || changed)) soon.untouched = false;
         if (state === "watching") {
           if (!changed) {
+            // The dart read just after the darts came out has sat there untouched: a dart.
+            if (soon && soon.untouched && now - soon.at >= o.soonStillMs) { const waited = Math.round(now - soon.at), e = countSoon(cur); return e ? [Object.assign(e, { ms: waited })] : []; }
             if (!moving && now - refreshedAt > o.refreshMs) { cams.forEach((c, i) => { c.ref = cur[i]; }); refreshedAt = now; }
             // Darts in the board and nothing moving: are they all out? (The end of a pull can be a
             // change too small to read, or read as a hand.) Looked at once a second.

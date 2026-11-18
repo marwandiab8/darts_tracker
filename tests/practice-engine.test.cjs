@@ -1005,7 +1005,7 @@ test("bug 4: a dart the cameras couldn't read keeps its place: S20 (unread) then
   assert.equal(out.length, 1);
   assert.equal(out[0].t, "dart");
   assert.equal(game.winner, "player", "S20 then D10: checked out, not bust");
-  assert.deepEqual(hold, { wait: 0, queue: [] });
+  assert.deepEqual({ wait: hold.wait, queue: hold.queue }, { wait: 0, queue: [] });
 });
 
 test("an unread dart never tapped in is a miss at the pull-out, before the darts held behind it", () => {
@@ -1057,6 +1057,59 @@ test("darts after the visit is over (a bust, a checkout, three darts) are not co
   assert.equal(game.darts.player.length, 1);
 });
 
+test("two players: the darts thrown after a bust are the thrower's, not the next player's, until they come out", () => {
+  // Nov 17, 2026: on 3, S1 then S2 is a bust; the third dart went in as the other player's first, the
+  // turn having passed on its timer before the darts were out, and every visit after it was off by one.
+  const game = E.createGame({ kind: "x01", startScore: 301, first: "player", bot: null });
+  game.remaining.player = 3; game.visitStart = 3;
+  const hold = E.cleanHold(null);
+  const t = 1795000000000;
+  E.cameraEvent(game, hold, { k: "d", seq: t, ...at("S1") }, true, missAt);
+  E.cameraEvent(game, hold, { k: "d", seq: t + 2400, ...at("S2") }, true, missAt);
+  assert.ok(game.visitDone && game.visitBust, "a bust");
+  assert.equal(hold.after, t + 2400, "its darts are in the board");
+  E.endVisit(game); // the turn passes on its timer
+  assert.equal(game.turn, "bot");
+  const extra = E.cameraEvent(game, hold, { k: "d", seq: t + 4800, ...at("S1") }, true, missAt);
+  assert.deepEqual(extra.map((o) => o.t + ":" + o.why), ["late:after"], "the third dart is not the other player's");
+  assert.equal(E.cameraEvent(game, hold, { k: "u", seq: t + 5000 }, true, missAt)[0].t, "late", "nor one the cameras couldn't read");
+  assert.equal(game.darts.bot.length, 0);
+  // The darts come out: the other player's darts are theirs.
+  assert.equal(E.cameraEvent(game, hold, { k: "o", seq: t + 9000 }, true, missAt)[0].t, "none");
+  assert.equal(hold.after, 0);
+  assert.equal(E.cameraEvent(game, hold, { k: "d", seq: t + 11000, ...at("T20") }, true, missAt)[0].t, "dart");
+  assert.deepEqual(game.visitDarts, ["T20"]);
+  assert.equal(game.turn, "bot");
+  // Kept with the shared game.
+  assert.equal(E.cleanHold({ wait: 0, queue: [], after: t }).after, t);
+  assert.equal(E.cleanHold({ after: "x" }).after, 0);
+});
+
+test("against the bot: a dart after your bust, while the bot throws, is not put into your next visit", () => {
+  const game = E.createGame({ kind: "x01", startScore: 301, first: "player" });
+  game.remaining.player = 20; game.visitStart = 20;
+  const hold = E.cleanHold(null);
+  E.cameraEvent(game, hold, { k: "d", seq: 1000, ...at("S20") }, true, missAt); // 20 on 20, no double: bust
+  assert.ok(game.visitBust);
+  E.endVisit(game);
+  assert.equal(E.cameraEvent(game, hold, { k: "d", seq: 3000, ...at("S5") }, false, missAt)[0].t, "late", "not queued for your turn");
+  assert.deepEqual(hold.queue, []);
+  assert.equal(E.cameraEvent(game, hold, { k: "o", seq: 6000 }, false, missAt)[0].t, "none");
+  // Pulled out, the next darts (still during the bot's visit) wait for your turn as before.
+  assert.equal(E.cameraEvent(game, hold, { k: "d", seq: 9000, ...at("D10") }, false, missAt)[0].t, "queued");
+});
+
+test("a take-out the cameras never saw: after 15 s a dart counts again", () => {
+  const game = E.createGame({ kind: "x01", startScore: 301, first: "player", bot: null });
+  game.remaining.player = 3; game.visitStart = 3;
+  const hold = E.cleanHold(null);
+  E.cameraEvent(game, hold, { k: "d", seq: 100000, ...at("T1") }, true, missAt); // 3 on 3, no double: bust
+  E.endVisit(game);
+  assert.equal(E.cameraEvent(game, hold, { k: "d", seq: 110000, ...at("S20") }, true, missAt)[0].t, "late");
+  assert.equal(E.cameraEvent(game, hold, { k: "d", seq: 116000, ...at("S20") }, true, missAt)[0].t, "dart");
+  assert.equal(hold.after, 0);
+});
+
 test("bug 2: your winning dart can be undone before the game is finished", () => {
   const game = E.createGame({ kind: "x01", startScore: 201 });
   game.remaining.player = 32; game.visitStart = 32;
@@ -1069,7 +1122,7 @@ test("bug 2: your winning dart can be undone before the game is finished", () =>
 });
 
 test("cleanHold keeps only well-formed events", () => {
-  assert.deepEqual(E.cleanHold({ wait: 9, queue: [{ k: "d", x: 0, y: 0 }, { k: "d" }, { k: "x" }, { k: "o" }] }), { wait: 3, queue: [{ k: "d", x: 0, y: 0 }, { k: "o" }] });
+  assert.deepEqual(E.cleanHold({ wait: 9, queue: [{ k: "d", x: 0, y: 0 }, { k: "d" }, { k: "x" }, { k: "o" }] }), { wait: 3, queue: [{ k: "d", x: 0, y: 0 }, { k: "o" }], after: 0 });
 });
 
 // ---- Phase 3: Board mode, fixing a dart, undo across visits, moments, the match report ------------

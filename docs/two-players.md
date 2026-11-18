@@ -25,6 +25,7 @@ Playing works as it does against the bot, with these differences:
 - Either player's last visit can be corrected: "Edit Alex's last visit" and "Edit Sam's last visit" are both shown, and correcting one leaves the other's darts as entered.
 - Scores are announced for both, in the same voice (see `docs/bot-practice.md` for how the caller's energy changes with the score - that applies here too, just without the bot's lower pitch).
 - Only your own darts, from any game type, go into "Yours" on the heat map. The second player's darts are not counted as "The bot's".
+- **With the cameras** (since Nov 18, 2026, after the Nov 17 match against Ashley lost far more darts than games against the bot): pulling the darts out passes the turn at once (no 1.2 s wait), and a dart thrown by the next player before the turn had passed is theirs. Darts thrown after a bust are the thrower's until the darts come out, and aren't counted ("thrown before the last visit's darts were out"); they used to go into the other player's visit, and every visit after it was off by one. The next player's first dart, thrown the moment the board is clear, is no longer taken for the hand going away (see "Just after the darts come out" in [camera-scoring.md](camera-scoring.md)): it is counted when their second dart lands, or once it has sat still for 2 s.
 
 ## What is saved and emailed
 

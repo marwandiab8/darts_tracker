@@ -674,7 +674,8 @@
     // What the detector made of each change, lately (station.trace, sent with the sign of life): for
     // finding out afterwards why a dart wasn't read. One short line each: the time, what it was
     // ("dart T20 overlap 0.94", "hand S5", "takeout 2", "quiet", "unreadable", "blocked", "removed",
-    // "coarser 42"), and how long the picture took to hold still. "early no: big" and the like: a
+    // "coarser 42"), and how long the picture took to hold still. "soon S18": a dart just after the
+    // take-out, waiting to show it is one; "dart S18 ... soon" when it is counted (see afterOutMs). "early no: big" and the like: a
     // picture that held still for a moment before something else moved in, and why no dart was
     // read from it (see earlierDart in board-vision.js). Kept in this browser too, so the page
     // loading itself anew (an update) doesn't lose the evening's lines.
@@ -693,7 +694,7 @@
       const d = new Date(), two = (v) => String(v).padStart(2, "0");
       const at = `${d.getHours()}:${two(d.getMinutes())}:${two(d.getSeconds())}.${Math.floor(d.getMilliseconds() / 100)}`;
       let what = e.type;
-      if (e.type === "dart" || e.type === "hand") what += ` ${e.label || "?"}${e.method ? " " + e.method : ""}${typeof e.confidence === "number" ? " " + e.confidence.toFixed(2) : ""}${e.early ? " early" + lengths(e) : ""}`;
+      if (e.type === "dart" || e.type === "hand" || e.type === "soon") what += ` ${e.label || "?"}${e.method ? " " + e.method : ""}${typeof e.confidence === "number" ? " " + e.confidence.toFixed(2) : ""}${e.early ? " early" + lengths(e) : ""}${e.type === "dart" && e.soon ? " soon" : ""}`;
       else if (e.type === "takeout") what += ` ${e.darts || 0}${e.late ? " late" : ""}`;
       else if (e.type === "coarser") what += ` ${e.threshold}`;
       else if (e.type === "error") what += " " + String(e.text || "").slice(0, 60);

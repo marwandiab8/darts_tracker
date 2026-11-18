@@ -467,13 +467,13 @@
      Cache-Control: no-cache (a real, previously-seen failure mode - see docs/bot-practice.md) is
      still forced to fetch the matching engine instead of silently pairing a new page with a stale
      one, which throws inside announce()'s catch-all and looks like "no sound at all". -->
-<script src="practice-engine.js?v=10"></script>
+<script src="practice-engine.js?v=11"></script>
 <script src="board-mode.js?v=6"></script>
 <script src="practice-timer.js?v=2"></script>
 <script src="players.js?v=1"></script>
 <script src="live-sync.js?v=1"></script>
-<script src="board-vision.js?v=11"></script>
-<script src="board-camera.js?v=13"></script>
+<script src="board-vision.js?v=12"></script>
+<script src="board-camera.js?v=14"></script>
 <script>
 (function () {
   "use strict";
@@ -2258,12 +2258,16 @@
     }
     // Your winning visit: pulling the darts out confirms it, so there's no walk to the iPad to finish.
     if (ev.k === "o" && mine && game.winner && game.winner === game.turn && game.visitDone && !editing) { persistGame(); passTurn(); return; }
+    // Two players: the visit is over and its darts are out, and the next player has thrown before the
+    // turn passed by itself (they throw as soon as the board is clear): it passes now, so the dart is theirs.
+    if (versus() && ev.k !== "o" && game.visitDone && !game.winner && !camHold.after && passTimer && !editing) passTurn();
     const out = E.cameraEvent(game, camHold, ev, mine, missPosition);
     if (out.length === 1 && out[0].t === "none") { persistGame(); return cameraSays("Camera on: watching the board."); }
     applyCamera(out);
     persistGame();
     if (game.visitDone && !game.winner && humanTurn()) {
-      if (settings.confirm && ev.k === "o" && !passTimer) passTurn();
+      // The darts are out: with Press Enter, that is Enter; with two players, the next player is up.
+      if (ev.k === "o" && (settings.confirm || versus())) passTurn();
       else if (!settings.confirm && !passTimer) scheduleAutoPass();
     }
     render();
@@ -2292,6 +2296,7 @@
       } else if (o.t === "queued") said.push(o.ev.k === "d" ? describe(o.ev.label) + ", for your turn once the bot is done" : o.ev.k === "u" ? "a dart it couldn't read, for your turn" : "darts out, for your turn");
       else if (o.t === "held") { said.push((o.ev.k === "d" ? describe(o.ev.label) : "another dart it couldn't read") + ", held until you tap in the dart it couldn't read"); warn = true; }
       else if (o.t === "wait") { said.push("a dart it couldn't read: tap where it landed (or Missed the board)"); warn = true; }
+      else if (o.t === "late" && o.why === "after") said.push((o.ev.k === "d" ? describe(o.ev.label) : "a dart") + ", thrown before the last visit's darts were out: not counted");
       else if (o.t === "late") { said.push(o.ev.k === "d" ? describe(o.ev.label) + ", not counted: this visit is over" : "a dart after this visit was over, not counted"); warn = true; }
     }
     if (said.length) cameraSays("Camera: " + said.join("; ") + ".", warn);

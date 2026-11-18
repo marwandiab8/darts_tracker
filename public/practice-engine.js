@@ -716,8 +716,8 @@
     return result;
   }
 
-  // --- camera darts in a game against the bot ------------------------------------------------------------
-  // `hold` is kept with the game (the same on every device): { wait, queue }.
+  // --- camera darts in a game (against the bot, or two players) ---------------------------------------------
+  // `hold` is kept with the game (the same on every device): { wait, queue, after }.
   //   wait   darts of your visit the cameras saw but couldn't read. The darts after them are held
   //          until you tap those in (or the darts are pulled out), so every dart goes in in the order
   //          it was thrown: on 40, S20 unread then D10 read must be S20 then D10 (a checkout), not D10
@@ -726,21 +726,43 @@
   //   queue  camera events that came while it wasn't your turn yet (the bot still throwing, its
   //          visit not closed), or that are held behind an unread dart: put in, in order, when it is
   //          your turn (releaseHold) or when the unread darts are tapped in (tappedIn).
+  //   after  a visit a camera dart ended before its third dart (a bust, a checkout) still has its darts
+  //          in the board (the station's seq of that dart, or 0). Until they come out, a dart is the same
+  //          thrower's: after a bust people throw the rest anyway. On Nov 17, 2026 such darts went to the
+  //          other player (the turn passes on a timer, before the darts are out) or, against the bot,
+  //          into your next visit. Not after AFTER_MS, as for a take-out the cameras never saw. (After a
+  //          third dart the station itself reads nothing but hands until the darts are out.)
   // An event: { k: "d", x, y, seq, label } a dart read; { k: "u", seq } a dart seen but not read;
   // { k: "o", seq } the darts pulled out. Each call returns what happened, in order:
   //   { t: "dart", result, ev }   a dart went in (result as throwDart)
   //   { t: "miss", result, ev, why }  a miss put in: "unread" (never tapped) or "unseen" (at a take-out)
   //   { t: "queued", ev } kept for your turn; { t: "held", ev } kept behind an unread dart
   //   { t: "wait", ev }   an unread dart: tap where it landed
-  //   { t: "late", ev }   after your visit was over (3 darts, a bust or a checkout): not counted
+  //   { t: "late", ev, why }  after the visit was over (3 darts, a bust or a checkout): not counted.
+  //                       why "after": the turn had passed, but the darts weren't out yet
   //   { t: "none", ev }   nothing to do (a take-out of a visit already over)
   function cleanHold(hold) {
     const wait = Math.max(0, Math.min(3, Math.round(Number(hold && hold.wait) || 0)));
     const queue = (Array.isArray(hold && hold.queue) ? hold.queue : []).filter((q) => q && (q.k === "d" ? Number.isFinite(q.x) && Number.isFinite(q.y) : q.k === "u" || q.k === "o")).slice(-12);
-    return { wait, queue };
+    const after = Number(hold && hold.after) > 0 ? Number(hold.after) : 0;
+    return { wait, queue, after };
   }
+  const AFTER_MS = 15000;
 
   function cameraEvent(game, hold, ev, mine, missAt) {
+    if (ev.k === "o") hold.after = 0;
+    else if (hold.after) {
+      if (Number(ev.seq) > hold.after + AFTER_MS) hold.after = 0;
+      else return [{ t: "late", ev, why: "after" }];
+    }
+    const out = cameraEventIn(game, hold, ev, mine, missAt);
+    // The visit is over before its third dart, and its darts are in the board (not at a take-out: those are out).
+    if (ev.k === "d" && out.some((o) => o.t === "dart") && (game.visitDone || game.winner) && game.visitDarts.length < 3) hold.after = Number(ev.seq) || 1;
+    if (ev.k === "o") hold.after = 0;
+    return out;
+  }
+
+  function cameraEventIn(game, hold, ev, mine, missAt) {
     if (!mine) {
       // A take-out while the bot throws is the pull-out of your last visit, unless darts are kept.
       if (ev.k === "o" && !hold.queue.length) return [{ t: "none", ev }];
@@ -767,7 +789,7 @@
     const miss = (why) => out.push({ t: "miss", result: throwDart(game, missAt()), ev, why });
     while (hold.wait > 0) { hold.wait -= 1; if (!game.visitDone && !game.winner) miss("unread"); }
     const queued = hold.queue.splice(0);
-    for (const q of queued) out.push(...cameraEvent(game, hold, q, true, missAt));
+    for (const q of queued) out.push(...cameraEventIn(game, hold, q, true, missAt));
     hold.wait = 0;
     while (!game.visitDone && !game.winner && game.visitDarts.length > 0 && game.visitDarts.length < 3) miss("unseen");
     return out;

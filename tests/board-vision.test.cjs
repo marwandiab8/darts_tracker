@@ -733,6 +733,93 @@ test("a hand over the darts that goes away again leaves the third dart to be cou
   assert.equal(late.events.filter((e) => e.type === "dart").length, 0, "forgotten after a long while: " + late.events.map((e) => e.type).join(","));
 });
 
+// ---- two players: the next dart as soon as the board is clear -------------------------------------
+
+// A detector that has just seen a visit's three darts pulled out: run.outAt is when it said so.
+function justPulled(seed, options) {
+  const { views, renders } = rig(seed);
+  const detector = V.createDetector(views, options);
+  const run = { now: 0, events: [], views, renders, detector };
+  run.feed = (make, times) => {
+    const out = [];
+    for (let i = 0; i < times; i += 1) { run.now += 100; out.push(...detector.push(make(i), run.now)); }
+    run.events.push(...out);
+    return out;
+  };
+  run.board = (darts) => () => renders.map((r) => flicker(r(darts)));
+  run.feed(run.board([]), 10);
+  visit.forEach((_, k) => { run.feed(run.board(visit.slice(0, k + 1)), 8); run.now += 2000; });
+  run.feed(() => renders.map((r) => withHand(flicker(r(visit)))), 6);
+  const out = run.feed(run.board([]), 6).filter((e) => e.type === "takeout");
+  assert.ok(out.length === 1 && out[0].darts === 3, "the visit's three darts out: " + run.events.map((e) => e.type).join(","));
+  run.outAt = run.now;
+  run.events.length = 0;
+  return run;
+}
+const next = [
+  { at: { x: -88, y: 52 }, lean: { x: 0.04, y: -0.22 }, spin: 0.7 },
+  { at: { x: 70, y: 75 }, lean: { x: -0.06, y: -0.28 }, spin: 1.9 },
+  { at: { x: -20, y: 128 }, lean: { x: 0.07, y: -0.18 }, spin: 2.8 },
+];
+const labelOf = (d) => V.classify(d.at.x / S.R, d.at.y / S.R).label;
+
+test("two players: a dart thrown the moment the board is clear is counted, not taken for the hand", () => {
+  // Nov 17, 2026: the other player threw as soon as the darts were out; eight first darts landed 1.2
+  // to 2.5 s after the take-out and every one was thrown away as the hand going away.
+  const run = justPulled(91);
+  run.now += 800; // it lands 0.8 s after the take-out
+  const first = run.feed(run.board(next.slice(0, 1)), 8);
+  assert.equal(first.filter((e) => e.type === "dart").length, 0, "it waits to show it is a dart: " + first.map((e) => e.type).join(","));
+  assert.ok(first.some((e) => e.type === "soon"), "and says it is waiting: " + first.map((e) => e.type).join(","));
+  run.now += 600; // the second dart 1.4 s after it: before it has sat still long enough
+  const second = run.feed(run.board(next.slice(0, 2)), 8).filter((e) => e.type === "dart");
+  assert.deepEqual(second.map((e) => e.label + " " + e.index), [labelOf(next[0]) + " 1", labelOf(next[1]) + " 2"], "the second dart brings the first with it, first");
+  assert.ok(second[0].soon && second[0].from && second[0].from.after.length === 2, "the first is marked, with the pictures it was read from");
+  run.now += 2000;
+  const third = run.feed(run.board(next), 8).filter((e) => e.type === "dart");
+  assert.deepEqual(third.map((e) => e.index), [3]);
+  run.feed(() => run.renders.map((r) => withHand(flicker(r(next)))), 6);
+  const out = run.feed(run.board([]), 8).filter((e) => e.type === "takeout");
+  assert.ok(out.length === 1 && out[0].darts === 3, "and the pull counts all three");
+});
+
+test("two players: a lone dart right after the take-out (a bust) is counted once it has sat still", () => {
+  const run = justPulled(92);
+  run.now += 1100;
+  run.feed(run.board(next.slice(0, 1)), 8);
+  assert.equal(run.events.filter((e) => e.type === "dart").length, 0, "not yet");
+  run.feed(run.board(next.slice(0, 1)), 18); // untouched for 2 s
+  const read = run.events.filter((e) => e.type === "dart");
+  assert.equal(read.length, 1, "counted: " + run.events.map((e) => e.type).join(","));
+  assert.ok(read[0].label === labelOf(next[0]) && read[0].index === 1 && read[0].soon, read[0].label);
+  // The thrower walks up and pulls it out: darts out, one.
+  run.feed(run.board(next.slice(0, 1)), 15);
+  run.feed(() => run.renders.map((r) => withHand(flicker(r(next.slice(0, 1))))), 6);
+  const out = run.feed(run.board([]), 8).filter((e) => e.type === "takeout");
+  assert.ok(out.length === 1 && out[0].darts === 1, "one dart out: " + run.events.map((e) => e.type).join(","));
+  assert.equal(run.events.filter((e) => e.type === "dart").length, 1, "and nothing else read");
+});
+
+test("the hand going away after the take-out is still no dart, however it lingers", () => {
+  // Fingers held by the board after the pull (on their own, with the board clear), then moving off.
+  const cases = [
+    ["fingers that stop and move on", [[{ x: 30, y: -60 }, 6], [{ x: 45, y: -45 }, 5], [null, 10]]],
+    ["fingers that rest for a second and a half and go", [[{ x: 10, y: -120 }, 15], [null, 10]]],
+    ["fingers that rest, shift and rest again", [[{ x: 10, y: -120 }, 8], [{ x: 14, y: -116 }, 8], [null, 10]]],
+    ["fingers that rest, then a second hand elsewhere", [[{ x: 10, y: -120 }, 8], [{ x: -60, y: 40 }, 8], [null, 10]]],
+  ];
+  cases.forEach(([name, steps], k) => {
+    const run = justPulled(93 + k);
+    for (const [p, frames] of steps) run.feed(() => run.renders.map((r, i) => (p ? withFingers(flicker(r([])), run.views[i], p) : flicker(r([])))), frames);
+    run.feed(run.board([]), 30);
+    assert.equal(run.events.filter((e) => e.type === "dart").length, 0, `${name}: no dart (${run.events.map((e) => e.type).join(",")})`);
+    // And the next visit's darts, well after, are read as usual.
+    run.now += 6000;
+    const read = run.feed(run.board(next.slice(0, 1)), 8).filter((e) => e.type === "dart");
+    assert.ok(read.length === 1 && read[0].index === 1 && !read[0].soon, `${name}: the next visit's first dart`);
+  });
+});
+
 test("the cameras' noise setting the detector off: it asks for a bigger change, settles, and reads darts again", () => {
   // A threshold finer than the cameras' noise (the rig's noise needs about 10; on Nov 16, 2026 a
   // learned 22 was under the real cameras' 30): every picture "differs" from the last, so it looks
