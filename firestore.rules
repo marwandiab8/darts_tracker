@@ -299,6 +299,44 @@ service cloud.firestore {
         && (!('undoStack' in request.resource.data) || (request.resource.data.undoStack is list && request.resource.data.undoStack.size() <= 10));
     }
 
+    // Training drills (training.html, training-engine.js): one state document per player with the
+    // drill in play (or just finished), the Undo steps (at most 10) and the bests by drill and settings.
+    match /trainingState/{uid} {
+      allow read, delete: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['uid', 'activeSession', 'undoStack', 'bests', 'updatedAt'])
+        && request.resource.data.uid == uid
+        && (!('activeSession' in request.resource.data) || request.resource.data.activeSession == null || request.resource.data.activeSession is map)
+        && (!('undoStack' in request.resource.data) || (request.resource.data.undoStack is list && request.resource.data.undoStack.size() <= 10))
+        && (!('bests' in request.resource.data) || request.resource.data.bests is map)
+        && (!('updatedAt' in request.resource.data) || request.resource.data.updatedAt is number);
+    }
+
+    // A finished drill (or one stopped part way, complete: false), as training-engine.js historyPayload
+    // writes it under its own key: the drill, its settings, the result, every dart (at most 400), the
+    // times. Owner only; a save that is tried again overwrites the same document.
+    function validTrainingSession(data) {
+      return data.keys().hasOnly(['uid', 'drill', 'drillVersion', 'settings', 'result', 'key', 'throws', 'startedAtMs', 'endedAtMs',
+          'activeMs', 'timestamp', 'localDate', 'complete', 'planRunId', 'createdAt'])
+        && data.keys().hasAll(['uid', 'drill', 'settings', 'result', 'startedAtMs', 'timestamp', 'complete'])
+        && data.uid == request.auth.uid
+        && data.drill is string && data.drill.size() >= 1 && data.drill.size() <= 40
+        && data.settings is map && data.result is map
+        && data.startedAtMs is number && data.startedAtMs > 0
+        && data.timestamp is string && data.timestamp.size() >= 10 && data.timestamp.size() <= 20
+        && data.complete is bool
+        && (!('throws' in data) || (data.throws is list && data.throws.size() <= 400))
+        && (!('key' in data) || data.key is number || data.key == null)
+        && (!('activeMs' in data) || (data.activeMs is number && data.activeMs >= 0 && data.activeMs <= 86400000))
+        && (!('planRunId' in data) || (data.planRunId is string && data.planRunId.size() <= 60));
+    }
+
+    match /trainingSessions/{sessionId} {
+      allow read, delete: if signedIn() && resource.data.uid == request.auth.uid;
+      allow create: if signedIn() && validTrainingSession(request.resource.data);
+      allow update: if signedIn() && resource.data.uid == request.auth.uid && validTrainingSession(request.resource.data);
+    }
+
     // Finished Doubles rounds, one per session key. Sessions carried over from the old My Doubles
     // Progress app keep the fields its versions wrote, and are marked importedFrom. throws: where each
     // camera dart of the round landed (for the miss map).

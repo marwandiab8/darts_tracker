@@ -1,4 +1,4 @@
-// The navigation shared by every page: <nav class="dt-nav" data-page="tracker|bot|jdc|doubles|stats|cameras">.
+// The navigation shared by every page: <nav class="dt-nav" data-page="tracker|bot|jdc|doubles|training|stats|cameras">.
 // One look across the games, each one tap away (Board mode is a button on each game's page).
 (function () {
   "use strict";
@@ -7,6 +7,7 @@
     ["bot", "practice.html", "Bot game"],
     ["jdc", "challenge.html", "JDC Challenge"],
     ["doubles", "doubles.html", "Doubles"],
+    ["training", "training.html", "Training"],
     ["stats", "stats.html", "Stats"],
     ["cameras", "camera.html", "Cameras"],
   ];

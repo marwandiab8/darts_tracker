@@ -635,3 +635,60 @@ test("Doubles sessions carried over from the old app keep their old fields", asy
   await assertSucceeds(setDoc(doc(asUser(me), "doublesSessions", "-Oold1"), { uid: me, importedFrom: "mydoublesprogress", startedAtMs: 1769323000000, startedAt: 1769323000000, durationMs: 600000, dartsUsed: 77, endedAt: 1769323600000, lastTarget: "DBULL", savedAt: 1769323600000, totalDartsPlanned: 63 }));
   await assertSucceeds(setDoc(doc(asUser(me), "doublesSessions", "-Oold2"), doublesSession({ importedFrom: "mydoublesprogress", rounds: 2 })));
 });
+
+// --- Training drills (training.html, training-engine.js) ------------------------------------------
+
+const trainingState = (overrides = {}) => ({ uid: me, activeSession: null, undoStack: [], bests: {}, updatedAt: 1, ...overrides });
+const trainingSession = (overrides = {}) => ({ uid: me, drill: "bobs27", drillVersion: 1, settings: { start: 27, playOn: false, sayScore: true }, result: { score: 41, trail: [27, 29, 41] }, key: 41,
+  throws: [{ v: 1, t: "1", k: "D1", r: "D", l: "D1", x: 0.1, y: -0.9, seq: 5, src: "cam", h: 1 }], startedAtMs: 1763600000000, endedAtMs: 1763600900000, activeMs: 800000,
+  timestamp: "2026-11-19 19:30", localDate: "2026-11-19", complete: true, createdAt: 1763600900000, ...overrides });
+
+test("a player keeps their own Training state, and nobody else can read or change it", async () => {
+  const ref = doc(asUser(me), "trainingState", me);
+  await assertSucceeds(setDoc(ref, trainingState()));
+  await assertSucceeds(setDoc(ref, trainingState({ activeSession: { meta: { startedAtMs: 1, drill: "bobs27" }, play: { score: 27 } }, undoStack: [{ id: "a", cp: {} }], bests: { "bobs27:27:stop": { key: 61 } } })));
+  await assertSucceeds(getDoc(ref));
+  await assertFails(getDoc(doc(asUser(other), "trainingState", me)));
+  await assertFails(setDoc(doc(asUser(other), "trainingState", me), trainingState({ uid: other })));
+  await assertFails(setDoc(ref, trainingState({ uid: other })));
+  await assertFails(setDoc(ref, trainingState({ extra: 1 })));
+  await assertFails(setDoc(ref, trainingState({ activeSession: "yes" })));
+  await assertFails(setDoc(ref, trainingState({ bests: [] })));
+  await assertFails(setDoc(ref, trainingState({ undoStack: Array.from({ length: 11 }, (_, i) => ({ id: String(i) })) })));
+  await assertFails(setDoc(ref, trainingState({ undoStack: "many" })));
+});
+
+test("finished training drills are saved as the page saves them, and only their owner reads or deletes them", async () => {
+  const ref = doc(asUser(me), "trainingSessions", "t1");
+  await assertSucceeds(setDoc(ref, trainingSession()));
+  await assertSucceeds(getDoc(ref));
+  await assertSucceeds(setDoc(ref, trainingSession({ key: 42 })), "a save tried again overwrites the same document");
+  await assertSucceeds(getDocs(query(collection(asUser(me), "trainingSessions"), where("uid", "==", me), where("drill", "==", "bobs27"), orderBy("startedAtMs", "asc"))));
+  await assertFails(getDoc(doc(asUser(other), "trainingSessions", "t1")));
+  await assertFails(setDoc(doc(asUser(other), "trainingSessions", "t1"), trainingSession({ uid: other })));
+  await assertFails(deleteDoc(doc(asUser(other), "trainingSessions", "t1")));
+  await assertFails(setDoc(doc(asUser(me), "trainingSessions", "t2"), trainingSession({ uid: other })));
+  // One stopped part way is kept as unfinished, with a plan run's id when it was part of a plan.
+  await assertSucceeds(setDoc(doc(asUser(me), "trainingSessions", "t3"), trainingSession({ complete: false, planRunId: "plan-1" })));
+  await assertSucceeds(deleteDoc(ref));
+});
+
+test("training sessions with the wrong shape are refused", async () => {
+  const db = asUser(me);
+  const bad = async (name, overrides) => assertFails(setDoc(doc(db, "trainingSessions", name), trainingSession(overrides)));
+  await bad("b1", { score: 5 });
+  await bad("b2", { drill: 7 });
+  await bad("b3", { drill: "" });
+  await bad("b4", { settings: "27" });
+  await bad("b5", { result: null });
+  await bad("b6", { startedAtMs: "today" });
+  await bad("b7", { timestamp: 2026 });
+  await bad("b8", { complete: "yes" });
+  await bad("b9", { throws: { s: 1 } });
+  await bad("b10", { throws: Array.from({ length: 401 }, (_, i) => ({ v: i })) });
+  await bad("b11", { key: "41" });
+  await bad("b12", { activeMs: -1 });
+  await bad("b13", { planRunId: 5 });
+  const missing = trainingSession(); delete missing.timestamp;
+  await assertFails(setDoc(doc(db, "trainingSessions", "b14"), missing));
+});
