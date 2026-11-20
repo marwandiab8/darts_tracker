@@ -81,6 +81,14 @@
   .tag { padding: 4px 9px; border-radius: 999px; background: var(--chip); border: 1px solid var(--border); font-size: 13px; font-weight: 700; color: var(--muted); }
   .buttons { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
   .buttons button { padding: 14px 6px; font-size: 16px; }
+  .buttons.darts { grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); }
+  .buttons.darts button.route { background: rgba(34,197,94,.14); color: #86efac; border: 2px solid rgba(34,197,94,.55); }
+  .buttons.darts select { font: inherit; font-weight: 800; color: var(--text); background: var(--chip); border: 1px solid var(--border); border-radius: 12px; padding: 10px; min-height: 44px; }
+  .buttons.darts .other { display: flex; gap: 6px; grid-column: span 2; }
+  .buttons.darts .other select { flex: 1; min-width: 0; }
+  .buttons.darts .other button { padding: 12px 10px; }
+  .next.co .tag { font-size: 18px; color: #86efac; border-color: rgba(34,197,94,.55); background: rgba(34,197,94,.1); }
+  .next .lbl { align-self: center; font-size: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
   .camrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
   .camnote { min-height: 22px; font-size: 15px; margin-top: 8px; overflow-wrap: anywhere; }
   .camnote.warn { color: #fca5a5; }
@@ -88,8 +96,9 @@
   .dartchips .chip { padding: 4px 10px; border-radius: 8px; background: var(--chip); border: 1px solid var(--border); font-weight: 800; }
   .dartchips .chip.hit { border-color: rgba(34,197,94,.6); color: #86efac; }
   .dartchips .chip.miss { border-color: rgba(248,113,113,.4); color: #fca5a5; }
-  .cells { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; margin-top: 12px; }
-  @media (min-width: 560px) { .cells { grid-template-columns: repeat(11, minmax(0, 1fr)); } }
+  .dartchips .chip.spare { opacity: .5; text-decoration: line-through; }
+  .cells { display: grid; grid-template-columns: repeat(var(--cols, 7), minmax(0, 1fr)); gap: 6px; margin-top: 12px; }
+  @media (min-width: 560px) { .cells { grid-template-columns: repeat(var(--cols-wide, 11), minmax(0, 1fr)); } }
   .cell { display: grid; place-items: center; gap: 1px; min-height: 46px; border-radius: 9px; background: rgba(255,255,255,.04); border: 1px solid transparent; font-weight: 800; font-variant-numeric: tabular-nums; font-size: 14px; }
   .cell small { font-size: 11px; font-weight: 700; color: var(--muted); }
   .cell.current { background: var(--accent); color: #1a1102; } .cell.current small { color: #1a1102; }
@@ -190,24 +199,31 @@
 
         <div class="scoreline">
           <div>
-            <div class="label">Score</div>
+            <div class="label" id="scoreLabel">Score</div>
             <div class="score" id="score">27</div>
           </div>
           <div class="pace" id="pace"></div>
         </div>
         <div class="now">
           <div>
-            <div class="label muted small" style="font-weight:800;letter-spacing:.06em;text-transform:uppercase">Throwing at</div>
+            <div class="label muted small" id="heroLabel" style="font-weight:800;letter-spacing:.06em;text-transform:uppercase">Throwing at</div>
             <div class="target" id="target">-</div>
           </div>
           <div class="next" id="upNext" aria-label="Up next"></div>
         </div>
         <div class="dartchips" id="camDarts" aria-label="This visit's darts"></div>
-        <div class="buttons" aria-label="How many of the 3 darts went in">
+        <div class="buttons" id="hitsRow" aria-label="How many of the 3 darts went in">
           <button class="miss" id="h0" type="button">No hits</button>
           <button class="hit" id="h1" type="button">1 hit</button>
           <button class="hit" id="h2" type="button">2 hits</button>
           <button class="hit" id="h3" type="button">3 hits</button>
+        </div>
+        <div class="buttons darts" id="dartsRow" aria-label="Enter a dart by hand" hidden>
+          <button class="route" id="p1" type="button" hidden></button>
+          <button class="route" id="p2" type="button" hidden></button>
+          <button class="route" id="p3" type="button" hidden></button>
+          <button class="miss" id="pm" type="button">Miss</button>
+          <div class="other"><select id="segPick" aria-label="Another dart"></select><button class="secondary" id="segAdd" type="button">Enter</button></div>
         </div>
         <div class="row" style="margin-top:10px">
           <button class="secondary" id="undoBtn" type="button" disabled>Undo</button>
@@ -245,7 +261,7 @@
       <h2 id="histHead">Latest sessions</h2>
       <div class="tablewrap">
         <table>
-          <thead><tr><th>Started</th><th class="num">Score</th><th>Got to</th><th class="num">Hits</th><th class="num">Time</th></tr></thead>
+          <thead><tr id="historyHead"><th>Started</th><th class="num">Score</th><th>Got to</th><th class="num">Hits</th><th class="num">Time</th></tr></thead>
           <tbody id="historyBody"></tbody>
         </table>
       </div>
@@ -258,9 +274,9 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
 <script src="practice-timer.js?v=3"></script>
 <script src="practice-engine.js?v=40"></script>
-<script src="training-engine.js?v=1"></script>
-<script src="board-mode.js?v=6"></script>
-<script src="training-board.js?v=1"></script>
+<script src="training-engine.js?v=2"></script>
+<script src="board-mode.js?v=7"></script>
+<script src="training-board.js?v=2"></script>
 <script src="board-vision.js?v=12"></script>
 <script src="board-camera.js?v=14"></script>
 <script>
@@ -329,10 +345,12 @@
       const id = `set_${s.key}`;
       const input = s.type === "boolean"
         ? `<label class="switch" for="${id}"><input type="checkbox" id="${id}"${cur[s.key] ? " checked" : ""}></label>`
-        : `<input type="number" id="${id}" value="${esc(cur[s.key])}"${s.min != null ? ` min="${s.min}"` : ""}${s.max != null ? ` max="${s.max}"` : ""} step="${s.step || 1}">`;
+        : s.type === "choice"
+          ? `<select id="${id}">${(s.options || []).map((o) => `<option value="${esc(o.value)}"${cur[s.key] === o.value ? " selected" : ""}>${esc(o.label)}</option>`).join("")}</select>`
+          : `<input type="number" id="${id}" value="${esc(cur[s.key])}"${s.min != null ? ` min="${s.min}"` : ""}${s.max != null ? ` max="${s.max}"` : ""} step="${s.step || 1}">`;
       return `<div class="setting"><label for="${id}">${esc(s.label)}</label>${input}${s.help ? `<div class="help">${esc(s.help)}</div>` : ""}</div>`;
     }).join("");
-    $("settings").querySelectorAll("input").forEach((el) => el.addEventListener("change", () => { readSettingsForm(); render(); }));
+    $("settings").querySelectorAll("input, select").forEach((el) => el.addEventListener("change", () => { readSettingsForm(); render(); }));
   }
 
   // ---- the state document: every change inside a transaction ----
@@ -409,15 +427,17 @@
         return { started: true };
       });
       $("startConfirm").hidden = true;
-      speak(`${d.name}. Throw at ${TE.target(model.state.activeSession) ? TE.target(model.state.activeSession).spoken : ""}.`);
-      note(camOn() ? "Started: the cameras are watching." : "Started. Tap how many darts went in after each visit.");
+      const t0 = model.state && model.state.activeSession ? TE.target(model.state.activeSession) : null;
+      speak(`${d.name}. ${t0 ? t0.intro || `Throw at ${t0.spoken}` : ""}.`);
+      note(camOn() ? "Started: the cameras are watching." : d.input === "darts" ? "Started. Enter each dart: the route's dart, Miss, or another dart from the list." : "Started. Tap how many darts went in after each visit.");
     } catch (e) { fail(e); }
   }
   function startTapped() {
     const a = model.state && model.state.activeSession;
     const sess = a ? TE.ensureSession(TE.clone(a), Date.now()) : null;
-    if (sess && !TE.isFinished(sess) && (sess.play.cursor || 0) > 0) {
-      $("startConfirmText").textContent = `Start over? ${TE.drillOf(sess.meta.drill).name} has ${sess.play.cursor} of 21 doubles thrown, and that will be kept as unfinished.`;
+    if (sess && !TE.isFinished(sess) && sess.throws.length > 0) {
+      const pr = TE.progress(sess);
+      $("startConfirmText").textContent = `Start over? ${TE.drillOf(sess.meta.drill).name} has ${pr.done} of ${pr.of} ${pr.unit} done, and that will be kept as unfinished.`;
       $("startConfirm").hidden = false;
       return;
     }
@@ -436,6 +456,28 @@
     }).then((r) => { if (r) afterChange(r); }).catch(fail);
   }
   ["h0", "h1", "h2", "h3"].forEach((id, n) => { $(id).onclick = () => manual(n); });
+  // One dart by hand: a label ("T20", "MISS"), or where a tap on the board landed ({ label, x, y }).
+  function manualDart(dart) {
+    return transact((u, sess, now) => {
+      if (!sess) return "Start a drill first.";
+      const r = TE.manualDart(u, sess, dart, now);
+      if (r.error) return r.error;
+      return r;
+    }).then((r) => { if (r) afterChange(r); }).catch(fail);
+  }
+  ["p1", "p2", "p3", "pm"].forEach((id) => { $(id).onclick = () => { const l = $(id).dataset.label; if (l) manualDart(l); }; });
+  $("segAdd").onclick = () => { const l = $("segPick").value; if (l) manualDart(l); };
+  (function fillSegPick() {
+    const nums = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5].slice().sort((a, b) => a - b);
+    const opts = ['<option value="">Another dart</option>', '<option value="DB">Bull (50)</option>', '<option value="SB">25</option>'];
+    for (const n of nums) for (const [r, w] of [["T", "Triple"], ["D", "Double"], ["S", "Single"]]) opts.push(`<option value="${r}${n}">${w} ${n}</option>`);
+    $("segPick").innerHTML = opts.join("");
+  })();
+  // A tap on the board in Board mode: where it landed, in board radii.
+  function boardTap(x, y) {
+    const label = window.BoardVision ? BoardVision.classify(x, y, BoardVision.APP).label : "MISS";
+    return manualDart({ label, x, y });
+  }
 
   async function doUndo() {
     try {
@@ -473,7 +515,7 @@
     let payload = null, key = null;
     await transact((u, sess, now) => {
       if (!sess) return null;
-      if (!TE.isFinished(sess) && (sess.play.cursor || 0) > 0) { payload = Object.assign({ uid }, TE.historyPayload(sess, now)); key = sess.meta.sessionKey; }
+      if (!TE.isFinished(sess) && sess.throws.length > 0) { payload = Object.assign({ uid }, TE.historyPayload(sess, now)); key = sess.meta.sessionKey; }
       u.activeSession = null;
       u.undoStack = [];
       return { stopped: true };
@@ -593,7 +635,7 @@
       const best = (st.bests && st.bests[d.pbKey(settingsFor(d.id))]) || TE.personalBest(model.history, d.id, settingsFor(d.id));
       return `<button type="button" class="drill" data-drill="${esc(d.id)}" aria-pressed="${d.id === drillId}"><span class="cat">${esc(d.category)} · ${esc(d.difficulty)}</span><span class="name">${esc(d.name)}</span><span class="blurb">${esc(d.blurb)}</span>${best ? `<span class="best">Best: ${esc(best.key)}</span>` : ""}</button>`;
     }).join("");
-    $("soon").innerHTML = "Coming next: " + ["121 Checkout Ladder", "Two-Dart Finishes", "Triple 20 Marathon", "Big Triples", "Game of 9", "Invisible Man", "Score More", "Warm-up"].map((n) => `<span>${n}</span>`).join("");
+    $("soon").innerHTML = "Coming next: " + ["Triple 20 Marathon", "Big Triples", "Game of 9", "Invisible Man", "Score More", "Warm-up"].map((n) => `<span>${n}</span>`).join("");
   }
   $("drills").addEventListener("click", (e) => {
     const b = e.target.closest("[data-drill]");
@@ -639,20 +681,35 @@
       const t = TE.target(sess);
       const best = bestFor(sess);
       $("playHead").textContent = d.name;
-      $("playSettings").textContent = d.settings.filter((s) => s.type !== "boolean" || sess.meta.settings[s.key]).map((s) => (s.type === "boolean" ? s.label : `${s.label.toLowerCase()} ${sess.meta.settings[s.key]}`)).join(" · ");
+      $("playSettings").textContent = TE.settingsText(d, sess.meta.settings);
       $("timer").textContent = TE.fmt(TE.elapsedMs(sess, now));
       $("pauseBtn").textContent = paused ? "Resume" : "Pause";
       $("timerNote").textContent = paused ? "Paused: the clock is stopped." : sess.timer.pausedBy === "idle" ? "The clock paused itself after 3 quiet minutes; the next dart starts it." : "Running: active time only.";
+      $("scoreLabel").textContent = d.scoreLabel || "Score";
       $("score").textContent = d.scoreText(sess.play);
       const pace = d.paceText ? d.paceText(sess.play, best) : null;
       $("pace").textContent = pace || (best ? `Your best: ${best.key}` : "");
       $("pace").className = "pace" + (pace && /^\+/.test(pace) ? " up" : pace && /^-/.test(pace) ? " down" : "");
-      $("target").textContent = t ? t.big : "Done";
       const view = TE.boardView(sess, { best });
-      $("upNext").innerHTML = view.next.map((k) => `<span class="tag">${esc(k)}</span>`).join("");
+      $("heroLabel").textContent = view.pullOut ? "Pull your darts out, then" : view.label || "Throwing at";
+      $("target").textContent = view.target != null ? view.target : "Done";
+      $("upNext").className = "next" + (view.nextClass === "co" ? " co" : "");
+      $("upNext").innerHTML = (view.nextLabel ? `<span class="lbl">${esc(view.nextLabel)}</span>` : "") + view.next.map((k) => `<span class="tag">${esc(k)}</span>`).join("");
       $("camDarts").innerHTML = view.darts.map((x) => `<span class="chip ${esc(x.kind)}" title="${esc(x.sub)}">${esc(x.read)}</span>`).join("")
         + (view.unseen ? Array.from({ length: view.unseen }, () => '<span class="chip miss" title="Counted as a miss">Not seen</span>').join("") : "");
-      ["h0", "h1", "h2", "h3"].forEach((id) => { $(id).disabled = paused; });
+      const pad = TE.padFor(sess);
+      $("hitsRow").hidden = view.input !== "hits";
+      $("dartsRow").hidden = view.input !== "darts";
+      for (const b of pad) {
+        const el = $(b.man);
+        if (!el) continue;
+        el.hidden = !!b.hidden;
+        el.disabled = paused || !!b.disabled;
+        if (b.label) { el.textContent = b.text; el.dataset.label = b.label; }
+      }
+      $("segAdd").disabled = paused || !!pad.find((b) => b.man === "pm").disabled;
+      $("cells").style.setProperty("--cols", String(Math.min(view.cols || view.cells.length, 7)));
+      $("cells").style.setProperty("--cols-wide", String(view.cols || Math.min(view.cells.length, 11)));
       $("cells").innerHTML = cellsHtml(view.cells);
       $("abandonBtn").disabled = false;
     }
@@ -665,36 +722,36 @@
       const res = TE.summarize(sess);
       const best = bestFor(sess);
       const isBest = !!(best && best.sessionKey === sess.meta.sessionKey) || (!best && sess.saved);
+      const ctx = { best, time: TE.fmt(TE.elapsedMs(sess, now)) };
       $("resultHead").textContent = `${d.name}: done`;
-      $("resultBig").textContent = String(res.score);
-      $("resultSub").textContent = res.finishedAll ? `All 21 doubles. ${res.hits} hits in ${res.darts} darts (${Math.round(res.hitRate * 100)}%), ${TE.fmt(TE.elapsedMs(sess, now))}.` : `Below zero at ${res.furthest === "DBULL" ? "the bull" : res.furthest} after ${res.doublesPlayed} doubles. ${res.hits} hits in ${res.darts} darts (${Math.round(res.hitRate * 100)}%).`;
+      $("resultBig").textContent = String(res[d.keyMetric.id]);
+      $("resultSub").textContent = d.resultText ? d.resultText(res, ctx) : "";
       $("newBest").hidden = !isBest;
       $("newBest").textContent = isBest ? "New best!" : "";
-      const facts = [
-        { k: "Score", v: res.score },
-        { k: "Got to", v: res.furthest === "DBULL" ? "Bull" : res.furthest || "-" },
-        { k: "Hits", v: `${res.hits} / ${res.darts}` },
-        { k: "Hit rate", v: `${Math.round(res.hitRate * 100)}%` },
-        { k: "Best so far", v: best ? best.key : res.score },
-        { k: "Time", v: TE.fmt(TE.elapsedMs(sess, now)) },
-      ];
+      const facts = d.facts ? d.facts(res, ctx) : [];
       $("facts").innerHTML = facts.map((f) => `<div class="fact"><div class="v">${esc(f.v)}</div><div class="k">${esc(f.k)}</div></div>`).join("");
-      $("resultCells").innerHTML = cellsHtml(d.cells(sess.play, null));
+      const rc = d.cells(sess.play, null), rcols = d.cols ? d.cols(sess.play) : null;
+      $("resultCells").style.setProperty("--cols", String(Math.min(rcols || rc.length, 7)));
+      $("resultCells").style.setProperty("--cols-wide", String(rcols || Math.min(rc.length, 11)));
+      $("resultCells").innerHTML = cellsHtml(rc);
     }
     renderBoardMode(st, sess);
   }
 
   function renderHistory() {
+    const d = drill();
     const rows = TE.historyRows(model.history, drillId).slice(0, 15);
     const st = model.state || {};
-    const best = st.bests && st.bests[drill().pbKey(settingsFor(drillId))];
+    const best = st.bests && st.bests[d.pbKey(settingsFor(drillId))];
+    const cols = d.historyColumns || [];
+    $("historyHead").innerHTML = "<th>Started</th>" + cols.map((c) => `<th${c.num ? ' class="num"' : ""}>${esc(c.label)}</th>`).join("") + '<th class="num">Time</th>';
     $("historyBody").innerHTML = rows.map((s) => {
-      const r = s.result || {};
       const cls = s.complete === false ? "partial" : best && best.sessionKey === s.id ? "best" : "";
+      const cells = d.historyCells ? d.historyCells(s) : [];
       return `<tr class="${cls}"><td>${s.startedAtMs ? new Date(s.startedAtMs).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "-"}${s.complete === false ? ' <span class="muted small">(unfinished)</span>' : ""}</td>` +
-        `<td class="num">${esc(s.key != null ? s.key : "-")}</td><td>${esc(r.furthest === "DBULL" ? "Bull" : r.furthest || "-")}${r.finishedAll ? " ✓" : ""}</td>` +
-        `<td class="num">${r.darts ? `${r.hits} / ${r.darts}` : "-"}</td><td class="num">${typeof s.activeMs === "number" ? TE.fmt(s.activeMs) : "-"}</td></tr>`;
-    }).join("") || '<tr><td colspan="5" class="muted">No sessions yet.</td></tr>';
+        cols.map((c, i) => `<td${c.num ? ' class="num"' : ""}>${esc(cells[i] != null ? cells[i] : "-")}</td>`).join("") +
+        `<td class="num">${typeof s.activeMs === "number" ? TE.fmt(s.activeMs) : "-"}</td></tr>`;
+    }).join("") || `<tr><td colspan="${cols.length + 2}" class="muted">No sessions yet.</td></tr>`;
   }
 
   // ---- Board mode, the voice, keeping the screen on ----
@@ -736,7 +793,12 @@
     pause: () => $("pauseBtn").click(),
     voice: () => setVoice(!voiceWanted()),
     camera: () => { const c = $("camToggle"); c.checked = !c.checked; setCamera(c.checked); },
-    manual: (man) => { const n = Number(String(man).replace(/^h/, "")); if (Number.isInteger(n)) manual(n); },
+    manual: (man) => {
+      if (/^h[0-3]$/.test(man)) return manual(Number(man.slice(1)));
+      const b = $(man);
+      if (b && b.dataset.label) manualDart(b.dataset.label);
+    },
+    boardTap,
     undo: doUndo,
     fix: fixDart,
   }) : null;
@@ -752,6 +814,8 @@
     const best = bestFor(sess);
     const res = finished ? TE.summarize(sess) : null;
     const pace = sess && !finished && d.paceText ? d.paceText(sess.play, best) : null;
+    const doneCells = res ? d.cells(sess.play, null) : [];
+    const doneCols = res ? (d.cols ? d.cols(sess.play) : doneCells.length) : 21;
     board.update({
       view: sess ? TE.boardView(sess, { best }) : null,
       modeLabel: d.name,
@@ -761,12 +825,13 @@
       undoCount: sess ? TE.undoCount(st, sess) : 0,
       note: $("camNote").textContent,
       noteWarn: $("camNote").classList.contains("warn"),
-      dartsText: sess ? `${(sess.play.cursor || 0) * 3} darts` : "",
-      oppHtml: sess && !finished ? `<div class="who">Score</div><div class="sc">${esc(d.scoreText(sess.play))}</div><div class="sub">${esc(best ? `best ${best.key}` : "first round")}</div>` : "",
+      dartsText: sess ? `${sess.throws.length} darts` : "",
+      oppHtml: sess && !finished ? `<div class="who">${esc(d.scoreLabel || "Score")}</div><div class="sc">${esc(d.scoreText(sess.play))}</div><div class="sub">${esc(best ? `best ${best.key}` : "first round")}</div>` : "",
       info: pace ? `<span class="${/^\+/.test(pace) ? "up" : /^-/.test(pace) ? "down" : "m"}">${esc(pace)}</span>` : "",
-      doneBig: res ? String(res.score) : "",
-      doneText: res ? `${d.name}: ${res.finishedAll ? "all 21 doubles" : `below zero at ${res.furthest === "DBULL" ? "the bull" : res.furthest}`}. ${res.hits} hits in ${res.darts} darts.` : "",
-      doneHtml: res ? `<div class="bm-cells" style="--bm-cols:21">${d.cells(sess.play, null).map((c) => `<div class="bm-cell ${esc(c.state)}">${esc(c.num)}${c.sub ? `<small>${esc(c.sub)}</small>` : ""}</div>`).join("")}</div>` : "",
+      pad: sess ? TE.padFor(sess) : null,
+      doneBig: res ? String(res[d.keyMetric.id]) : "",
+      doneText: res && d.doneText ? d.doneText(res) : "",
+      doneHtml: res ? `<div class="bm-cells" style="--bm-cols:${doneCols}">${doneCells.map((c) => `<div class="bm-cell ${esc(c.state)}">${esc(c.num)}${c.sub ? `<small>${esc(c.sub)}</small>` : ""}</div>`).join("")}</div>` : "",
       doneActions: [{ act: "again", text: "Play again", primary: true }, { act: "undo", text: "Undo the last visit" }, { act: "pick", text: "Another drill" }],
       idleTitle: d.name,
       lastRound: best ? `Your best: ${best.key}. Press Start for ${d.name}.` : `Press Start for ${d.name}.`,
@@ -780,7 +845,8 @@
   document.addEventListener("keydown", (e) => {
     if (e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
     if ($("playCard").hidden && !(board && boardWanted())) return;
-    if (/^[0-3]$/.test(e.key)) { e.preventDefault(); manual(Number(e.key)); }
+    if (/^[0-3]$/.test(e.key) && !$("hitsRow").hidden) { e.preventDefault(); manual(Number(e.key)); }
+    else if (e.key.toLowerCase() === "m" && !$("dartsRow").hidden) { e.preventDefault(); manualDart("MISS"); }
     else if (e.key === "Backspace" || e.key.toLowerCase() === "z") { e.preventDefault(); doUndo(); }
   });
 

@@ -428,3 +428,339 @@ test("checkout routes: the standard ones, the preferred routes as data, and the 
   assert.equal(E.routeValid(["T20", "S11", "DB"], 121, 2), false);
   assert.equal(E.routeValid(["T20", "T20", "S1"], 121, 3), false);
 });
+
+// ---- Phase 2: the checkout drills -------------------------------------------------------------------------
+function freshDrill(id, settings) {
+  const u = { uid: "me", undoStack: [] };
+  u.activeSession = E.newSession(id, settings || {}, T0, "key2");
+  return u;
+}
+const cam = (u, label, n, ring, t) => E.cameraDart(u, sess(u), dart(label, n, ring), t || T0 + 1000);
+
+test("x01 pieces: a dart busts below zero, on one, or on zero without a double; doubles and their names", () => {
+  assert.equal(E.canDouble(40), true);
+  assert.equal(E.canDouble(41), false);
+  assert.equal(E.canDouble(50), true);
+  assert.equal(E.canDouble(42), false);
+  assert.equal(E.doubleFor(16), "D8");
+  assert.equal(E.doubleFor(50), "DB");
+  assert.equal(E.doubleFor(17), null);
+  assert.deepEqual(E.x01Effect("k", 121, "T20"), { key: "k", rem: 121, pts: 60, after: 61, onDouble: false, kind: "score" });
+  assert.equal(E.x01Effect("k", 41, "T20").kind, "bust"); // below zero
+  assert.equal(E.x01Effect("k", 61, "T20").kind, "bust"); // one left
+  assert.equal(E.x01Effect("k", 20, "S20").kind, "bust"); // zero, not a double
+  assert.equal(E.x01Effect("k", 40, "D20").out, true);
+  assert.equal(E.x01Effect("k", 50, "DB").out, true);
+  assert.equal(E.x01Effect("k", 40, "MISS").kind, "miss");
+  assert.equal(E.x01Effect("k", 40, "MISS").after, 40);
+});
+
+test("the ladder: settings, the start, the route shown, the intro line", () => {
+  const d = E.drillOf("ladder121");
+  assert.ok(d && d.input === "darts" && d.category === "Doubles and checkouts");
+  assert.deepEqual(E.cleanSettings(d, {}), { start: 121, floor: 100, visits: 3, attempts: 10 });
+  assert.deepEqual(E.cleanSettings(d, { start: 500, floor: 0, visits: 9, attempts: 1 }), { start: 170, floor: 2, visits: 3, attempts: 3 });
+  const u = freshDrill("ladder121", { start: 80, floor: 120 });
+  assert.equal(play(u).floor, 80, "the floor never sits above the start");
+  const t = E.target(sess(freshDrill("ladder121")));
+  assert.equal(t.big, "121");
+  assert.deepEqual(t.route, ["T17", "T10", "D20"], "the preferred route for 121");
+  assert.equal(t.intro, "You require 121. T 17, T 10, D 20");
+  assert.deepEqual(t.lit, [{ n: 17, beds: "T" }]);
+  assert.equal(E.target(sess(u)).label, "You require");
+});
+
+test("the ladder with the cameras: a checkout on the 3rd dart moves the target up, a 4th dart is not counted", () => {
+  const u = freshDrill("ladder121");
+  let r = cam(u, "T17", 17, "T");
+  assert.equal(r.effect.kind, "score");
+  assert.equal(r.effect.after, 70);
+  assert.equal(r.scored, null);
+  assert.match(r.message, /Camera: T17 \(dart 1 of 3 at 121\)/);
+  let v = E.boardView(sess(u));
+  assert.equal(v.target, "70", "the hero shows what is left");
+  assert.equal(v.label, "You require");
+  assert.deepEqual(v.next, ["T18", "D8"], "the solver's route for 70 with the 2 darts left");
+  assert.equal(v.nextClass, "co");
+  assert.deepEqual(v.lit, [{ n: 18, beds: "T" }]);
+  assert.equal(v.countHtml, undefined, "3 darts a visit: the kit's own count");
+  r = cam(u, "T10", 10, "T");
+  assert.deepEqual(E.boardView(sess(u)).next, ["D20"], "40 left with one dart");
+  r = cam(u, "D20", 20, "D");
+  assert.ok(r.scored && r.scored.visit.out, "the 3rd dart checks out");
+  assert.equal(play(u).level, 122);
+  assert.equal(play(u).highest, 122);
+  assert.equal(play(u).outs, 1);
+  assert.deepEqual(play(u).attempts[0], { target: 121, out: true, visits: 1, darts: 3, remaining: 0 });
+  assert.equal(sess(u).say.text, "Game shot. 121 in 3 darts. Up to 122.");
+  assert.equal(r.scored.moment.big, "Up to 122");
+  assert.match(r.message, /game shot.*Pull your darts out, then 122/);
+  assert.equal(E.target(sess(u)).big, "122");
+  // A 4th dart before the take-out: not counted, and the visit still needs its take-out.
+  r = cam(u, "T20", 20, "T");
+  assert.equal(r.effect.kind, "spare");
+  assert.equal(E.boardView(sess(u)).pullOut, true);
+  const out = E.cameraTakeout(u, sess(u), takeout(3), T0 + 5000);
+  assert.equal(out.unseen, 0);
+  assert.equal(E.boardView(sess(u)).pullOut, false);
+  // The throws carry the points and the game shot.
+  assert.deepEqual(sess(u).throws.map((x) => [x.t, x.k, x.l, x.p, x.h]), [["121", "A1", "T17", 51, undefined], ["121", "A1", "T10", 30, undefined], ["121", "A1", "D20", 40, 1]]);
+  assert.equal(E.undoCount(u, sess(u)), 1);
+  assert.equal(u.undoStack[0].label, "121: game shot");
+});
+
+test("the ladder: a checkout in 2 darts ends the visit early; a 3rd dart and the take-out add nothing", () => {
+  const u = freshDrill("ladder121", { start: 100 });
+  assert.deepEqual(E.target(sess(u)).route, ["T20", "D20"]);
+  cam(u, "T20", 20, "T");
+  const r = cam(u, "D20", 20, "D");
+  assert.ok(r.scored && r.scored.visit.out && r.scored.visit.attemptDarts === 2);
+  assert.equal(play(u).level, 101);
+  assert.equal(cam(u, "S5", 5, "S").effect.kind, "spare", "a dart after the checkout is not counted");
+  const out = E.cameraTakeout(u, sess(u), takeout(3), T0 + 5000);
+  assert.equal(out.unseen, 0, "nothing unseen is added to a visit that had ended");
+  assert.equal(sess(u).throws.length, 2);
+  assert.equal(play(u).attempt.target, 101);
+  assert.equal(E.target(sess(u)).remaining, 101);
+});
+
+test("the ladder: a bust ends the visit and puts the score back; three failed visits move the target down, never below the floor", () => {
+  const u = freshDrill("ladder121", { attempts: 3 });
+  cam(u, "S20", 20, "S"); // 101
+  cam(u, "T20", 20, "T"); // 41
+  let r = cam(u, "D20", 20, "D"); // 1 left: bust
+  assert.equal(r.effect.kind, "bust");
+  assert.ok(r.scored, "the bust scores the visit (0) at once");
+  assert.equal(play(u).attempt.remaining, 121, "back to the start of the visit");
+  assert.equal(play(u).attempt.visits, 1);
+  assert.equal(sess(u).say.text, "Bust. You require 121.");
+  assert.equal(E.boardView(sess(u)).darts.map((d) => d.sub).join("|"), "20. Left 101|60. Left 41|Bust");
+  E.cameraTakeout(u, sess(u), takeout(3), T0 + 2000);
+  // Visit 2: a dart unseen at the take-out is a miss (no score), the other two count.
+  cam(u, "T20", 20, "T"); cam(u, "S20", 20, "S");
+  r = E.cameraTakeout(u, sess(u), takeout(3), T0 + 3000);
+  assert.equal(r.unseen, 1);
+  assert.equal(play(u).attempt.remaining, 41);
+  assert.equal(sess(u).say.text, "80. You require 41.");
+  // Visit 3: 41 is T7 D10 (any valid 2-dart route); a miss and two singles: not out, down to 120.
+  cam(u, "MISS", null); cam(u, "S1", 1, "S"); r = cam(u, "S1", 1, "S");
+  assert.ok(r.scored.visit.done && !r.scored.visit.out);
+  assert.equal(play(u).level, 120);
+  assert.equal(sess(u).say.text, "2. Not this time. Down to 120.");
+  assert.deepEqual(play(u).attempts[0], { target: 121, out: false, visits: 3, darts: 9, remaining: 39 });
+  assert.equal(E.target(sess(u)).big, "120");
+  assert.equal(E.boardView(sess(u)).cells.map((c) => c.state + ":" + c.num).join(" "), "done h0:121 current:120 todo:·");
+  E.cameraTakeout(u, sess(u), takeout(3), T0 + 4000);
+  // The floor: a round that starts on the floor stays there after a failure.
+  const f = freshDrill("ladder121", { start: 100, floor: 100, visits: 1, attempts: 3 });
+  cam(f, "S1", 1, "S"); cam(f, "S1", 1, "S"); cam(f, "S1", 1, "S");
+  assert.equal(play(f).level, 100);
+  assert.equal(play(f).highest, 100);
+  E.cameraTakeout(f, sess(f), takeout(3), T0 + 4050);
+  // Round over after the attempts: finished, paused, a result with the highest target.
+  cam(f, "S1", 1, "S"); cam(f, "S1", 1, "S"); cam(f, "S1", 1, "S");
+  E.cameraTakeout(f, sess(f), takeout(3), T0 + 4100);
+  cam(f, "T20", 20, "T"); const last = cam(f, "D20", 20, "D");
+  assert.ok(last.scored.over && E.isFinished(sess(f)));
+  assert.equal(sess(f).say.text, "Game shot. 100 in 2 darts. Done. Highest 101.");
+  const res = E.summarize(sess(f));
+  assert.equal(res.highest, 101);
+  assert.equal(res.level, 101);
+  assert.equal(res.outs, 1);
+  assert.equal(res.attempts, 3);
+  assert.deepEqual(res.perNumber, { 100: { tries: 3, outs: 1 } });
+  assert.deepEqual(res.bestOut, { target: 100, darts: 2 });
+  assert.deepEqual(res.trail, [100, 100, 100, 101]);
+  const pay = E.historyPayload(sess(f), T0 + 9000);
+  assert.equal(pay.key, 101);
+  assert.equal(pay.complete, true);
+  assert.equal(E.drillOf("ladder121").pbKey(pay.settings), "ladder121:100:100:1:3");
+  assert.equal(cam(f, "T20", 20, "T").message, "The drill is finished.");
+});
+
+test("the ladder by hand: the route's dart or Miss, one at a time; the hits buttons are for the other drills", () => {
+  const u = freshDrill("ladder121");
+  assert.match(E.manualVisit(u, sess(u), 2, T0).error, /one dart at a time/);
+  assert.match(E.manualDart(freshDrill("bobs27"), freshDrill("bobs27").activeSession, "D1", T0).error, /how many darts went in/);
+  let pad = E.padFor(sess(u));
+  assert.deepEqual(pad.filter((b) => !b.hidden).map((b) => b.man + ":" + b.text), ["p1:T17", "p2:T10", "p3:D20", "pm:Miss"]);
+  let r = E.manualDart(u, sess(u), "T17", T0 + 1000);
+  assert.equal(r.effect.after, 70);
+  assert.match(r.message, /^By hand: T17/);
+  pad = E.padFor(sess(u));
+  assert.deepEqual(pad.filter((b) => !b.hidden).map((b) => b.text), ["T18", "D8", "Miss"]);
+  r = E.manualDart(u, sess(u), "MISS", T0 + 1100);
+  assert.equal(r.effect.kind, "miss");
+  assert.equal(E.boardView(sess(u)).darts[1].read, "Miss");
+  assert.equal(E.boardView(sess(u)).darts[1].byHand, true);
+  // A tap on the board: where it landed.
+  const p = at(20, "T");
+  r = E.manualDart(u, sess(u), { label: "T20", x: p.x, y: p.y }, T0 + 1200);
+  assert.ok(r.scored, "the 3rd dart scores the visit");
+  assert.equal(play(u).attempt.remaining, 10);
+  assert.deepEqual(sess(u).throws.map((x) => x.src), ["btn", "btn", "btn"]);
+  // A visit entered wholly by hand has no take-out coming: the buttons stay live and the next dart
+  // starts the next visit.
+  assert.equal(E.padFor(sess(u)).find((b) => b.man === "pm").disabled, false);
+  assert.equal(E.boardView(sess(u)).pullOut, false);
+  r = E.manualDart(u, sess(u), "S2", T0 + 1500); // 8 left, visit 2
+  assert.ok(!r.error && r.effect.after === 8);
+  assert.equal(sess(u).cam.visit.darts.length, 1);
+  // By hand and the cameras in one visit: a camera dart joins the darts entered by hand, and that
+  // visit then waits for the darts to come out.
+  r = cam(u, "D4", 4, "D", T0 + 1600);
+  assert.ok(r.scored && r.scored.visit.out);
+  assert.equal(play(u).level, 122);
+  assert.equal(E.padFor(sess(u)).find((b) => b.man === "pm").disabled, true, "a camera dart was in it: wait for the take-out");
+  assert.match(E.manualDart(u, sess(u), "D5", T0 + 1700).error, /not counted/);
+  E.cameraTakeout(u, sess(u), takeout(3), T0 + 1800);
+  assert.equal(E.padFor(sess(u)).find((b) => b.man === "pm").disabled, false);
+});
+
+test("the ladder: fixing a dart scores the visit again; a dart after a bust comes back to life when the bust goes", () => {
+  const u = freshDrill("ladder121");
+  cam(u, "T20", 20, "T"); // 61
+  let r = cam(u, "T20", 20, "T"); // 1 left: bust, the visit is over
+  assert.equal(r.effect.kind, "bust");
+  assert.equal(E.undoCount(u, sess(u)), 1);
+  // The second dart was really a single 20: no bust, the visit goes on.
+  const seq2 = sess(u).cam.visit.darts[1].s;
+  r = E.fixDart(u, sess(u), 1, seq2, Object.assign({ label: "S20" }, at(20, "S")), T0 + 2000);
+  assert.ok(!r.error && r.changed);
+  assert.equal(r.scored, null, "two darts in: the visit is open again");
+  assert.equal(E.undoCount(u, sess(u)), 0, "the visit's undo step went with its score");
+  assert.equal(play(u).attempt.remaining, 121);
+  assert.deepEqual(E.boardView(sess(u)).next, [], "41 left with one dart: no finish");
+  assert.equal(E.boardView(sess(u)).nextLabel, "No finish in 1");
+  r = cam(u, "T7", 7, "T"); // 20 left
+  assert.ok(r.scored && !r.scored.visit.bust);
+  assert.equal(play(u).attempt.remaining, 20);
+  assert.equal(E.undoCount(u, sess(u)), 1);
+  // Fix the 3rd dart to a bust: the visit scores again as a bust, back to 121.
+  const seq3 = sess(u).cam.visit.darts[2].s;
+  r = E.fixDart(u, sess(u), 2, seq3, Object.assign({ label: "T20" }, at(20, "T")), T0 + 2100);
+  assert.ok(r.scored && r.scored.visit.bust);
+  assert.equal(play(u).attempt.remaining, 121);
+  assert.equal(E.undoCount(u, sess(u)), 1);
+  assert.equal(u.undoStack[0].label, "121: bust");
+  // Fixing the 1st dart to a bust makes the darts after it spares.
+  const seq1 = sess(u).cam.visit.darts[0].s;
+  r = E.fixDart(u, sess(u), 0, seq1, Object.assign({ label: "T20" }, at(20, "T")), T0 + 2200);
+  const b = E.boardView(sess(u));
+  assert.equal(b.darts.length, 3);
+  assert.equal(b.darts[0].kind, "hit", "60 scored is shown as a good dart");
+  // 121 - 60 = 61, then S20 leaves 41, then T20 busts: the visit still ends on the 3rd dart as a bust.
+  assert.equal(b.darts[2].sub, "Bust");
+  // Make dart 2 a T20 as well: 61 - 60 = 1, a bust on dart 2, so dart 3 is a spare.
+  r = E.fixDart(u, sess(u), 1, seq2, Object.assign({ label: "T20" }, at(20, "T")), T0 + 2300);
+  const b2 = E.boardView(sess(u));
+  assert.equal(b2.darts[1].sub, "Bust");
+  assert.equal(b2.darts[2].kind, "spare");
+  assert.equal(sess(u).throws.length, 2, "only the two live darts are in the log");
+  // Fix options for an x01 dart: the route's dart, the beds where it landed, a miss, another number.
+  const opts = E.fixOptions(b2.darts[2], b2).map((o) => o.id);
+  assert.deepEqual(opts, ["remove"], "a spare can only be removed");
+  const opts1 = E.fixOptions(b2.darts[0], b2).map((o) => o.id);
+  assert.deepEqual(opts1, ["T17", "T20", "D20", "S20", "MISS", "other", "remove"]);
+  // Undo takes the whole visit back.
+  const un = E.undoStep(u, sess(u), T0 + 2400);
+  assert.ok(!un.error);
+  assert.equal(sess(u).throws.length, 0);
+  assert.equal(sess(u).say.text, "Undone. You require 121.");
+});
+
+test("Two-Dart Finishes: the range, the order, and a try of two darts scored in parts", () => {
+  const d = E.drillOf("twodart");
+  assert.deepEqual(E.cleanSettings(d, {}), { from: 61, to: 70, order: "up", rounds: 1 });
+  assert.equal(E.cleanSettings(d, { order: "sideways" }).order, "up");
+  const u = freshDrill("twodart");
+  assert.deepEqual(play(u).queue, [61, 62, 63, 64, 65, 66, 67, 68, 69, 70]);
+  const r1 = freshDrill("twodart", { order: "random" }), r2 = freshDrill("twodart", { order: "random" });
+  assert.deepEqual(play(r1).queue, play(r2).queue, "the shuffle is fixed by the start time, so every device agrees");
+  assert.notDeepEqual(play(r1).queue, play(u).queue);
+  assert.deepEqual(play(r1).queue.slice().sort((a, b) => a - b), play(u).queue);
+  assert.equal(play(freshDrill("twodart", { from: 70, to: 61, rounds: 2 })).queue.length, 20);
+  assert.equal(d.pbKey({ from: 70, to: 61, rounds: 2 }), "twodart:61:70:2");
+  let t = E.target(sess(u));
+  assert.equal(t.big, "61");
+  assert.deepEqual(t.route, ["T15", "D8"]);
+  assert.equal(t.intro, "61. T 15, D 8");
+  let v = E.boardView(sess(u));
+  assert.equal(v.countHtml, "Dart 1 <span>of 2</span>");
+  assert.equal(v.label, "Finish");
+  // 61: T15 (16 left, the setup), then D8: game shot.
+  let r = cam(u, "T15", 15, "T");
+  assert.equal(r.effect.setup, true);
+  assert.equal(r.scored, null);
+  v = E.boardView(sess(u));
+  assert.equal(v.target, "16");
+  assert.equal(v.label, "Left");
+  assert.deepEqual(v.next, ["D8"]);
+  assert.equal(v.darts[0].sub, "45. Left 16: D8");
+  assert.deepEqual(E.padFor(sess(u)).filter((b) => !b.hidden).map((b) => b.text), ["D8", "Miss"]);
+  r = cam(u, "D8", 8, "D");
+  assert.ok(r.scored && r.scored.visit.out, "the 2nd dart ends the try");
+  assert.equal(play(u).outs, 1);
+  assert.equal(sess(u).say.text, "61. Game shot. Next, 62.");
+  assert.equal(r.scored.moment.big, "Game shot");
+  assert.equal(cam(u, "S1", 1, "S").effect.kind, "spare", "a 3rd dart before the take-out is not counted");
+  E.cameraTakeout(u, sess(u), takeout(3), T0 + 2000);
+  // 62: T10 D16 is the route; S10 leaves 52, no double: setup missed, and the 2nd dart ends the try.
+  assert.deepEqual(E.target(sess(u)).route, ["T10", "D16"]);
+  r = cam(u, "S10", 10, "S");
+  assert.equal(r.effect.setup, false);
+  assert.equal(E.boardView(sess(u)).nextLabel, "No finish");
+  r = cam(u, "T20", 20, "T");
+  assert.equal(r.effect.kind, "miss", "a 2nd dart that is not the finish is a miss, whatever it scored");
+  assert.ok(r.scored && !r.scored.visit.out && !r.scored.visit.setup);
+  assert.equal(sess(u).say.text, "62. Setup missed. Next, 63.");
+  E.cameraTakeout(u, sess(u), takeout(2), T0 + 3000);
+  // 63: T13 D12. The setup hit, the double missed into the single.
+  cam(u, "T13", 13, "T");
+  r = cam(u, "S12", 12, "S");
+  assert.ok(r.scored.visit.setup && !r.scored.visit.out);
+  assert.equal(sess(u).say.text, "63. Left D 12. Missed. Next, 64.");
+  assert.equal(E.boardView(sess(u)).darts[1].sub, "Missed D12");
+  E.cameraTakeout(u, sess(u), takeout(2), T0 + 4000);
+  // 64: one dart seen, then the darts come out: the dart not seen is a miss and the try is over.
+  cam(u, "T16", 16, "T");
+  r = E.cameraTakeout(u, sess(u), takeout(2), T0 + 5000);
+  assert.equal(r.unseen, 1);
+  assert.equal(play(u).cursor, 4);
+  assert.equal(play(u).setups, 3);
+  assert.equal(E.boardView(sess(u)).cells.slice(0, 5).map((c) => c.state + ":" + c.sub).join(" "), "done h3:in done h0:setup no done h1:D12 no done h1:D8 no current:T11 D16");
+  // Through the rest by hand, then the result.
+  for (let k = 0; k < 6; k += 1) { E.manualDart(u, sess(u), "S1", T0 + 6000 + k); E.manualDart(u, sess(u), "MISS", T0 + 6500 + k); }
+  assert.ok(E.isFinished(sess(u)));
+  assert.equal(sess(u).say.text, "70. Setup missed. Done. 1 finish.");
+  const res = E.summarize(sess(u));
+  assert.equal(res.outs, 1);
+  assert.equal(res.tries, 10);
+  assert.equal(res.setups, 3);
+  assert.equal(res.doublesHit, 1);
+  assert.deepEqual(res.perNumber[61], { tries: 1, outs: 1, setups: 1 });
+  assert.deepEqual(res.perNumber[64], { tries: 1, outs: 0, setups: 1 });
+  assert.equal(res.darts, 20);
+  assert.equal(E.historyPayload(sess(u), T0 + 9000).key, 1);
+  assert.equal(sess(u).throws.length, 20);
+  assert.equal(E.isNewBest("twodart", 1, null), true);
+  assert.equal(E.isNewBest("twodart", 1, { key: 1 }), false);
+});
+
+test("the strip columns, the progress and the settings line for each drill", () => {
+  const l = freshDrill("ladder121", { attempts: 12 }), t = freshDrill("twodart", { rounds: 2 }), b = freshDrill("bobs27");
+  assert.equal(E.boardView(sess(l)).cols, 10);
+  assert.equal(E.boardView(sess(l)).cells.length, 12);
+  assert.equal(E.boardView(sess(t)).cols, 10);
+  assert.equal(E.boardView(sess(t)).cells.length, 20);
+  assert.equal(E.boardView(sess(b)).cols, undefined);
+  assert.deepEqual(E.progress(sess(l)), { done: 0, of: 12, unit: "targets" });
+  assert.deepEqual(E.progress(sess(t)), { done: 0, of: 20, unit: "finishes" });
+  assert.deepEqual(E.progress(sess(b)), { done: 0, of: 21, unit: "doubles" });
+  assert.equal(E.settingsText(E.drillOf("twodart"), sess(t).meta.settings), "from 61 · to 70 · In order · times through the range 2");
+  assert.equal(E.settingsText(E.drillOf("bobs27"), sess(b).meta.settings), "starting score 27 · Say the score after each double");
+  assert.equal(E.boardView(sess(l)).capHtml, "<strong>0</strong> of 0 checked out · highest 121");
+  assert.equal(E.readLabel("DB"), "Bull");
+  assert.equal(E.speakLabel("T20"), "T 20");
+  assert.equal(E.speakLabel("S5"), "5");
+});

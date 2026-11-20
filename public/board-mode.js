@@ -21,7 +21,8 @@
 //   fixOptions(dart, view) -> [{ id, text, hit, cur }]  ("other" opens the numbers, "remove" removes)
 //   fixSub(dart, view) -> text;  fixValue(id, dart, view) -> what handlers.fix gets
 //   curNote      what marks the option the dart is now ("what the cameras saw")
-//   pickRing     "Another number" asks for the ring as well (where every bed scores)
+//   pickRing     "Another number" asks for the ring as well (where every bed scores); a function of
+//                the view decides per drill
 // Also in the model: oppHtml (the other side's score, beside the target); in the view: nextLabel
 // (the chips' label, "Next" by default, shown as they are), labelClass, targetClass ("you" | "bot": the
 // big number's colour), nextClass ("co": the chips are a checkout, shown big and green), cols (the strip's columns),
@@ -266,8 +267,9 @@
     function numbersPicker() {
       ref.sheetSub.textContent = "Which number did it land in?";
       // With cfg.pickRing, a number then asks for its ring (the bot game, where every bed scores).
-      const attr = cfg.pickRing ? "data-num" : "data-fix";
-      const nums = SEG.slice().sort((a, b) => a - b).map((n) => `<button type="button" class="bm-num" ${attr}="${cfg.pickRing ? n : "S" + n}">${n}</button>`).join("");
+      const pickRing = typeof cfg.pickRing === "function" ? !!cfg.pickRing(model && model.view) : !!cfg.pickRing;
+      const attr = pickRing ? "data-num" : "data-fix";
+      const nums = SEG.slice().sort((a, b) => a - b).map((n) => `<button type="button" class="bm-num" ${attr}="${pickRing ? n : "S" + n}">${n}</button>`).join("");
       ref.opts.innerHTML = `<div class="bm-nums">${nums}<button type="button" class="bm-num" data-fix="SB">25</button><button type="button" class="bm-num" data-fix="DB">Bull</button></div>`;
     }
     function ringPicker(n) {
@@ -380,6 +382,8 @@
             b.disabled = !!(m.paused || v.finished || (o && o.disabled));
             b.hidden = !!(o && o.hidden);
           });
+          // The grid's columns follow the buttons shown (a drill may hide some of the pad).
+          ref.pad.style.setProperty("--bm-pad", String(ref.pad.querySelectorAll("button:not([hidden])").length));
         }
         // The end of the round.
         if (v.finished) {
@@ -406,7 +410,8 @@
         ref.count.innerHTML = v.countHtml != null ? v.countHtml : v.finished ? "" : v.pullOut ? "Next visit" : `Dart ${v.dartNo} <span>of 3</span>`;
         ref.info.innerHTML = m.info || "";
         show(ref.info, !!m.info);
-        ref.next.innerHTML = v.next && v.next.length ? `<b>${esc(v.nextLabel || "Next")}</b>` + v.next.map((k) => `<span>${esc(v.nextLabel ? k : big(k))}</span>`).join("") : "";
+        // The chips (the next targets, or a checkout route), or the label alone when it has something to say ("No finish").
+        ref.next.innerHTML = (v.next && v.next.length) || v.nextLabel ? `<b>${esc(v.nextLabel || "Next")}</b>` + (v.next || []).map((k) => `<span>${esc(v.nextLabel ? k : big(k))}</span>`).join("") : "";
         ref.opp.innerHTML = m.oppHtml || "";
         show(ref.opp, !!m.oppHtml);
         ref.label.className = "bm-label" + (v.labelClass ? " " + v.labelClass : "");
