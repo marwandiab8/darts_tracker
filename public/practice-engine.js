@@ -345,15 +345,18 @@
     } else if (CRICKET_NUMBERS.includes(hit.target === "BULL" ? 25 : Number(hit.target))) {
       const number = hit.target === "BULL" ? 25 : Number(hit.target);
       const opponent = other(who);
+      // A mark counts when it goes on the board or scores. One on a number both sides have closed is
+      // dead: it neither marks nor scores, so it isn't said or counted in marks per round (Nov 20, 2026:
+      // a T20 that closed the 20 with its other two marks dead was called "three marks").
       for (let mark = 0; mark < hit.mult; mark += 1) {
-        game.visitMarks += 1;
-        game.marksThrown[who] += 1;
         if (game.marks[who][number] < 3) {
           game.marks[who][number] += 1;
         } else if (game.marks[opponent][number] < 3) {
           game.points[who] += number;
           game.visitPoints += number;
-        }
+        } else continue;
+        game.visitMarks += 1;
+        game.marksThrown[who] += 1;
       }
       if (cricketClosedAll(game.marks[who]) && game.points[who] >= game.points[opponent]) {
         game.winner = who;
