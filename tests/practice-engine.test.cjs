@@ -1253,31 +1253,97 @@ test("cleanHold keeps only well-formed events", () => {
 {
   const at4 = (label) => (label === "MISS" ? { x: 0, y: -1.1 } : E.aimPoint(label.slice(1), label[0]));
 
-  test("the real-board bot plays at its level's average (a 501 simulation)", () => {
-    const run = (level, style, legs, seed) => {
-      const rng = E.mulberry32(seed);
-      let pts = 0, darts = 0;
-      for (let k = 0; k < legs; k += 1) {
-        const g = E.createGame({ kind: "x01", startScore: 501, first: "bot", bot: { level, style } });
-        let guard = 0;
-        while (!g.winner && guard++ < 300) {
+  // The bot against an equal player (the same bot, through the same throw), legs of 501, who throws first
+  // alternating: the bot's numbers the way a real player's are counted, over the legs it won and the legs
+  // it lost (a bust as three darts). That is what a level's average means since model 4 (Nov 20, 2026).
+  function botVsEqual(botOptions, legs, seed) {
+    const rng = E.mulberry32(seed);
+    let scored = 0, used = 0, f9s = 0, f9d = 0, hits = 0, atDouble = 0, wild = 0, darts = 0, wins = 0;
+    for (let leg = 0; leg < legs; leg += 1) {
+      const g = E.createGame({ kind: "x01", startScore: 501, doubleOut: true, first: leg % 2 ? "bot" : "player", bot: botOptions });
+      const p = E.botParams(g.bot.target, g.bot.style, g.botModel);
+      let guard = 0;
+      while (!g.winner && guard++ < 5000) {
+        while (!g.visitDone) {
+          if (g.turn === "player") { E.throwDart(g, E.spreadThrow(E.botAim(g), p.s, p.d, g.botModel, rng)); continue; }
+          const aim = E.botAim(g), n = g.darts.bot.length;
           E.throwDart(g, E.botDart(g, "club", rng));
-          if (g.visitDone) { E.endVisit(g); g.turn = "bot"; g.visitStart = g.remaining.bot; }
+          darts += 1;
+          if (aim.ring === "T" && aim.target === "20" && !/^[STD](20|1|5)$/.test(g.darts.bot[n].s)) wild += 1;
         }
-        pts += 501; darts += g.visits.reduce((n, v) => n + (v.bust ? 3 : v.darts.length), 0);
+        E.endVisit(g);
       }
-      return (pts * 3) / darts;
+      if (g.winner === "bot") wins += 1;
+      const r = E.legReport(g, "bot");
+      hits += r.checkout.hits; atDouble += r.checkout.darts;
+      let k = 0;
+      for (const v of g.visits) {
+        if (v.who !== "bot") continue;
+        const nd = v.bust ? 3 : v.darts.length;
+        scored += v.scored; used += nd;
+        if (k < 3) { f9s += v.scored; f9d += nd; }
+        k += 1;
+      }
+    }
+    return { avg: (scored * 3) / used, first9: (f9s * 3) / f9d, checkout: hits / atDouble, atDouble, wild: wild / darts, won: wins / legs };
+  }
+
+  test("model 4: each level shows its average against an equal player, and finishes like a real player at that average", () => {
+    // Real players, checkout as darts at a double that win the leg: the PDC's 40% at an average of about
+    // 97 (Haugh & Wang, 2019 season), Marwan's 19% at 50.9 (his cameras, first 9 57.0); club players
+    // 10-25%. Model 3 measured the bot alone, every leg to the end, so its Beginner "30" showed 36 against
+    // an equal player, with a first 9 of 43.
+    const want = { beginner: [30, 0.045, 0.09, 33, 41], casual: [42, 0.09, 0.15, 45, 52], club: [53, 0.15, 0.23, 56, 63], league: [72, 0.24, 0.34, 76, 84], pro: [95, 0.35, 0.46, 99, 110] };
+    for (const [level, [avg, lo, hi, f9lo, f9hi]] of Object.entries(want)) {
+      const r = botVsEqual({ level }, 400, 7 + avg);
+      assert.ok(Math.abs(r.avg - avg) < 2.5, level + " shows about " + avg + ": " + r.avg.toFixed(1));
+      assert.ok(r.checkout >= lo && r.checkout <= hi, level + " checks out " + (r.checkout * 100).toFixed(1) + "% of its darts at a double (" + lo + "-" + hi + ")");
+      assert.ok(r.first9 >= f9lo && r.first9 <= f9hi, level + "'s first 9: " + r.first9.toFixed(1) + " (" + f9lo + "-" + f9hi + ")");
+      const table = E.botParams(avg, "standard");
+      // Three standard errors of the darts measured (a Pro has only about 450 darts at a double in 400 legs).
+      const se = Math.sqrt((table.checkout * (1 - table.checkout)) / r.atDouble);
+      assert.ok(Math.abs(table.checkout - r.checkout) < 3 * se + 0.005 && Math.abs(table.first9 - r.first9) < 3, level + ": the table says " + (table.checkout * 100).toFixed(1) + "% and " + table.first9.toFixed(1) + ", measured " + (r.checkout * 100).toFixed(1) + "% and " + r.first9.toFixed(1));
+      assert.ok(r.won > 0.4 && r.won < 0.6, level + " wins about half its legs against an equal player: " + r.won.toFixed(2));
+    }
+    const custom = botVsEqual({ level: "custom", target: 60 }, 400, 60);
+    assert.ok(Math.abs(custom.avg - 60) < 2.5 && custom.checkout > 0.18 && custom.checkout < 0.27, "a 60-average bot: " + custom.avg.toFixed(1) + ", " + (custom.checkout * 100).toFixed(0) + "% at a double");
+    const grinder = botVsEqual({ level: "club", style: "grinder" }, 400, 11), scorer = botVsEqual({ level: "club", style: "scorer" }, 400, 12);
+    assert.ok(Math.abs(grinder.avg - 53) < 2.5 && Math.abs(scorer.avg - 53) < 2.5, "the styles show the same average: " + grinder.avg.toFixed(1) + " / " + scorer.avg.toFixed(1));
+    assert.ok(grinder.checkout > scorer.checkout + 0.06 && grinder.first9 < scorer.first9 - 2, "a grinder finishes better and scores less, a scorer the other way: " + (grinder.checkout * 100).toFixed(0) + "% / " + (scorer.checkout * 100).toFixed(0) + "%, first 9 " + grinder.first9.toFixed(1) + " / " + scorer.first9.toFixed(1));
+    const beginner = botVsEqual({ level: "beginner" }, 150, 3);
+    assert.ok(beginner.wild > 0.05, "a beginner's darts stray beyond the 20, 1 and 5: " + (beginner.wild * 100).toFixed(1) + "%");
+  });
+
+  test("model 4 against a player like Marwan (51 average, 19% at the double): he wins most legs against the lower levels", () => {
+    // His numbers, thrown by the same model: about 51 / 57 / 19%. A real 30-average player loses nearly
+    // every leg to him; a 53 about half.
+    const him = E.botParams(51, "standard");
+    const vs = (level, legs, seed) => {
+      const rng = E.mulberry32(seed);
+      let won = 0;
+      for (let leg = 0; leg < legs; leg += 1) {
+        const g = E.createGame({ kind: "x01", startScore: 501, doubleOut: true, first: leg % 2 ? "bot" : "player", bot: { level } });
+        let guard = 0;
+        while (!g.winner && guard++ < 5000) {
+          while (!g.visitDone) E.throwDart(g, g.turn === "player" ? E.spreadThrow(E.botAim(g), him.s, him.d, g.botModel, rng) : E.botDart(g, "club", rng));
+          E.endVisit(g);
+        }
+        if (g.winner === "player") won += 1;
+      }
+      return won / legs;
     };
-    const club = run("club", "standard", 120, 5);
-    assert.ok(club > 46 && club < 60, "club plays at about 53: " + club.toFixed(1));
-    const pro = run("pro", "standard", 60, 9);
-    assert.ok(pro > 82, "pro is far stronger: " + pro.toFixed(1));
+    const beginner = vs("beginner", 400, 21), casual = vs("casual", 400, 22), club = vs("club", 400, 23);
+    assert.ok(beginner > 0.9, "against Beginner he wins " + (beginner * 100).toFixed(0) + "% of legs");
+    assert.ok(casual > 0.68 && casual < 0.88, "against Casual " + (casual * 100).toFixed(0) + "%");
+    assert.ok(club > 0.35 && club < 0.55, "against Club " + (club * 100).toFixed(0) + "%");
   });
 
   test("the spreads: a style changes the doubles, the levels keep their order", () => {
     const club = E.botParams(53, "standard");
-    assert.ok(club.s > 0.08 && club.s < 0.105, "a Club bot's spread: " + club.s);
-    assert.equal(club.d, club.s, "standard: one spread for every dart");
+    assert.ok(club.s > 0.085 && club.s < 0.105, "a Club bot's spread: " + club.s);
+    assert.ok(Math.abs(club.d - club.s * E.doubleRatio(53)) < 0.002, "standard: the double spread is the level's ratio of it: " + club.d);
+    assert.ok(E.doubleRatio(30) === 0.85 && E.doubleRatio(97) === 1 && E.doubleRatio(74) > 0.9 && E.doubleRatio(74) < 0.95);
+    assert.ok(Math.abs(E.botParams(53, "standard", 3).s - 0.0838) < 0.003, "model 3's table is kept for its games");
     assert.ok(Math.abs(E.botParams(53, "standard", 2).s - 0.083) < 0.005, "model 2's table is kept for its games");
     assert.ok(E.botParams(53, "grinder").d < club.d && E.botParams(53, "scorer").d > club.d);
     assert.ok(E.botParams(53, "grinder").checkout > club.checkout && E.botParams(53, "scorer").checkout < club.checkout);
@@ -1312,24 +1378,24 @@ test("cleanHold keeps only well-formed events", () => {
     return { avg: (scored * 3) / used, checkout: hitDouble / atDouble, wild: wild / darts };
   }
 
-  test("model 3: each level plays at its average, and finishes like a real player at that average", () => {
+  test("model 3 (games started before Nov 20, 2026): each level plays at its average on its own, every leg to the end", () => {
     // Real players: about 8% of darts at a double go in at a 30 average, 20-25% at 60, 40% at 95
     // (the PDC's checkout percentage is darts at a double). Model 2 had Club at 26% and Beginner at
     // 16%, and its Beginner played at 43, Casual at 51 and Club at 60.
     const want = { beginner: [30, 0.04, 0.11], casual: [42, 0.09, 0.16], club: [53, 0.13, 0.22], league: [72, 0.22, 0.33], pro: [95, 0.34, 0.48] };
     for (const [level, [avg, lo, hi]] of Object.entries(want)) {
-      const r = botAlone({ bot: { level } }, 300, 7 + avg);
+      const r = botAlone({ bot: { level }, botModel: 3 }, 300, 7 + avg);
       assert.ok(Math.abs(r.avg - avg) < 4, level + " plays at about " + avg + ": " + r.avg.toFixed(1));
       assert.ok(r.checkout >= lo && r.checkout <= hi, level + " checks out " + (r.checkout * 100).toFixed(0) + "% of its darts at a double (" + lo + "-" + hi + ")");
-      const table = E.botParams(avg, "standard").checkout;
+      const table = E.botParams(avg, "standard", 3).checkout;
       assert.ok(Math.abs(table - r.checkout) < 0.05, level + ": the table says " + table.toFixed(3) + ", measured " + r.checkout.toFixed(3));
     }
-    const custom = botAlone({ bot: { level: "custom", target: 60 } }, 300, 60);
+    const custom = botAlone({ bot: { level: "custom", target: 60 }, botModel: 3 }, 300, 60);
     assert.ok(Math.abs(custom.avg - 60) < 4 && custom.checkout > 0.17 && custom.checkout < 0.29, "a 60-average bot: " + custom.avg.toFixed(1) + ", " + (custom.checkout * 100).toFixed(0) + "% at a double");
-    const grinder = botAlone({ bot: { level: "club", style: "grinder" } }, 300, 11), scorer = botAlone({ bot: { level: "club", style: "scorer" } }, 300, 12);
+    const grinder = botAlone({ bot: { level: "club", style: "grinder" }, botModel: 3 }, 300, 11), scorer = botAlone({ bot: { level: "club", style: "scorer" }, botModel: 3 }, 300, 12);
     assert.ok(Math.abs(grinder.avg - 53) < 4 && Math.abs(scorer.avg - 53) < 4, "the styles play at the same average: " + grinder.avg.toFixed(1) + " / " + scorer.avg.toFixed(1));
     assert.ok(grinder.checkout > 0.2 && scorer.checkout < 0.18 && grinder.checkout > scorer.checkout + 0.03, "a grinder finishes better (Club standard: 19%), a scorer worse: " + grinder.checkout.toFixed(2) + " / " + scorer.checkout.toFixed(2));
-    const beginner = botAlone({ bot: { level: "beginner" } }, 100, 3);
+    const beginner = botAlone({ bot: { level: "beginner" }, botModel: 3 }, 100, 3);
     assert.ok(beginner.wild > 0.03, "a beginner's darts stray beyond the 20, 1 and 5: " + (beginner.wild * 100).toFixed(1) + "%");
   });
 
@@ -1342,7 +1408,7 @@ test("cleanHold keeps only well-formed events", () => {
     ["S20", "S20", "S20"].forEach((l) => E.throwDart(g, at4(l))); E.endVisit(g);
     assert.equal(E.replayVisits(E.gameOptions(g), g.visits).game.botModel, 2);
     assert.equal(E.createGame({ kind: "x01", first: "bot", bot: { level: "club" }, botModel: 99 }).botModel, E.BOT_MODEL, "an unknown model is the current one");
-    assert.equal(E.createGame({ kind: "x01", first: "bot", bot: { level: "club" } }).botModel, 3);
+    assert.equal(E.createGame({ kind: "x01", first: "bot", bot: { level: "club" } }).botModel, 4);
   });
 
   test("a game keeps its bot: the first bot for old games, model 2 through a replay and an undo", () => {

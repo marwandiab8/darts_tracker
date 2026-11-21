@@ -874,9 +874,17 @@
   // do), one dart in ten flies loose (2.5 times the spread: the stray into the 5 or off the board),
   // and its table was measured with this file's own game (scripts/calibrate-bot.cjs, 3000 legs of
   // 501 at each spread, the average as the game reports it). A style scales the spread at a double.
+  // Model 4 (Nov 20, 2026) keeps model 3's throw and fixes what its levels meant. Model 3's table was
+  // measured with the bot alone, every leg played to the end, so a weak bot's average counted every dart
+  // it wasted at the double. A real player's average is counted over the legs they won and the legs they
+  // lost, and most lost legs end before that, so the Beginner "30" showed 36 against an equal player, with
+  // a first 9 of 43 (a real 30-average player's is about 38). Model 4's table (CALIB[4]) is measured
+  // against an equal player, and the spread at a double depends on the level (doubleRatio): the same
+  // model then throws Marwan's own numbers at 51 (56 first 9, 18% at the double; his cameras say 57.0 and
+  // 19%) and the PDC's at 95 (104 first 9, 40% at the double, 41% at T20).
   // A game keeps its model (game.botModel) and the bot it was started with (game.bot), so a game
-  // started under model 2 goes on with model 2's table, and every device throws the same darts.
-  const BOT_MODEL = 3;
+  // started under model 2 or 3 goes on with that model's table, and every device throws the same darts.
+  const BOT_MODEL = 4;
   const TAIL = { p: 0.1, k: 2.5 };
   const MM = { bullIn: 6.35, bullOut: 15.9, tripleIn: 99, tripleOut: 107, doubleIn: 162, edge: 170 };
   const RING_KEYS = ["bullIn", "bullOut", "tripleIn", "tripleOut", "doubleIn", "edge"];
@@ -925,9 +933,22 @@
   const styleById = (id) => STYLES.find((st) => st.id === id) || STYLES[0];
   // The spread at a double over the spread at everything else, per style and model.
   const STYLE_F = { 2: { standard: 0.85, grinder: 0.6, scorer: 1.25 }, 3: { standard: 1, grinder: 0.8, scorer: 1.25 } };
+  // Model 4: the spread at a double over the scoring spread depends on the level. 0.85 up to an average
+  // of 51 (measured on Marwan: his cameras' 50.9 average, 57.0 first 9 and 19% at the double are what
+  // this model throws at 0.85), rising to 1 at 97 (the PDC's 2019 numbers: 41% at T20 and 40% at the
+  // double, which one spread for everything throws). A style scales it.
+  const STYLE_K = { standard: 1, grinder: 0.8, scorer: 1.25 };
+  function doubleRatio(avg) {
+    const a = Number(avg) || 0;
+    return a <= 51 ? 0.85 : a >= 97 ? 1 : 0.85 + (0.15 * (a - 51)) / 46;
+  }
   // Per model and style ratio: [spread, 3-dart average, share of darts at a double that go in], from
   // the widest spread's average down. Model 2's rows are kept for games started under it.
   const CALIB = {};
+  // Model 4 (from Nov 20, 2026; scripts/calibrate-bot.cjs): per style, rows of [average, s, d, first-9 average,
+  // share of darts at a double that go in], the average as a real player's is counted: against an equal
+  // player, over the legs won and lost (8,000 legs of 501 for each row).
+  CALIB[4] = {"standard":[[15,0.38518,0.32741,27.8,0.0191],[20,0.30169,0.25643,31.4,0.0308],[25,0.24002,0.20401,34.7,0.0465],[30,0.19442,0.16525,38.1,0.0648],[35,0.16087,0.13674,41.7,0.0916],[40,0.13458,0.1144,45.8,0.1223],[45,0.11625,0.09882,50.5,0.152],[50,0.10289,0.08746,55.3,0.1778],[55,0.09159,0.07904,60.4,0.2054],[60,0.08213,0.07222,65.7,0.2288],[65,0.07381,0.06611,71.3,0.257],[70,0.06691,0.06102,76.8,0.2777],[75,0.06143,0.05702,81.6,0.292],[80,0.05543,0.05236,87.8,0.323],[85,0.05041,0.04843,93.1,0.3433],[90,0.04601,0.04496,98.3,0.3743],[95,0.04151,0.04124,104.2,0.3991],[100,0.03824,0.03824,108.5,0.4296],[105,0.03469,0.03469,113.5,0.4663],[110,0.03196,0.03196,117.8,0.5083]],"grinder":[[15,0.43685,0.29706,25.9,0.0233],[20,0.34254,0.23293,29.6,0.0363],[25,0.27324,0.1858,33.1,0.0546],[30,0.21762,0.14798,36.2,0.0819],[35,0.17431,0.11853,39.9,0.1143],[40,0.14425,0.09809,43.9,0.1535],[45,0.12199,0.08296,48.6,0.1883],[50,0.10673,0.07257,53.5,0.2254],[55,0.09479,0.06545,58.8,0.2595],[60,0.08467,0.05957,64.3,0.2793],[65,0.07611,0.05453,69.7,0.3142],[70,0.06921,0.05049,74.8,0.3323],[75,0.06266,0.04653,80.8,0.3639],[80,0.05655,0.04273,86.8,0.3833],[85,0.0518,0.03982,91.6,0.4141],[90,0.04756,0.03718,96.1,0.4404],[95,0.04283,0.03404,102,0.4924],[100,0.03916,0.03133,107,0.5133],[105,0.03585,0.02868,111.6,0.5393],[110,0.03266,0.02612,116.7,0.6067]],"scorer":[[15,0.33061,0.35127,30.5,0.0167],[20,0.25837,0.27452,33.9,0.0264],[25,0.20759,0.22056,37,0.0399],[30,0.17143,0.18214,40,0.0577],[35,0.1459,0.15502,43.5,0.0744],[40,0.12555,0.1334,47.8,0.0985],[45,0.10993,0.1168,52.3,0.1165],[50,0.09838,0.10452,57.2,0.1387],[55,0.08795,0.09488,62.6,0.1627],[60,0.0792,0.08705,67.4,0.1804],[65,0.07129,0.07982,73.4,0.2009],[70,0.06474,0.0738,78.8,0.2199],[75,0.05909,0.06856,83.8,0.236],[80,0.05375,0.06346,88.9,0.269],[85,0.04861,0.05839,94.8,0.2921],[90,0.04455,0.05441,99.8,0.3061],[95,0.04032,0.05007,105.4,0.3333],[100,0.03685,0.04606,110.5,0.3619],[105,0.03355,0.04194,115.5,0.3935],[110,0.0307,0.03838,119.6,0.4189]]};
   CALIB[3] = {"1":[[0.025,117.3,0.614],[0.03,107.3,0.534],[0.035,99.4,0.468],[0.04,91.8,0.42],[0.045,85.6,0.382],[0.05,80.1,0.347],[0.055,74.9,0.313],[0.06,70.2,0.283],[0.065,65.8,0.259],[0.07,61.5,0.233],[0.075,58.9,0.228],[0.08,55.4,0.206],[0.085,52.2,0.187],[0.09,49.5,0.175],[0.095,47.2,0.166],[0.1,44.6,0.15],[0.11,40.2,0.129],[0.12,37.1,0.117],[0.13,33.7,0.101],[0.14,31.6,0.092],[0.16,27,0.072],[0.18,23.6,0.057],[0.2,21,0.048],[0.24,16.7,0.034],[0.28,13.8,0.026]],"0.8":[[0.025,120.1,0.715],[0.03,109.8,0.63],[0.035,101.9,0.561],[0.04,94.5,0.499],[0.045,88.2,0.454],[0.05,82.5,0.411],[0.055,77.3,0.377],[0.06,73.1,0.352],[0.065,69.2,0.326],[0.07,64.6,0.298],[0.075,61.1,0.273],[0.08,58.4,0.263],[0.085,55.3,0.245],[0.09,52.1,0.224],[0.095,49.7,0.207],[0.1,47.6,0.202],[0.11,43.9,0.178],[0.12,40.5,0.158],[0.13,37.6,0.141],[0.14,35.1,0.128],[0.16,30.9,0.104],[0.18,27.7,0.087],[0.2,25.2,0.073],[0.24,20.6,0.053],[0.28,17.1,0.04]],"1.25":[[0.025,114.1,0.506],[0.03,103.9,0.43],[0.035,95.3,0.374],[0.04,88.3,0.334],[0.045,81.9,0.3],[0.05,76.7,0.283],[0.055,70.2,0.238],[0.06,65.4,0.211],[0.065,61.6,0.195],[0.07,58,0.184],[0.075,54,0.165],[0.08,51.2,0.155],[0.085,46.9,0.134],[0.09,44.4,0.125],[0.095,42.2,0.118],[0.1,39.7,0.107],[0.11,35.9,0.095],[0.12,32,0.08],[0.13,29.2,0.07],[0.14,26.5,0.061],[0.16,22.4,0.047],[0.18,19.6,0.039],[0.2,16.9,0.032],[0.24,13.2,0.022],[0.28,11.4,0.017]]};
   CALIB[2] = {"0.6":[[0.04,101.6,0.669],[0.045,95.3,0.621],[0.05,89.2,0.569],[0.055,84.2,0.536],[0.06,79.3,0.49],[0.065,74.1,0.45],[0.07,69.6,0.416],[0.075,65.7,0.398],[0.08,62.6,0.401],[0.085,58.4,0.351],[0.09,56.2,0.339],[0.095,52.1,0.315],[0.1,49.0,0.299],[0.11,44.3,0.268],[0.12,39.2,0.237],[0.13,35.0,0.216],[0.14,31.5,0.198],[0.16,26.3,0.17],[0.18,20.5,0.14],[0.2,17.3,0.121],[0.24,12.6,0.092],[0.28,9.3,0.069]],"0.85":[[0.035,105.2,0.57],[0.04,97.6,0.51],[0.045,91.1,0.463],[0.05,84.7,0.418],[0.055,79.5,0.39],[0.06,73.9,0.356],[0.065,68.5,0.329],[0.07,65.0,0.304],[0.075,59.8,0.287],[0.08,55.9,0.261],[0.085,51.1,0.248],[0.09,47.4,0.223],[0.095,43.1,0.202],[0.1,41.5,0.206],[0.11,35.7,0.182],[0.12,29.8,0.153],[0.13,25.6,0.136],[0.14,22.7,0.125],[0.16,17.7,0.104],[0.18,13.5,0.083],[0.2,10.7,0.07],[0.24,8.3,0.053],[0.28,6.2,0.035]],"1.25":[[0.035,97.8,0.397],[0.04,90.5,0.356],[0.045,83.1,0.316],[0.05,74.3,0.268],[0.055,69.5,0.258],[0.06,62.5,0.23],[0.065,57.3,0.214],[0.07,52.4,0.195],[0.075,47.1,0.178],[0.08,41.6,0.161],[0.085,36.9,0.145],[0.09,34.5,0.136],[0.1,27.2,0.115],[0.11,21.7,0.097],[0.12,18.6,0.086],[0.14,12.9,0.065],[0.16,9.9,0.052],[0.2,6.6,0.033],[0.24,5.4,0.022]]};
   // The spreads for a bot that averages `target` with this style (under this model, the current one
@@ -935,6 +956,17 @@
   // double that go in.
   function botParams(target, styleId, model) {
     const m = CALIB[model] ? model : BOT_MODEL;
+    if (m >= 4) {
+      // Rows [average, s, d, first-9 average, share of darts at a double that go in], averages rising.
+      const rows = CALIB[m][styleById(styleId).id];
+      const t = Math.max(rows[0][0], Math.min(rows[rows.length - 1][0], Number(target) || 53));
+      let i = 0;
+      while (i < rows.length - 2 && t > rows[i + 1][0]) i += 1;
+      const a = rows[i], b = rows[i + 1];
+      const k = (t - a[0]) / (b[0] - a[0]);
+      const at = (j) => a[j] + k * (b[j] - a[j]);
+      return { s: at(1), d: at(2), avg: t, first9: at(3), checkout: at(4) };
+    }
     const f = STYLE_F[m][styleById(styleId).id];
     const rows = CALIB[m][String(f)];
     const t = Math.max(rows[rows.length - 1][1], Math.min(rows[0][1], Number(target) || 53));
@@ -1344,7 +1376,7 @@
     heatGrid,
     heatStats,
     cleanDarts,
-    BOT_MODEL, TAIL, LEVEL_AVG, STYLES, STYLE_F, CALIB, botParams, spreadThrow, botFor, nearestRank, botThrowAt, botDart, realToApp, appToReal, aimReal,
+    BOT_MODEL, TAIL, LEVEL_AVG, STYLES, STYLE_F, STYLE_K, doubleRatio, CALIB, botParams, spreadThrow, botFor, nearestRank, botThrowAt, botDart, realToApp, appToReal, aimReal,
     LADDER, ladderState, startBullUp, bullUpOn, bullUpThrow, mmFromCentre,
     dartWords,
     visitView,

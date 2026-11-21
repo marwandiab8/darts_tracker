@@ -495,7 +495,7 @@
      Cache-Control: no-cache (a real, previously-seen failure mode - see docs/bot-practice.md) is
      still forced to fetch the matching engine instead of silently pairing a new page with a stale
      one, which throws inside announce()'s catch-all and looks like "no sound at all". -->
-<script src="practice-engine.js?v=13"></script>
+<script src="practice-engine.js?v=14"></script>
 <script src="board-mode.js?v=7"></script>
 <script src="practice-timer.js?v=2"></script>
 <script src="players.js?v=1"></script>
@@ -1102,13 +1102,15 @@
     return E.botFor({ level, target: level === "ladder" ? ladderNow().target : settings.botTarget, style: settings.botStyle });
   }
   function levelBlurb() {
-    if (settings.rank === "custom") { const p = E.botParams(settings.botTarget, settings.botStyle); return "Plays at about " + settings.botTarget + " and checks out with about " + Math.round(p.checkout * 100) + "% of its darts at a double."; }
+    // What a real player at that average does (the bot's table): the first 9 when the game's model has it.
+    const f9 = (p) => (p.first9 ? ", about " + Math.round(p.first9) + " over its first 9 darts," : "");
+    if (settings.rank === "custom") { const p = E.botParams(settings.botTarget, settings.botStyle); return "Plays at about " + settings.botTarget + f9(p) + " and checks out with about " + Math.round(p.checkout * 100) + "% of its darts at a double."; }
     if (settings.rank === "ladder") {
       const l = ladderNow();
       return "You're on the step at " + l.target + " (" + l.wins + " won, " + l.losses + " lost at this step). Win 2 of 3 to move up 3." + (l.best ? " Highest average beaten: " + l.best + "." : "");
     }
     const p = E.botParams(E.LEVEL_AVG[settings.rank], settings.botStyle);
-    return E.rankById(settings.rank).blurb + " Averages about " + E.LEVEL_AVG[settings.rank] + " and checks out with about " + Math.round(p.checkout * 100) + "% of its darts at a double.";
+    return E.rankById(settings.rank).blurb + " Averages about " + E.LEVEL_AVG[settings.rank] + f9(p) + " and checks out with about " + Math.round(p.checkout * 100) + "% of its darts at a double.";
   }
   // What the bot is called: "Club bot", "58-average bot", "Ladder bot (55)".
   function botTitle(bot) {
