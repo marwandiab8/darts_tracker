@@ -1,12 +1,24 @@
 # Training
 
-Practice drills aimed at 501 (`training.html`, "Training" in the navigation): scoring, doubles and checkouts, pressure. One engine runs every drill; each drill is configuration plus pure functions, so a new drill is mostly a new entry in the registry. Phase 1 (2026-11-19) has the engine, the page, Board mode and the first drill, **Bob's 27**. Phase 2 (2026-11-20) adds the checkout drills, **121 Checkout Ladder** and **Two-Dart Finishes**, and with them darts entered one at a time (the cameras, a tap on the board, the route's buttons, Miss, or any dart from a list) and visits that end early on a checkout or a bust. The plan for the rest is `docs/training-world-class-prompt.md`.
+Practice drills aimed at 501 (`training.html`, "Training" in the navigation): scoring, doubles and checkouts, pressure. One engine runs every drill; each drill is configuration plus pure functions, so a new drill is mostly a new entry in the registry. Phase 1 (2026-11-19) has the engine, the page, Board mode and the first drill, **Bob's 27**. Phase 2 (2026-11-20) adds the checkout drills, **121 Checkout Ladder** and **Two-Dart Finishes**, and with them darts entered one at a time (the cameras, a tap on the board, the route's buttons, Miss, or any dart from a list) and visits that end early on a checkout or a bust. Phase 3 (2026-11-20) adds the scoring drills, **Triple 20 Marathon**, **Big Triples** and **Game of 9**. The plan for the rest is `docs/training-world-class-prompt.md`.
 
 Two kinds of input: `input: "hits"` (Bob's 27: how many of the 3 darts went in) and `input: "darts"` (the checkout drills: one dart at a time). The engine's header lists the drill interface.
 
 - **Rules and data:** `public/training-engine.js` (`window.TrainingEngine`, no DOM; its header explains the drill interface, the camera visit rules and the saved shapes). Tests: `tests/training-engine.test.cjs`.
 - **The page:** `public/training.html`. **Board mode:** `public/training-board.js` on the shared kit `public/board-mode.js` + `.css`.
 - **Checkouts:** the engine's `checkoutRoute`, `checkoutTable` (every finish 2 to 170 for 1, 2 and 3 darts), `BOGEY` and `PREFERRED_ROUTES` (routes to prefer over the solver's, as data: edit the object). The solver is the bot game's (`practice-engine.js`); there is no second one. The tests check that every route adds up, ends on a double or the bull and fits the darts left, and that the bogey numbers have no 3-dart finish.
+
+## Triple 20 Marathon
+
+Hit T20 (or T19, T18, T17) a set number of times, 10 by default (5 for a quick one). The result is the darts it took: fewer is better. The live rate and the pace against the best run (darts at the same triple count) are shown all the time. The last triple ends the drill on that dart: darts after it in the visit are not counted. Unseen darts at the take-out are misses. By hand: how many of the 3 went in (with one triple left, "2 hits" counts one dart). PB: fewest darts, per triple and count.
+
+## Big Triples
+
+A set number of darts (9, in visits of 3) at each number in turn (T20, T19, T18, T17, or another set). The score is the triples hit; the count for each number is kept, with the pace against the best round (triples after the same visit). A visit never spans two numbers; unseen darts at the take-out are misses at that visit's number. PB: triples hit, per darts-per-number and set.
+
+## Game of 9
+
+Nine darts at the whole number, any ring, 20 down to 15, then the bull (either ring). Reach the pass mark to move on; miss it and the number starts again. Defaults from his numbers: 7 of 9 for the numbers, 4 of 9 at the bull (9 and 9 is the strict game). A number given up after the set number of tries (6) is skipped. The score is the darts for the run; PB (fewest darts) only for a run with every number passed (`result.runDarts`, null otherwise, so it never sets a best). Tries and darts per number are kept, and the trail of darts at each number passed for the pace.
 
 ## Bob's 27
 
@@ -45,17 +57,18 @@ Every number from 61 to 70 (settable), two darts each, in order or shuffled (the
 ## Saved data
 
 - `trainingState/{uid}`: `{ uid, activeSession, undoStack, bests, updatedAt }`. The drill in play, or just finished (it stays until Play again, Another drill or Stop, so Undo can still take its last visit back). `bests` is keyed by `drill.pbKey(settings)` (`bobs27:27:stop`), with the best's key, session key and `result.trail` for the pace. Every change is a transaction (`transact()` in the page), as `doublesState`: the camera darts' seq and the undo steps live in the document, so a dart is counted once however many devices listen.
-- `trainingSessions/{sessionKey}`: a finished drill, or one stopped part way (`complete: false`, never in stats or bests): `uid, drill, drillVersion, settings, result, key, throws, startedAtMs, endedAtMs, activeMs, timestamp ("YYYY-MM-DD HH:MM"), localDate, complete, planRunId?, createdAt`. `throws` is every dart, misses included, in the tracker's shape plus the visit and target: `{ v, t, k, r, l, x, y, seq, src: "cam" | "btn" | "unseen", f, h, p }` (`h` a hit or a game shot, `p` the points an x01 dart scored; in the checkout drills `t` is the score required at the start of the visit and `k` the attempt or try). Owner only; a save tried again overwrites the same document. The `drill` field says which drill: `bobs27`, `ladder121`, `twodart`.
+- `trainingSessions/{sessionKey}`: a finished drill, or one stopped part way (`complete: false`, never in stats or bests): `uid, drill, drillVersion, settings, result, key, throws, startedAtMs, endedAtMs, activeMs, timestamp ("YYYY-MM-DD HH:MM"), localDate, complete, planRunId?, createdAt`. `throws` is every dart, misses included, in the tracker's shape plus the visit and target: `{ v, t, k, r, l, x, y, seq, src: "cam" | "btn" | "unseen", f, h, p }` (`h` a hit or a game shot, `p` the points an x01 dart scored; in the checkout drills `t` is the score required at the start of the visit and `k` the attempt or try). Owner only; a save tried again overwrites the same document. The `drill` field says which drill: `marathon`, `bigtriples`, `gameof9`, `bobs27`, `ladder121`, `twodart`.
 - Indexes: `trainingSessions` on `uid + startedAtMs` and `uid + drill + startedAtMs`, ascending and descending (the history list uses `limitToLast`).
 
 ## Still to do (later phases)
 
-Phase 3 the scoring drills (Triple 20 Marathon, Big Triples, Game of 9), Phase 4 pressure and warm-up (Invisible Man, Score More, Warm-up), Phase 5 stats (`trainingStats` in `stats-engine.js`, the merged doubles and triples, the streak and records, today's plan), practice plans with presets, CSV export, "How to play" polish. Training sessions are not sent to Time Left yet (a Phase 0 question).
+Phase 4 pressure and warm-up (Invisible Man, Score More, Warm-up), Phase 5 stats (`trainingStats` in `stats-engine.js`, the merged doubles and triples, the streak and records, today's plan), practice plans with presets, CSV export, "How to play" polish. Training sessions are not sent to Time Left yet (a Phase 0 question).
 
 ## Tests
 
 - `npm test`: page checks (`training.html`, `training-engine.js`, `training-board.js` are in `scripts/check-app.cjs`), the engine, the functions and the rules (`trainingState`, `trainingSessions`).
 - `E2E=training-checkouts npm run test:e2e` (`tests/e2e/training-checkouts.e2e.cjs`): the ladder and the two-dart drill on two devices with the pretend station: the route at every dart, a checkout on the 3rd dart, a dart after it not counted, a bust, a dart fixed on the iPad into a checkout, Undo from the computer, darts by hand with no take-out, a reload, Stop; two darts a try, a setup and the double, a third dart not counted, the take-out ending a try with a dart unseen.
 - Screenshots of the checkout drills: `tests/e2e/training-checkout-shots.cjs` (same invocation).
+- `E2E=training-scoring npm run test:e2e` (`tests/e2e/training-scoring.e2e.cjs`): the marathon with the cameras ending on the last triple mid-visit and saved with its best, the pace against it, Big Triples by hand and with darts unseen at the take-out, Game of 9 passing a number; screenshots: `tests/e2e/training-scoring-shots.cjs`.
 - `E2E=training npm run test:e2e`: the real page on two devices (a computer, an iPad in Board mode with the voice) against the emulators with a pretend camera station: each dart counted once, a visit scored on its 3rd dart, a 4th dart not counted, fixing a dart, Undo from the other device, unseen darts at the take-out, a reload mid-drill, the finish saved once with the best, Undo after the finish, Play again, Stop.
 - Screenshots: `firebase emulators:exec --config tests/e2e/firebase.json --only firestore,auth --project demo-darts "node tests/e2e/training-shots.cjs /some/folder"` (picker, the board at four sizes, the fix sheet, a moment, the results).

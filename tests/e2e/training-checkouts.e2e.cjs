@@ -20,6 +20,9 @@ const { check, failed } = H.checker();
     const uid = await H.signIn(computer);
     await H.signIn(ipad);
     station = await H.makeStation(uid);
+    // The e2e files share one emulator and one account: start from an empty database.
+    await station.clear();
+    await H.sleep(800);
     const throwAt = async (n, ring, label, wait = 1400) => { const p = n === "BULL" ? { x: 0, y: 0 } : H.spot(n, ring); await station.send(H.dart(label, p.x, p.y)); await H.sleep(wait); };
     const takeout = async (wait = 1200) => { await station.send({ type: "takeout", darts: 3 }); await H.sleep(wait); };
     const state = () => station.read("trainingState", uid);

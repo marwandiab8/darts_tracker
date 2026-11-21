@@ -764,3 +764,163 @@ test("the strip columns, the progress and the settings line for each drill", () 
   assert.equal(E.speakLabel("T20"), "T 20");
   assert.equal(E.speakLabel("S5"), "5");
 });
+
+// ---- Phase 3: the scoring drills ---------------------------------------------------------------------------
+test("the registry order and the categories of the scoring drills", () => {
+  assert.deepEqual(E.DRILLS.map((d) => d.id), ["marathon", "bigtriples", "gameof9", "bobs27", "ladder121", "twodart"]);
+  assert.ok(["marathon", "bigtriples", "gameof9"].every((id) => E.drillOf(id).category === "Scoring" && E.drillOf(id).input === "hits"));
+});
+
+test("Triple 20 Marathon: the darts to a set number of triples; the last triple ends the drill mid-visit", () => {
+  const d = E.drillOf("marathon");
+  assert.deepEqual(E.cleanSettings(d, {}), { number: "20", need: 10 });
+  assert.equal(d.pbKey(E.cleanSettings(d, { number: "19", need: 5 })), "marathon:19:5");
+  const u = freshDrill("marathon", { need: 3 });
+  let t = E.target(sess(u));
+  assert.equal(t.key, "T20");
+  assert.equal(t.intro, "Throw at T 20. 3 to hit");
+  assert.deepEqual(t.lit, [{ n: 20, beds: "T", tint: true }]);
+  let r = cam(u, "T20", 20, "T");
+  assert.equal(r.effect.kind, "hit");
+  assert.equal(r.effect.ends, undefined, "the first of three does not end it");
+  r = cam(u, "S20", 20, "S");
+  assert.equal(E.boardView(sess(u)).darts[1].sub, "Single 20");
+  r = cam(u, "T20", 20, "T");
+  assert.ok(r.scored && r.scored.hits === 2 && !r.scored.over);
+  assert.equal(play(u).hits, 2);
+  assert.equal(play(u).darts, 3);
+  assert.deepEqual(play(u).trail, [0, 1, 3], "the dart count at each triple");
+  assert.equal(sess(u).say.text, "Two hits. 2 of 3.");
+  assert.equal(E.boardView(sess(u)).cells.map((c) => c.state + ":" + c.num + ":" + c.sub).join(" "), "done h3:1:dart 1 done h3:2:dart 3 current:3:dart 4");
+  assert.equal(E.boardView(sess(u)).capHtml, "<strong>3</strong> darts · 67% in T20");
+  // Pace against a best that took 2, 4 and 6 darts: 1 dart ahead at the second triple.
+  assert.equal(d.paceText(play(u), { result: { trail: [0, 2, 4, 6] } }), "1 dart ahead of your best");
+  E.cameraTakeout(u, sess(u), takeout(3), T0 + 2000);
+  // Visit 2: a miss, then the last triple on dart 2: the drill is over and the 3rd dart is not counted.
+  cam(u, "S5", 5, "S");
+  assert.equal(E.boardView(sess(u)).darts[0].sub, "Next door, in the 5");
+  r = cam(u, "T20", 20, "T");
+  assert.ok(r.scored && r.scored.over && r.effect.ends);
+  assert.equal(play(u).darts, 5);
+  assert.equal(sess(u).say.text, "One hit. 3 of 3. All 3. 5 darts.");
+  assert.equal(r.scored.moment.big, "3 in 5");
+  assert.equal(cam(u, "T20", 20, "T").message, "The drill is finished.");
+  const res = E.summarize(sess(u));
+  assert.equal(res.darts, 5);
+  assert.equal(res.finished, true);
+  assert.equal(E.historyPayload(sess(u), T0 + 9000).key, 5);
+  assert.equal(E.isNewBest("marathon", 5, { key: 6 }), true, "fewer darts is better");
+  assert.equal(E.isNewBest("marathon", 7, { key: 6 }), false);
+  assert.equal(E.personalBest([{ drill: "marathon", settings: { number: "20", need: 3 }, key: 9, result: {} }, { drill: "marathon", settings: { number: "20", need: 3 }, key: 7, result: {} }], "marathon", { need: 3 }).key, 7);
+  // By hand: with one triple left, "2 hits" counts one dart and ends it.
+  const h = freshDrill("marathon", { need: 1 });
+  r = E.manualVisit(u2(h), sess(h), 2, T0 + 100);
+  assert.ok(r.over && play(h).darts === 1);
+  // Fix options for a dart at a triple.
+  const f = freshDrill("marathon");
+  cam(f, "O20", 20, "O");
+  const v = E.boardView(sess(f));
+  assert.equal(v.darts[0].sub, "Just past the 20 wire");
+  assert.deepEqual(E.fixOptions(v.darts[0], v).map((o) => o.id + (o.hit ? "!" : "") + (o.cur ? "*" : "")), ["T20!", "D20", "S20", "O20*", "other", "remove"]);
+  function u2(x) { return x; }
+});
+
+test("Big Triples: darts per number at each triple in turn; the count for each number", () => {
+  const d = E.drillOf("bigtriples");
+  assert.deepEqual(E.cleanSettings(d, {}), { numbers: "20 19 18 17", per: 9 });
+  assert.equal(play(freshDrill("bigtriples", { per: 10 })).per, 9, "darts per number come in visits of 3");
+  const u = freshDrill("bigtriples", { numbers: "20 19", per: 3 });
+  assert.equal(d.pbKey(sess(u).meta.settings), "bigtriples:3:20-19");
+  assert.deepEqual(E.progress(sess(u)), { done: 0, of: 2, unit: "visits" });
+  assert.deepEqual(E.boardView(sess(u)).next, ["T19"]);
+  let r = E.manualVisit(u, sess(u), 2, T0 + 100);
+  assert.ok(r.visit.last && play(u).cursor === 1 && play(u).total === 2);
+  assert.equal(sess(u).say.text, "T 20. Two hits. 2 at T 20. Next, T 19.");
+  assert.equal(E.target(sess(u)).key, "T19");
+  // The cameras at T19: one in, then the darts come out with two unseen: misses.
+  cam(u, "T19", 19, "T");
+  r = E.cameraTakeout(u, sess(u), takeout(3), T0 + 2000);
+  assert.equal(r.unseen, 2);
+  assert.ok(E.isFinished(sess(u)));
+  assert.equal(sess(u).say.text, "T 19. One hit. 1 at T 19. Done. 3 triples.");
+  const res = E.summarize(sess(u));
+  assert.equal(res.hits, 3);
+  assert.equal(res.darts, 6);
+  assert.deepEqual(res.perNumber, { 20: { hits: 2, darts: 3 }, 19: { hits: 1, darts: 3 } });
+  assert.deepEqual(res.trail, [0, 2, 3]);
+  assert.equal(res.bestNumber, 20);
+  assert.equal(E.boardView(sess(u)).cells.map((c) => c.state + ":" + c.num).join(" "), "done h2:T20 done h1:T19");
+  assert.equal(E.historyPayload(sess(u), T0 + 9000).key, 3);
+  assert.equal(d.paceText(play(u), { result: { trail: [0, 1, 1] } }), "+2 on your best");
+  // Three in one visit is a moment.
+  const m = freshDrill("bigtriples");
+  r = E.manualVisit(m, sess(m), 3, T0 + 100);
+  assert.equal(r.moment.big, "Three in T20");
+  assert.equal(E.boardView(sess(m)).cells.length, 12);
+  assert.equal(E.boardView(sess(m)).cols, 12);
+});
+
+test("Game of 9: nine darts at the whole number, a pass mark to move on, the darts for the run", () => {
+  const d = E.drillOf("gameof9");
+  assert.deepEqual(E.cleanSettings(d, {}), { pass: 7, bullPass: 4, maxTries: 6 });
+  const u = freshDrill("gameof9");
+  let t = E.target(sess(u));
+  assert.equal(t.key, "N20");
+  assert.equal(t.rings, "SDT");
+  assert.equal(t.intro, "20. Any ring. 7 of 9 to pass");
+  assert.deepEqual(t.lit, [{ n: 20, beds: "SDT", tint: true }]);
+  assert.equal(d.dartEffect(play(u), t, { l: "D20" }).kind, "hit");
+  assert.equal(d.dartEffect(play(u), t, { l: "T20" }).kind, "hit");
+  assert.equal(d.dartEffect(play(u), t, { l: "S5" }).kind, "miss");
+  // Three visits: 3, 2, 2 = 7 in 9: passed.
+  let r = E.manualVisit(u, sess(u), 3, T0 + 100);
+  assert.equal(sess(u).say.text, "20. Three in. 3 in 3.");
+  assert.equal(E.boardView(sess(u)).cells[0].sub, "3 in 3");
+  E.manualVisit(u, sess(u), 2, T0 + 200);
+  r = E.manualVisit(u, sess(u), 2, T0 + 300);
+  assert.ok(r.visit.done && r.visit.passed && r.visit.moved);
+  assert.equal(play(u).stage, 1);
+  assert.deepEqual(play(u).trail, [0, 9]);
+  assert.equal(sess(u).say.text, "20 passed. 7 in 9. Next, 19.");
+  assert.equal(r.moment.big, "20 passed");
+  assert.equal(E.boardView(sess(u)).cells[0].state + ":" + E.boardView(sess(u)).cells[0].sub, "done h3:1 try");
+  // 19: 2, 2, 2 = 6: again.
+  for (const k of [1, 2, 3]) r = E.manualVisit(u, sess(u), 2, T0 + 400 + k);
+  assert.ok(r.visit.done && !r.visit.passed && !r.visit.moved);
+  assert.equal(sess(u).say.text, "19. 6 in 9. Again.");
+  assert.equal(play(u).stage, 1);
+  assert.equal(play(u).tries, 1);
+  assert.equal(play(u).darts, 18);
+  assert.equal(E.boardView(sess(u)).capHtml, "<strong>18</strong> darts · try 2 at 19: 0 in 0, 7 of 9 to pass");
+  // The bull: either ring counts, 4 of 9 to pass.
+  const b = freshDrill("gameof9", { maxTries: 1 });
+  for (let k = 0; k < 18; k += 1) E.manualVisit(b, sess(b), 0, T0 + 1000 + k); // six numbers given up
+  t = E.target(sess(b));
+  assert.equal(t.key, "NBULL");
+  assert.equal(t.mark, 4);
+  assert.equal(d.dartEffect(play(b), t, { l: "SB" }).kind, "hit");
+  assert.equal(d.dartEffect(play(b), t, { l: "DB" }).kind, "hit");
+  assert.equal(sess(b).say.text, "15. 0 in 9. Moving on. Next, the bull.");
+  cam(b, "SB", "BULL"); cam(b, "DB", "BULL"); cam(b, "S20", 20, "S");
+  assert.equal(E.boardView(sess(b)).darts.map((x) => x.sub).join("|"), "Outer bull|Bullseye|In the 20");
+  E.cameraTakeout(b, sess(b), takeout(3), T0 + 3000);
+  E.manualVisit(b, sess(b), 2, T0 + 3100);
+  r = E.manualVisit(b, sess(b), 0, T0 + 3200);
+  assert.ok(r.over && E.isFinished(sess(b)));
+  assert.equal(sess(b).say.text, "The bull passed. 4 in 9. Done. 63 darts.");
+  const res = E.summarize(sess(b));
+  assert.equal(res.darts, 63);
+  assert.equal(res.passedAll, false);
+  assert.equal(res.runDarts, null, "a run with a number skipped has no best");
+  assert.deepEqual(res.skipped, ["20", "19", "18", "17", "16", "15"]);
+  assert.equal(E.historyPayload(sess(b), T0 + 9000).key, null);
+  assert.equal(E.isNewBest("gameof9", null, null), false);
+  assert.equal(res.perNumber.BULL.passed, true);
+  // A clean run: the darts are the best.
+  const c = freshDrill("gameof9", { pass: 1, bullPass: 1 });
+  for (let k = 0; k < 21; k += 1) E.manualVisit(c, sess(c), 1, T0 + 5000 + k);
+  const rc = E.summarize(sess(c));
+  assert.ok(E.isFinished(sess(c)) && rc.passedAll && rc.runDarts === 63);
+  assert.equal(d.paceText(play(c), { result: { trail: [0, 9, 18, 27, 36, 45, 54, 72] } }), "9 darts ahead of your best");
+  assert.deepEqual(E.fixOptions(Object.assign({ key: "NBULL", label: "SB" }, {}), { drill: "gameof9", targetKey: "NBULL" }).map((o) => o.id + (o.hit ? "!" : "")), ["DB!", "SB!", "other", "remove"]);
+});
