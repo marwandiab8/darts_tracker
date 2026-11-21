@@ -80,6 +80,34 @@
   .match-score .ms-num.bot { color: var(--bot); }
   .match-score .ms-dash { font-size: 28px; font-weight: 700; color: var(--muted); }
   .match-score .ms-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  /* Board mode, in a match: the same score big beside the dart count ("You 1 – 0 Bot"), to read from the oche
+     (Nov 20, 2026: it was only in the small line under the strip). Green for you and blue for the other side,
+     like the big number. It goes above the count where the column is too narrow for both. */
+  .bm .bm-count { min-width: 0; max-width: 100%; }
+  .bm-legs-row { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px 24px; max-width: 100%; }
+  .bm-legs { display: flex; align-items: center; gap: 10px; white-space: nowrap; min-width: 0; max-width: 100%; }
+  /* The numbers always show whole; a long name gives way first. */
+  .bm-legs i { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-style: normal; font-size: 17px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: #cbd5e1; }
+  .bm-legs b { flex: none; font-size: clamp(44px, 6vw, 60px); font-weight: 900; line-height: 1; font-variant-numeric: tabular-nums; }
+  .bm-legs b.you { color: var(--bm-hit); }
+  .bm-legs b.bot { color: #7dd3fc; }
+  .bm-legs em { flex: none; font-style: normal; font-size: 34px; font-weight: 700; line-height: 1; color: var(--muted); }
+  /* A screen on its side: the column beside the big number is narrow. */
+  @media (min-aspect-ratio: 1/1) and (min-width: 900px) {
+    .bm-legs { gap: 8px; }
+    .bm-legs b { font-size: clamp(42px, 4.4vw, 56px); }
+    .bm-legs i { font-size: 15px; }
+    /* Two players: each name above its number, so two names fit. */
+    .bm-legs.two { display: grid; grid-template-columns: minmax(0, auto) auto minmax(0, auto); grid-template-areas: "a . b" "x d y"; justify-items: center; gap: 2px 8px; }
+    .bm-legs.two i { max-width: 100%; }
+    .bm-legs.two i:first-child { grid-area: a; }
+    .bm-legs.two i:last-child { grid-area: b; }
+    .bm-legs.two b.you { grid-area: x; }
+    .bm-legs.two em { grid-area: d; }
+    .bm-legs.two b.bot { grid-area: y; }
+  }
+  /* A phone: the numbers alone (the names are in the line under the strip). */
+  @media (max-width: 620px) { .bm-legs b { font-size: 40px; } .bm-legs i { display: none; } }
   /* The status box above the board keeps ONE height for the whole game, so the board never moves: the turn line (two
      lines at most), then the last message - or, on your turn near a finish, the checkout box, with the last message in
      its header. The height is the checkout layout's: 22px padding and border, a 20px turn line, the box's 20px of
@@ -2953,13 +2981,17 @@
     }));
     const avgs = x01 ? `${esc(nameOf("player"))} ${fmt1(s.player.avg)} · ${esc(nameOf("bot"))} ${fmt1(s.bot.avg)}` : `marks per round: ${esc(nameOf("player"))} ${fmt1(s.player.avg)} · ${esc(nameOf("bot"))} ${fmt1(s.bot.avg)}`;
     const seriesLine = series ? ` · ${esc(nameOf("player"))} ${series.wins.player}–${series.wins.bot} ${esc(nameOf("bot"))}` : "";
+    // In a match, the legs score big beside the dart count: the line under the strip is too small from the oche.
+    const legName = (who) => (versus() ? firstWord(nameOf(who)).slice(0, 8) : who === "player" ? "You" : "Bot");
+    const dartCount = game.visitDone ? (game.winner ? "Game shot" : "Visit done") : `Dart ${game.visitDarts.length + 1} <span>of 3</span>`;
+    const legsHtml = series ? `<div class="bm-legs${versus() ? " two" : ""}" role="img" aria-label="Match score: ${esc(nameOf("player"))} ${series.wins.player}, ${esc(nameOf("bot"))} ${series.wins.bot}. First to ${series.target}."><i>${esc(legName("player"))}</i><b class="you">${series.wins.player}</b><em>–</em><b class="bot">${series.wins.bot}</b><i>${esc(legName("bot"))}</i></div>` : "";
     const view = {
       target: x01 ? rem : rem,
       finished: reviewing,
       label, labelClass,
       targetClass: !reviewing && !game.winner && !botWonWaiting() ? labelClass : "",
       nextClass: route ? "co" : "",
-      countHtml: reviewing ? "" : game.visitDone ? (game.winner ? "Game shot" : "Visit done") : `Dart ${game.visitDarts.length + 1} <span>of 3</span>`,
+      countHtml: reviewing ? "" : legsHtml ? `<div class="bm-legs-row">${legsHtml}<div>${dartCount}</div></div>` : dartCount,
       next: routeLabels, nextLabel,
       litLabel: route ? route[0].label : setup ? setup.dart.label : x01 ? (!game.visitDone ? "T20" : "") : ckLit,
       dartNo: Math.min(3, game.visitDarts.length + 1),

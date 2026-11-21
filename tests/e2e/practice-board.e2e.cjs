@@ -61,6 +61,7 @@ const { check, failed } = H.checker();
     await ipad.click("#boardMode [data-act=start]");
     let b = await until(async () => { const x = await bm(); return x.target === "201" ? x : null; }, 10000) || await bm();
     check(b.target === "201" && /Your throw/i.test(b.label) && /Dart 1/.test(b.count), "the game on the board: 201, your throw, dart 1: " + b.label + " " + b.target);
+    check(b.count === "Dart 1 of 3", "a single game: the count alone, no legs score: " + b.count);
     check(/Club bot\s*201/.test(b.opp), "the bot's score beside it: " + b.opp);
     check(b.targetClass === "you" && b.targetColor === "rgb(34, 197, 94)", "your throw: the big number is green: " + b.targetClass + " " + b.targetColor);
     await until(async () => /watching the board/i.test(await ipad.$eval("#camStatus", (e) => e.textContent)), 15000);
@@ -190,6 +191,17 @@ const { check, failed } = H.checker();
     gm.remaining.player = 40; gm.visitStart = 40;
     const mGame = await inject(gm, { opponent: "human", oppEmail: "p2@example.com", seriesTarget: 3 }, { human: true, names: { player: "Marwan", bot: "Ash" }, opponentEmail: "p2@example.com" },
       { target: 3, wins: { player: 1, bot: 1 }, gamesPlayed: 2, nextFirst: "player", id: "mtest12345" });
+    // In a match the legs score is big beside the dart count (it was only in the small line under the strip).
+    const legs = await ipad.evaluate(() => {
+      const b = document.getElementById("boardMode"), l = b.querySelector("[data-ref=count] .bm-legs"), side = b.querySelector(".bm-side").getBoundingClientRect();
+      if (!l) return null;
+      const r = l.getBoundingClientRect(), nums = [...l.querySelectorAll("b")];
+      return { text: l.textContent, label: l.getAttribute("aria-label"), px: parseFloat(getComputedStyle(nums[0]).fontSize), colors: nums.map((x) => getComputedStyle(x).color),
+        inside: r.left >= side.left - 1 && r.right <= side.right + 1, count: b.querySelector("[data-ref=count]").textContent };
+    });
+    check(legs && legs.text === "Marwan1–1Ash" && /Dart 1 of 3/.test(legs.count), "a match: the legs score beside the dart count: " + JSON.stringify(legs && [legs.text, legs.count]));
+    check(legs && legs.px >= 40 && legs.colors[0] === "rgb(34, 197, 94)" && legs.colors[1] === "rgb(125, 211, 252)" && legs.inside, "big, green and blue like the big number, and inside its column: " + JSON.stringify(legs && [legs.px, legs.colors, legs.inside]));
+    check(legs && /Marwan 1, Ash 1\. First to 3\./.test(legs.label), "and it is read out as the match score: " + (legs && legs.label));
     await until(async () => /watching the board/i.test(await ipad.$eval("#camStatus", (e) => e.textContent)), 15000);
     await camDart("D20");
     await station.send({ type: "takeout", darts: 1 }); await H.sleep(1500);
