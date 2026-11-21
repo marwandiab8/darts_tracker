@@ -236,9 +236,53 @@
   const other = (who) => (who === "player" ? "bot" : "player");
   const emptyMarks = () => Object.fromEntries(CRICKET_NUMBERS.map((n) => [n, 0]));
 
+  // --- the Invisible Man: no bot, a dart limit -------------------------------------------------------------
+  // A leg of x01 against a dart limit (default 27, his median winning leg in Nov 2026): check out within
+  // it to win; the dart that uses it up without a checkout loses the leg to the Invisible Man, who is the
+  // "bot" side of the game (he never throws, so the turn never passes; his side keeps the start score).
+  // "Moves with you": one dart fewer after a won leg, one more after two lost legs in a row (limitState).
+  const LIMITS = [21, 24, 27, 30];
+  const LIMIT = { start: 27, min: 15, max: 45 };
+  const cleanLimit = (n) => { const v = Math.round(Number(n)); return Number.isFinite(v) && v >= 1 && v <= 99 ? v : null; };
+  const isLimitGame = (game) => !!(game && cleanLimit(game.limit));
+  // Darts of the limit not thrown yet (the visit in progress counted), or null for a game without one.
+  const limitLeft = (game) => (isLimitGame(game) ? Math.max(0, game.limit - game.darts.player.length) : null);
+  // The darts this visit can have: 3, or fewer when the limit runs out inside it.
+  function visitMax(game) {
+    if (!isLimitGame(game)) return 3;
+    return Math.max(0, Math.min(3, game.limit - (game.darts.player.length - game.visitDarts.length)));
+  }
+  // The limit runs out: the visit is over and the leg is the Invisible Man's.
+  function checkLimit(game) {
+    if (!isLimitGame(game) || game.winner || game.darts.player.length < game.limit) return false;
+    game.visitDone = true;
+    game.winner = "bot";
+    return true;
+  }
+  // The limit for the next leg, from the saved limit games that move ("Moves with you"), oldest first:
+  // { limit, played, won, lost, lossRun }. Fixed-limit games don't move it.
+  function limitState(games) {
+    const list = (games || []).filter((g) => g && cleanLimit(g.dartLimit) && g.limitAuto === true && (g.result === "won" || g.result === "lost"))
+      .sort((a, b) => String(a.timestamp).localeCompare(String(b.timestamp)) || (Number(a.leg) || 0) - (Number(b.leg) || 0));
+    let limit = LIMIT.start, won = 0, lost = 0, lossRun = 0;
+    for (const g of list) {
+      if (g.result === "won") { won += 1; lossRun = 0; limit = Math.max(LIMIT.min, limit - 1); }
+      else { lost += 1; lossRun += 1; if (lossRun >= 2) { limit = Math.min(LIMIT.max, limit + 1); lossRun = 0; } }
+    }
+    return { limit, played: list.length, won, lost, lossRun };
+  }
+  // Every finished limit leg (fixed or moving): { played, won, lost, best: fewest darts in a won leg }.
+  function limitRecord(games) {
+    const list = (games || []).filter((g) => g && cleanLimit(g.dartLimit) && (g.result === "won" || g.result === "lost"));
+    const wins = list.filter((g) => g.result === "won");
+    const darts = wins.map((g) => (Array.isArray(g.playerDarts) ? g.playerDarts.length : 0)).filter((n) => n > 0);
+    return { played: list.length, won: wins.length, lost: list.length - wins.length, best: darts.length ? Math.min(...darts) : null };
+  }
+
   function createGame(options) {
-    const kind = options && options.kind === "cricket" ? "cricket" : "x01";
-    const first = options && options.first === "bot" ? "bot" : "player";
+    const limit = options ? cleanLimit(options.limit) : null;
+    const kind = !limit && options && options.kind === "cricket" ? "cricket" : "x01";
+    const first = !limit && options && options.first === "bot" ? "bot" : "player";
     const game = {
       kind,
       first,
@@ -252,8 +296,9 @@
       darts: { player: [], bot: [] },
       undo: [],
     };
-    if (options && options.bot) { game.botModel = CALIB[options.botModel] ? options.botModel : BOT_MODEL; game.bot = botFor(options.bot); }
-    if (options && options.bullUp && typeof options.bullUp === "object") game.bullUp = JSON.parse(JSON.stringify(options.bullUp));
+    if (limit) { game.limit = limit; if (options.limitAuto) game.limitAuto = true; }
+    if (!limit && options && options.bot) { game.botModel = CALIB[options.botModel] ? options.botModel : BOT_MODEL; game.bot = botFor(options.bot); }
+    if (!limit && options && options.bullUp && typeof options.bullUp === "object") game.bullUp = JSON.parse(JSON.stringify(options.bullUp));
     if (kind === "x01") {
       const wanted = Number(options && options.startScore);
       game.startScore = START_SCORES.includes(wanted) ? wanted : 501;
@@ -364,6 +409,7 @@
         event = "win";
       }
     }
+    if (checkLimit(game) && event === "ok") event = "limit";
     if (!game.visitDone && game.visitDarts.length >= 3) game.visitDone = true;
     return { hit, event, visitDone: game.visitDone, winner: game.winner };
   }
@@ -375,6 +421,13 @@
     const totals = new Set();
     for (const a of values) for (const b of values) for (const c of values) totals.add(a + b + c);
     return totals;
+  })();
+  // The totals one or two darts can make: the last visit of a limit that isn't a multiple of 3.
+  const FEWER_DART_SCORES = (() => {
+    const values = [0, ...DART_OPTIONS.map((dart) => dart.points)];
+    const two = new Set();
+    for (const a of values) for (const b of values) two.add(a + b);
+    return { 1: new Set(values), 2: two };
   })();
 
   function canScoreVisit(score) {
@@ -390,15 +443,18 @@
     if (game.winner) throw new Error("The game is over.");
     if (game.visitDone || game.visitDarts.length) throw new Error("This visit has already started.");
     if (!canScoreVisit(score)) throw new Error("Three darts cannot score " + score + ".");
+    // Against a dart limit the last visit can have fewer than three darts.
+    const most = visitMax(game);
+    if (most < 3 && !FEWER_DART_SCORES[most].has(score)) throw new Error((most === 1 ? "One dart" : "Two darts") + " cannot score " + score + ".");
     const who = game.turn;
     const left = game.remaining[who];
     const after = left - score;
     const fewest = after === 0 ? fewestDarts(left, game.doubleOut) : null;
-    const bust = after < 0 || (game.doubleOut && after === 1) || (after === 0 && !fewest);
-    let count = 3;
-    if (after === 0 && fewest) {
+    const bust = after < 0 || (game.doubleOut && after === 1) || (after === 0 && (!fewest || fewest > most));
+    let count = most;
+    if (after === 0 && fewest && fewest <= most) {
       count = Number(dartsUsed);
-      if (!Number.isInteger(count) || count < fewest || count > 3) throw new Error("A finish from " + left + " takes " + fewest + " to 3 darts.");
+      if (!Number.isInteger(count) || count < fewest || count > most) throw new Error("A finish from " + left + " takes " + fewest + " to " + most + " darts.");
     }
     game.undo.push(snapshot(game));
     game.visitInput = { t: "v", score, n: count };
@@ -416,6 +472,7 @@
         event = "win";
       }
     }
+    if (checkLimit(game) && event === "ok") event = "limit";
     return { event, score, darts: count, visitDone: true, winner: game.winner };
   }
 
@@ -454,8 +511,11 @@
     if (game.winner) throw new Error("The game is over.");
     if (game.visitDone || game.visitDarts.length) throw new Error("This visit has already started.");
     const who = game.turn;
+    const most = visitMax(game);
+    if (Array.isArray(scores) && scores.length > most) throw new Error("Only " + most + (most === 1 ? " dart is" : " darts are") + " left.");
     const outcome = evaluateDarts(game.remaining[who], game.doubleOut, scores);
     if (outcome.error) throw new Error(outcome.error);
+    if (outcome.event === "ok") outcome.darts = Math.min(outcome.darts, most);
     game.undo.push(snapshot(game));
     game.visitInput = { t: "l", scores: scores.slice() };
     for (let i = 0; i < outcome.darts; i += 1) game.darts[who].push({ s: "?" });
@@ -467,7 +527,8 @@
       game.remaining[who] = outcome.left;
       if (outcome.event === "win") game.winner = who;
     }
-    return { event: outcome.event, score: outcome.event === "bust" ? 0 : outcome.total, darts: outcome.darts, visitDone: true, winner: game.winner };
+    const limitOut = checkLimit(game);
+    return { event: limitOut && outcome.event === "ok" ? "limit" : outcome.event, score: outcome.event === "bust" ? 0 : outcome.total, darts: outcome.darts, visitDone: true, winner: game.winner };
   }
 
   // Take back the last dart of the visit that is still open.
@@ -502,7 +563,9 @@
     game.visitDarts = [];
     game.visitDone = false;
     game.undo = [];
-    if (!game.winner) {
+    if (!game.winner && isLimitGame(game)) {
+      game.round += 1; // nobody else throws: the next visit is yours again
+    } else if (!game.winner) {
       game.turn = other(who);
       if (game.turn === game.first) game.round += 1;
     }
@@ -673,6 +736,7 @@
   // bot it was started with, and a bull-up already decided, come along.
   const gameOptions = (game) => {
     const o = { kind: game.kind, startScore: game.startScore, doubleOut: game.doubleOut, first: game.first };
+    if (isLimitGame(game)) { o.limit = game.limit; if (game.limitAuto) o.limitAuto = true; }
     if (CALIB[game.botModel] && game.bot) { o.bot = Object.assign({}, game.bot); o.botModel = game.botModel; }
     if (game.bullUp) o.bullUp = JSON.parse(JSON.stringify(game.bullUp));
     return o;
@@ -781,7 +845,7 @@
     if (ev.k === "u") {
       if (over) return [{ t: "late", ev }];
       if (hold.wait && hold.queue.length) { hold.queue.push(ev); return [{ t: "held", ev }]; }
-      if (game.visitDarts.length + hold.wait >= 3) return [{ t: "late", ev }];
+      if (game.visitDarts.length + hold.wait >= visitMax(game)) return [{ t: "late", ev }];
       hold.wait += 1;
       return [{ t: "wait", ev }];
     }
@@ -1137,7 +1201,8 @@
   function requireLine(game, who) {
     if (!game || game.kind !== "x01") return "";
     const rem = game.remaining[who];
-    if (!(rem <= 170) || !checkoutRoute(rem, 3, game.doubleOut !== false)) return "";
+    const darts = isLimitGame(game) ? Math.min(3, limitLeft(game)) : 3;
+    if (!(rem <= 170) || darts < 1 || !checkoutRoute(rem, darts, game.doubleOut !== false)) return "";
     return "You require " + rem;
   }
 
@@ -1208,8 +1273,9 @@
       if ((visit.marks || 0) >= 9) return { kind: "marks", big: "9 marks", sub: "Nine marks in one visit!", who: visit.who };
       return null;
     }
-    if (won && visit.scored >= 100) return { kind: "finish", big: String(visit.scored), sub: "Ton-plus finish!", who: visit.who };
-    if (won) return { kind: "win", big: "Game shot", sub: visit.scored + " checkout", who: visit.who };
+    if (won && visit.scored >= 100) return { kind: "finish", big: String(visit.scored), sub: "Ton-plus finish!" + (isLimitGame(game) ? " In " + game.darts.player.length + " darts" : ""), who: visit.who };
+    if (won) return { kind: "win", big: "Game shot", sub: visit.scored + " checkout" + (isLimitGame(game) ? ", in " + game.darts.player.length + " darts" : ""), who: visit.who };
+    if (isLimitGame(game) && game.winner === "bot" && game.visits[game.visits.length - 1] === visit) return { kind: "limit", big: "Out of darts", sub: visit.remaining + " left after " + game.limit + " darts", who: "bot" };
     const mine = game.visits.filter((v) => v.who === visit.who);
     const nine = game.startScore === 501 && mine.length === 2 && mine[1] === visit && !mine.some((v) => v.bust) && visit.remaining <= 141 && !!checkoutRoute(visit.remaining, 3, game.doubleOut !== false);
     if (!visit.bust && visit.scored === 180) return { kind: "180", big: "180", sub: nine ? "Nine-dart watch: " + visit.remaining + " left" : "One hundred and eighty!", who: visit.who };
@@ -1377,7 +1443,7 @@
     heatStats,
     cleanDarts,
     BOT_MODEL, TAIL, LEVEL_AVG, STYLES, STYLE_F, STYLE_K, doubleRatio, CALIB, botParams, spreadThrow, botFor, nearestRank, botThrowAt, botDart, realToApp, appToReal, aimReal,
-    LADDER, ladderState, startBullUp, bullUpOn, bullUpThrow, mmFromCentre,
+    LADDER, ladderState, LIMITS, LIMIT, isLimitGame, limitLeft, visitMax, limitState, limitRecord, startBullUp, bullUpOn, bullUpThrow, mmFromCentre,
     dartWords,
     visitView,
     requireLine,

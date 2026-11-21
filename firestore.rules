@@ -98,7 +98,7 @@ service cloud.firestore {
     function validBotGame(data) {
       return data.keys().hasOnly(['uid', 'timestamp', 'kind', 'startScore', 'doubleOut', 'rank', 'first', 'result',
           'durationSec', 'rounds', 'playerAvg', 'botAvg', 'playerScore', 'botScore', 'playerDarts', 'botDarts', 'visits',
-          'botModel', 'botTarget', 'botStyle', 'ladder', 'matchId', 'leg', 'legsToWin'])
+          'botModel', 'botTarget', 'botStyle', 'ladder', 'matchId', 'leg', 'legsToWin', 'dartLimit', 'limitAuto'])
         && (!data.keys().hasAny(['visits']) || (data.visits is list && data.visits.size() <= 400))
         // The real-board bot (practice-engine.js model 2): its average, how it plays, the ladder.
         && (!data.keys().hasAny(['botModel']) || (data.botModel is int && data.botModel >= 1 && data.botModel <= 9))
@@ -109,7 +109,7 @@ service cloud.firestore {
         && (!data.keys().hasAny(['matchId']) || (data.matchId is string && data.matchId.size() >= 4 && data.matchId.size() <= 40))
         && (!data.keys().hasAny(['leg']) || (data.leg is int && data.leg >= 1 && data.leg <= 30))
         && (!data.keys().hasAny(['legsToWin']) || (data.legsToWin is int && data.legsToWin >= 1 && data.legsToWin <= 11))
-        && data.keys().hasAll(['uid', 'timestamp', 'kind', 'rank', 'result', 'playerDarts', 'botDarts'])
+        && data.keys().hasAll(['uid', 'timestamp', 'kind', 'result', 'playerDarts', 'botDarts'])
         && data.uid == request.auth.uid
         && data.timestamp is string && data.timestamp.size() >= 10 && data.timestamp.size() <= 20
         && data.kind in ['x01', 'cricket']
@@ -118,7 +118,14 @@ service cloud.firestore {
                 && data.startScore is int && data.startScore >= 201 && data.startScore <= 701
                 && data.startScore % 100 == 1 && data.doubleOut is bool)
             : !data.keys().hasAny(['startScore', 'doubleOut']))
-        && data.rank in ['beginner', 'casual', 'club', 'league', 'pro']
+        // The Invisible Man (no bot, a dart limit): its limit in place of a level, 501 double out, no bot's
+        // darts. Every other game has the bot's level.
+        && (data.keys().hasAny(['dartLimit'])
+            ? (data.dartLimit is int && data.dartLimit >= 9 && data.dartLimit <= 60
+                && data.kind == 'x01' && data.startScore == 501 && data.doubleOut == true && data.botDarts.size() == 0
+                && !data.keys().hasAny(['rank', 'botModel', 'botTarget', 'botStyle', 'ladder'])
+                && (!data.keys().hasAny(['limitAuto']) || data.limitAuto is bool))
+            : (data.keys().hasAll(['rank']) && data.rank in ['beginner', 'casual', 'club', 'league', 'pro'] && !data.keys().hasAny(['limitAuto'])))
         && (!data.keys().hasAny(['first']) || data.first in ['player', 'bot'])
         && data.result in ['won', 'lost', 'abandoned']
         && data.playerDarts is list && data.playerDarts.size() <= 600
@@ -317,7 +324,7 @@ service cloud.firestore {
     // times. Owner only; a save that is tried again overwrites the same document.
     function validTrainingSession(data) {
       return data.keys().hasOnly(['uid', 'drill', 'drillVersion', 'settings', 'result', 'key', 'throws', 'startedAtMs', 'endedAtMs',
-          'activeMs', 'timestamp', 'localDate', 'complete', 'planRunId', 'createdAt'])
+          'activeMs', 'timestamp', 'localDate', 'complete', 'planRunId', 'createdAt', 'opponent'])
         && data.keys().hasAll(['uid', 'drill', 'settings', 'result', 'startedAtMs', 'timestamp', 'complete'])
         && data.uid == request.auth.uid
         && data.drill is string && data.drill.size() >= 1 && data.drill.size() <= 40
@@ -328,7 +335,10 @@ service cloud.firestore {
         && (!('throws' in data) || (data.throws is list && data.throws.size() <= 400))
         && (!('key' in data) || data.key is number || data.key == null)
         && (!('activeMs' in data) || (data.activeMs is number && data.activeMs >= 0 && data.activeMs <= 86400000))
-        && (!('planRunId' in data) || (data.planRunId is string && data.planRunId.size() <= 60));
+        && (!('planRunId' in data) || (data.planRunId is string && data.planRunId.size() <= 60))
+        // The other player of a two-player drill (Score More): their name and email, as versusGames keeps them.
+        && (!('opponent' in data) || (data.opponent is map && data.opponent.keys().hasOnly(['name', 'email']) && data.opponent.keys().hasAll(['email'])
+            && validEmail(data.opponent.email) && (!('name' in data.opponent) || (data.opponent.name is string && data.opponent.name.size() <= 40))));
     }
 
     match /trainingSessions/{sessionId} {

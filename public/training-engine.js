@@ -1017,7 +1017,351 @@
     historyCells: (h) => { const r = h.result || {}; return [r.darts != null ? String(r.darts) : "-", r.tries != null ? String(r.tries) : "-", r.skipped && r.skipped.length ? r.skipped.join(", ") : "none"]; },
   };
 
-  const DRILLS = [MARATHON, BIGTRIPLES, GAMEOF9, BOBS27, LADDER, TWODART];
+  // ---- Phase 4: pressure and warm-up ---------------------------------------------------------------------
+  const mmss = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${pad2(s % 60)}`; };
+  // A dart that scores its points (Score More): { read, sub, kind } for its box.
+  function pointsWords(d) {
+    const e = d.e || {};
+    const read = readLabel(d.l);
+    if (e.kind === "spare") return { read, sub: "Not counted: the visit was over", kind: "spare" };
+    if (!e.pts) {
+      const off = !d.b && (Number.isFinite(d.x) && Number.isFinite(d.y) ? Math.hypot(d.x, d.y) > 1 : true);
+      return { read: off ? "Outside" : "Miss", sub: "0", kind: "miss" };
+    }
+    return { read, sub: String(e.pts), kind: e.pts >= 40 ? "hit" : "stay" };
+  }
+  const visitTotal = (effects) => (effects || []).reduce((s, e) => s + ((e && e.pts) || 0), 0);
+  const one = (n) => Math.round(n * 10) / 10;
+
+  // Warm-up: a guided timer, the 20s for the first half and then the 19s, with a light count of the
+  // darts in the number (any ring). No best to chase. The clock is the practice timer's active time;
+  // the number changes, and the warm-up ends, at the end of the visit in which the time comes.
+  const WARMUP_SETS = { "20 19": ["20", "19"], "20": ["20"], "19 18": ["19", "18"] };
+  const WARMUP = {
+    id: "warmup",
+    version: 1,
+    name: "Warm-up",
+    category: "Warm-up",
+    difficulty: "Easy",
+    input: "hits",
+    timed: true,
+    noBest: true,
+    blurb: "Ten minutes on the clock: the 20s for the first half, then the 19s. A light count of darts in the number, and no best to chase.",
+    why: "A few minutes of easy throwing settles the arm and the rhythm before anything that counts. Any ring counts, so it stays relaxed, and the in-number rate tells you how the arm is today.",
+    rules: [
+      "Throw at the whole 20, any ring, until half the time is up, then at the 19. The clock counts active time: a pause, or three quiet minutes, stops it.",
+      "The number changes at the end of the visit in which the half-time comes, and the warm-up ends at the end of the visit in which the time is up.",
+      "Only the darts in the number are counted (the in-number rate, for each number). There is no personal best: it is a warm-up.",
+      "With the cameras on, a visit is the 3 darts since you last pulled them out. Darts the cameras did not see when you pull them out are misses.",
+      "By hand: tap how many of the 3 darts were in the number. Undo goes back one visit at a time, up to 10, from any device.",
+    ],
+    settings: [
+      { key: "minutes", label: "Minutes", type: "choice", default: "10", options: ["5", "10", "12", "15"].map((m) => ({ value: m, label: `${m} minutes` })) },
+      { key: "numbers", label: "Numbers", type: "choice", default: "20 19", options: [{ value: "20 19", label: "The 20s, then the 19s" }, { value: "20", label: "The 20s only" }, { value: "19 18", label: "The 19s, then the 18s" }] },
+    ],
+    keyMetric: { id: "rate", label: "In the number", better: "higher" },
+    keyText: (res) => `${res.rate}%`,
+    scoreLabel: "In the number",
+    pbKey: (s) => `warmup:${s.minutes}:${String(s.numbers).replace(/ /g, "-")}`,
+    start(s) {
+      const numbers = (WARMUP_SETS[s.numbers] || WARMUP_SETS["20 19"]).slice();
+      return { minutes: num(s.minutes, 10), numbers, stage: 0, per: Object.fromEntries(numbers.map((n) => [n, { hits: 0, darts: 0 }])), hits: 0, darts: 0, visits: [], over: false };
+    },
+    target(play) {
+      if (!play || play.over) return null;
+      const n = play.numbers[play.stage];
+      return { key: `N${n}`, big: n, label: n, spoken: n, intro: `The ${n}s, any ring`, number: n, rings: "SDT", value: 1, hitLabel: `S${n}`, lit: [{ n: Number(n), beds: "SDT", tint: true }], index: play.stage };
+    },
+    dartEffect(play, t, dart) { return { kind: parseLabel(dart.l).number === t.number ? "hit" : "miss", key: t.key }; },
+    applyVisit(play, t, visit, settings, clock) {
+      const n = t.number;
+      play.per[n].hits += visit.hits; play.per[n].darts += 3;
+      play.hits += visit.hits; play.darts += 3;
+      const total = play.minutes * 60000, part = total / play.numbers.length;
+      const el = clock && Number.isFinite(clock.elapsedMs) ? clock.elapsedMs : 0;
+      const stage = Math.min(play.numbers.length - 1, Math.floor(el / part));
+      const rec = { n, hits: visit.hits, switched: stage > play.stage ? play.numbers[stage] : null, at: Math.round(el) };
+      if (stage > play.stage) play.stage = stage;
+      if (el >= total) play.over = true;
+      play.visits.push(rec);
+      return rec;
+    },
+    isOver: (play) => !!(play && play.over),
+    summarize(play) {
+      return { rate: play.darts ? Math.round((play.hits / play.darts) * 100) : 0, hits: play.hits, darts: play.darts, minutes: play.minutes, numbers: play.numbers.slice(), per: clone(play.per), visits: play.visits.length };
+    },
+    cells(play) {
+      const shown = play.visits.slice(-12);
+      const out = shown.map((v, i) => ({ key: `v${play.visits.length - shown.length + i}`, num: v.n, state: `done h${v.hits}`, sub: `${v.hits} in`, title: `The ${v.n}: ${hitsWords[v.hits].toLowerCase()}` }));
+      if (!play.over) out.push({ key: `v${play.visits.length}`, num: play.numbers[play.stage], state: "current", sub: "now", title: "This visit" });
+      return out.slice(-12);
+    },
+    cols: () => 12,
+    progress: (play) => ({ done: play.stage, of: play.numbers.length, unit: "numbers" }),
+    next: (play) => play.numbers.slice(play.stage + 1),
+    nextLabel: (play) => (play.stage + 1 < play.numbers.length ? "Then" : ""),
+    capHtml: (play, t, clock) => `<strong>${pct(play.hits, play.darts)}</strong> in the number · ${play.numbers.map((n) => `${n}: ${pct(play.per[n].hits, play.per[n].darts)}`).join(", ")}${clock ? ` · ${mmss(play.minutes * 60000 - clock.elapsedMs)} left` : ""}`,
+    // The clock: what is left, and of which number.
+    paceText(play, best, clock) {
+      if (!clock || play.over) return null;
+      const total = play.minutes * 60000, part = total / play.numbers.length;
+      const el = clock.elapsedMs;
+      if (el >= total) return "Time's up: this visit is the last";
+      const nextAt = Math.min(total, (play.stage + 1) * part);
+      if (el >= nextAt && play.stage + 1 < play.numbers.length) return `Half time: the ${play.numbers[play.stage + 1]}s after this visit`;
+      return play.stage + 1 < play.numbers.length ? `${mmss(nextAt - el)} at the ${play.numbers[play.stage]}s, then the ${play.numbers[play.stage + 1]}s` : `${mmss(total - el)} left`;
+    },
+    finishNote: (play) => `${pct(play.hits, play.darts)} in the number`,
+    scoreText: (play) => pct(play.hits, play.darts),
+    dartWords: (d, t) => bedWords(d, t),
+    fixOptions: (d, view) => bedFixOptions(d, view && view.targetKey),
+    visitWords: (t, rec) => `The ${t.label}: ${hitsWords[rec.hits].toLowerCase()}${rec.switched ? `. Now the ${rec.switched}s` : ""}`,
+    undoLabel: (t, rec) => `The ${t.label}: ${hitsWords[rec.hits].toLowerCase()}`,
+    // Quiet: only the half-time and the end are said. "Half time. The 19s now." / "Warm-up done. 64% in the number."
+    voiceLine({ visit, play, over }) {
+      if (over) return `Warm-up done. ${pct(play.hits, play.darts)} in the number.`;
+      if (visit.switched) return `Half time. The ${visit.switched}s now.`;
+      return null;
+    },
+    moment({ visit, play, over }) {
+      if (over) return { big: "Warmed up", sub: `${pct(play.hits, play.darts)} in the number`, kind: "finish" };
+      if (visit.switched) return { big: `The ${visit.switched}s`, sub: `${pct(play.per[visit.n].hits, play.per[visit.n].darts)} at the ${visit.n}s`, kind: "nine" };
+      return null;
+    },
+    resultText: (res, ctx) => `${res.hits} of ${res.darts} darts in the number (${res.rate}%): ${res.numbers.map((n) => `the ${n}s ${pct(res.per[n].hits, res.per[n].darts)}`).join(", ")}. ${ctx.time}.`,
+    facts: (res, ctx) => [{ k: "In the number", v: `${res.hits} / ${res.darts}` }]
+      .concat(res.numbers.map((n) => ({ k: `The ${n}s`, v: pct(res.per[n].hits, res.per[n].darts) })))
+      .concat([{ k: "Visits", v: res.visits }, { k: "Time", v: ctx.time }]),
+    doneText: (res) => `Warm-up: ${res.rate}% in the number. ${res.numbers.map((n) => `${n}s ${pct(res.per[n].hits, res.per[n].darts)}`).join(", ")}.`,
+    historyColumns: [{ label: "In the number", num: true }, { label: "Darts", num: true }, { label: "Numbers" }],
+    historyCells: (h) => { const r = h.result || {}; return [h.key != null ? `${h.key}%` : "-", r.darts != null ? String(r.darts) : "-", r.numbers ? r.numbers.map((n) => `${n}: ${pct(r.per[n].hits, r.per[n].darts)}`).join(" ") : "-"]; },
+  };
+
+  // Score More, on your own: every visit must beat your last (or your average so far). A visit that
+  // doesn't is a strike; at the strike limit it ends. The score is the longest run of visits beaten.
+  // The first visit sets the mark. "Beat" is more than: the same score is a strike.
+  const SM_PAD = ["T20", "S20", "S5"];
+  function smBar(play) {
+    if (!play.scores.length) return null;
+    return play.beat === "average" ? play.total / play.scores.length : play.scores[play.scores.length - 1];
+  }
+  const SCOREMORE = {
+    id: "scoremore",
+    version: 1,
+    name: "Score More",
+    category: "Pressure",
+    difficulty: "Hard",
+    input: "darts",
+    blurb: "Every visit must beat your last one. A visit that doesn't is a strike, and three strikes end it. The score is your longest run of visits beaten.",
+    why: "Scoring under pressure: every visit has a number to beat. Beating your last visit asks for a rising run, which is short at a 50 average; beating your average is the gentler version and still punishes the bad visit.",
+    rules: [
+      "The first visit sets the mark. Each visit after it must score more than your last visit (or, with \"Beat your average\", more than your 3-dart average so far). The same score is not enough.",
+      "A visit that doesn't is a strike; three strikes (or the number you set) and it is over. The score is the longest run of visits in a row that beat the mark.",
+      "With the cameras on, a visit is the 3 darts since you last pulled them out, and nothing ends it early. Darts the cameras did not see when you pull them out are misses (0); a 4th dart before you pull them out is not counted.",
+      "By hand: tap where each dart landed on the board, or T20, 20, 5 or Miss, or choose another dart. Undo goes back one visit at a time, up to 10, from any device. Tap a dart on the board or in its box to fix what the cameras read.",
+    ],
+    settings: [
+      { key: "beat", label: "Beat", type: "choice", default: "last", options: [{ value: "last", label: "Your last visit" }, { value: "average", label: "Your average" }] },
+      { key: "strikes", label: "Strikes", type: "number", default: 3, min: 1, max: 9, step: 1, help: "Three is the classic." },
+    ],
+    keyMetric: { id: "longest", label: "Longest run", better: "higher" },
+    scoreLabel: "Run",
+    pbKey: (s) => `scoremore:${s.beat}:${num(s.strikes, 3)}`,
+    start(s) { return { beat: s.beat === "average" ? "average" : "last", strikes: num(s.strikes, 3), struck: 0, run: 0, longest: 0, total: 0, scores: [], visits: [], over: false }; },
+    target(play) {
+      if (!play || play.over) return null;
+      const bar = smBar(play);
+      const shown = bar == null ? null : play.beat === "average" ? one(bar) : bar;
+      return { key: "SM", big: bar == null ? "Score" : String(shown), heroLabel: bar == null ? "First visit: set the mark" : play.beat === "average" ? "Beat your average" : "Beat", label: bar == null ? "The mark" : `Beat ${shown}`, spoken: bar == null ? "Set the mark" : `Beat ${shown}`, intro: bar == null ? "Set the mark" : `Beat ${shown}`, number: null, value: 1, bar, lit: [{ n: 20, beds: "T", tint: true }] };
+    },
+    dartEffect(play, t, dart) { const p = parseLabel(dart.l); return { kind: p.points ? "score" : "miss", key: t.key, pts: p.points }; },
+    applyVisit(play, t, visit) {
+      const score = visitTotal(visit.effects);
+      const bar = smBar(play);
+      const beat = bar == null ? null : score > bar;
+      if (beat) { play.run += 1; play.longest = Math.max(play.longest, play.run); }
+      else if (beat === false) { play.struck += 1; play.run = 0; }
+      play.scores.push(score);
+      play.total += score;
+      if (play.struck >= play.strikes) play.over = true;
+      const rec = { score, bar: bar == null ? null : one(bar), beat, run: play.run, struck: play.struck, longest: play.longest };
+      play.visits.push(rec);
+      return rec;
+    },
+    isOver: (play) => !!(play && play.over),
+    summarize(play) {
+      const n = play.scores.length;
+      return { longest: play.longest, visits: n, struck: play.struck, strikes: play.strikes, beat: play.beat, average: n ? one(play.total / n) : 0, best: n ? Math.max(...play.scores) : 0, beaten: play.visits.filter((v) => v.beat).length };
+    },
+    cells(play) {
+      const shown = play.visits.slice(-12);
+      return shown.map((v, i) => ({ key: `v${play.visits.length - shown.length + i}`, num: String(v.score), state: v.beat ? "done h3" : v.beat === false ? "done h0" : "done h1", sub: v.beat ? `run ${v.run}` : v.beat === false ? `strike ${v.struck}` : "the mark", title: v.bar == null ? `${v.score}: the mark` : `${v.score} against ${v.bar}: ${v.beat ? "beaten" : "a strike"}` }));
+    },
+    cols: () => 12,
+    progress: (play) => ({ done: play.struck, of: play.strikes, unit: "strikes" }),
+    next: () => [],
+    live(play, t, effects) {
+      const so = visitTotal(effects);
+      const bar = smBar(play);
+      const need = bar == null ? null : Math.floor(bar) + 1 - so;
+      return { pad: SM_PAD.slice(), next: [], nextLabel: !effects.length ? "" : bar == null ? `${so} so far` : need <= 0 ? `${so}: beaten` : `${so} so far · ${need} more`, nextClass: need != null && need <= 0 ? "co" : undefined };
+    },
+    capHtml: (play) => `<strong>Run ${play.run}</strong> · longest ${play.longest} · strikes ${play.struck} of ${play.strikes}${play.scores.length ? ` · average ${one(play.total / play.scores.length)}` : ""}`,
+    paceText: (play, best) => (best && finiteKey(best.key) ? (play.longest > Number(best.key) ? `+${play.longest - Number(best.key)} on your best run` : `Your best run: ${best.key}`) : null),
+    finishNote: (play) => `Longest run ${play.longest}`,
+    scoreText: (play) => String(play.run),
+    dartWords: (d) => pointsWords(d),
+    fixOptions: (d) => x01FixOptions(d),
+    visitWords: (t, rec) => (rec.bar == null ? `${rec.score}: the mark` : rec.beat ? `${rec.score} beat ${rec.bar}: a run of ${rec.run}` : `${rec.score}, not more than ${rec.bar}: strike ${rec.struck}`),
+    undoLabel: (t, rec) => `${rec.score}${rec.beat ? ", beaten" : rec.beat === false ? ", a strike" : ""}`,
+    // "Sixty. The mark." / "Eighty-one. Run of 2." / "Forty-one. Strike 2. Beat 41." / "... Three strikes. Longest run 4."
+    voiceLine({ visit, play, over }) {
+      const parts = [String(visit.score)];
+      if (visit.bar == null) parts.push("The mark");
+      else if (visit.beat) parts.push(`Run of ${visit.run}`);
+      else parts.push(`Strike ${visit.struck}`);
+      if (over) parts.push(`${plural(play.strikes, "strike")}. Longest run ${play.longest}`);
+      else { const b = smBar(play); parts.push(`Beat ${play.beat === "average" ? one(b) : b}`); }
+      return parts.join(". ") + ".";
+    },
+    moment({ visit, play, over }) {
+      if (over) return { big: `Run of ${play.longest}`, sub: `your longest, in ${plural(play.scores.length, "visit")}`, kind: "finish" };
+      if (visit.beat && visit.score >= 100) return { big: String(visit.score), sub: `Run of ${visit.run}`, kind: "nine" };
+      return null;
+    },
+    resultText: (res, ctx) => `Longest run ${res.longest}: ${res.beaten} of ${res.visits} visits beat the mark, average ${res.average}, best visit ${res.best}. ${ctx.time}.`,
+    facts: (res, ctx) => [
+      { k: "Longest run", v: res.longest },
+      { k: "Visits", v: res.visits },
+      { k: "Beaten", v: `${res.beaten} / ${Math.max(0, res.visits - 1)}` },
+      { k: "Average", v: res.average },
+      { k: "Best visit", v: res.best },
+      { k: "Best so far", v: ctx.best ? ctx.best.key : res.longest },
+      { k: "Time", v: ctx.time },
+    ],
+    doneText: (res) => `Score More: longest run ${res.longest}, ${res.visits} visits, average ${res.average}.`,
+    historyColumns: [{ label: "Longest run", num: true }, { label: "Visits", num: true }, { label: "Average", num: true }],
+    historyCells: (h) => { const r = h.result || {}; return [h.key != null ? String(h.key) : "-", r.visits != null ? String(r.visits) : "-", r.average != null ? String(r.average) : "-"]; },
+  };
+
+  // Score More, two players (your saved players): one visit each, you first. After each round, whoever
+  // scored less in it must beat their own score from that round next time, or it's a strike (a tie: both
+  // must). The first round sets the marks. At the strike limit the other player wins; both at once is a
+  // draw. The other player is the session's meta.opponent { name, email }: the email is kept with the
+  // saved session (as versusGames keeps it), never shown in a list or a CSV.
+  const SCOREMORE2 = {
+    id: "scoremore2",
+    version: 1,
+    name: "Score More: two players",
+    category: "Pressure",
+    difficulty: "Hard",
+    input: "darts",
+    noBest: true,
+    needsOpponent: true,
+    blurb: "You and a saved player, one visit each. Whoever scores less in a round must beat their own score next round, or it's a strike. Three strikes and the other player wins.",
+    why: "The pressure of a match without a full leg: every round, the player behind has a number to beat with the other one watching.",
+    rules: [
+      "One visit each, you first. The first round sets the marks.",
+      "After each round, whoever scored less must beat their own score from that round in the next one (more than it, not the same). If they don't, it's a strike. A tied round: both must.",
+      "Three strikes (or the number you set) and the other player wins. Both reaching it in the same round is a draw.",
+      "With the cameras on, a visit is the 3 darts since the darts were last pulled out; the next player throws once they are out. Darts the cameras did not see are misses (0).",
+      "By hand: tap where each dart landed, or T20, 20, 5 or Miss, or choose another dart. Undo goes back one visit at a time, up to 10, from any device.",
+    ],
+    settings: [
+      { key: "strikes", label: "Strikes", type: "number", default: 3, min: 1, max: 9, step: 1, help: "Three is the classic." },
+    ],
+    keyMetric: { id: "won", label: "Won", better: "higher" },
+    keyText: (res) => (res.draw ? "Draw" : res.winner === 0 ? "Won" : "Lost"),
+    scoreLabel: "Strikes",
+    pbKey: (s) => `scoremore2:${num(s.strikes, 3)}`,
+    start(s, now, meta) {
+      const them = String((meta && meta.opponent && meta.opponent.name) || "Player 2").slice(0, 40);
+      // Each player's scores in a map of two lists (Firestore keeps no list inside a list).
+      return { strikes: num(s.strikes, 3), names: ["You", them], turn: 0, round: 1, sc: { p0: [], p1: [] }, struck: [0, 0], spot: [false, false], marks: [null, null], visits: [], over: false, winner: null };
+    },
+    target(play) {
+      if (!play || play.over) return null;
+      const w = play.turn, who = play.names[w];
+      const mark = play.spot[w] ? play.marks[w] : null;
+      return { key: `P${w}`, big: mark == null ? "Score" : String(mark), heroLabel: mark == null ? `${who}: throw` : `${who}: beat`, label: who, spoken: mark == null ? (w ? `${who} to throw` : "Your throw") : `${w ? who : "You"}, beat ${mark}`, intro: w ? `${who} to throw` : "You first", number: null, value: 1, who: w, mark, lit: [{ n: 20, beds: "T", tint: true }] };
+    },
+    dartEffect(play, t, dart) { const p = parseLabel(dart.l); return { kind: p.points ? "score" : "miss", key: t.key, pts: p.points }; },
+    applyVisit(play, t, visit) {
+      const w = play.turn, score = visitTotal(visit.effects);
+      const had = play.spot[w] ? play.marks[w] : null;
+      const strike = had != null && !(score > had);
+      if (strike) play.struck[w] += 1;
+      play.sc[`p${w}`].push(score);
+      const rec = { who: w, round: play.round, score, mark: had, strike, struck: play.struck[w], endRound: w === 1, spotNext: null };
+      if (w === 1) {
+        const a = play.sc.p0[play.sc.p0.length - 1], b = score;
+        play.marks = [a, b];
+        play.spot = [a <= b, b <= a];
+        rec.spotNext = play.spot.map((x, i) => (x ? i : -1)).filter((i) => i >= 0);
+        const out = play.struck.map((n) => n >= play.strikes);
+        if (out[0] || out[1]) { play.over = true; play.winner = out[0] && out[1] ? null : out[0] ? 1 : 0; }
+        play.turn = 0; play.round += 1;
+      } else play.turn = 1;
+      rec.over = play.over; rec.winner = play.winner;
+      play.visits.push(rec);
+      return rec;
+    },
+    isOver: (play) => !!(play && play.over),
+    summarize(play) {
+      const side = (w) => { const s = play.sc[`p${w}`]; return { name: play.names[w], visits: s.length, average: s.length ? one(s.reduce((a, b) => a + b, 0) / s.length) : 0, best: s.length ? Math.max(...s) : 0, strikes: play.struck[w] }; };
+      return { won: play.winner === 0 ? 1 : 0, winner: play.winner, draw: play.over && play.winner == null, rounds: play.visits.filter((v) => v.endRound).length, strikes: play.strikes, you: side(0), them: side(1) };
+    },
+    cells(play) {
+      const shown = play.visits.slice(-12);
+      return shown.map((v, i) => ({ key: `v${play.visits.length - shown.length + i}`, num: String(v.score), state: v.strike ? "done h0" : v.who ? "done h1" : "done h3", sub: `${v.who ? String(play.names[1]).slice(0, 6) : "You"}${v.strike ? " ✗" : ""}`, title: `${play.names[v.who]}, round ${v.round}: ${v.score}${v.mark != null ? ` against ${v.mark}` : ""}${v.strike ? ", a strike" : ""}` }));
+    },
+    cols: () => 12,
+    progress: (play) => ({ done: Math.max(play.struck[0], play.struck[1]), of: play.strikes, unit: "strikes" }),
+    next: () => [],
+    live(play, t, effects) {
+      const so = visitTotal(effects);
+      const need = t.mark == null ? null : t.mark + 1 - so;
+      return { pad: SM_PAD.slice(), next: [], nextLabel: !effects.length ? "" : need == null ? `${so} so far` : need <= 0 ? `${so}: beaten` : `${so} so far · ${need} more`, nextClass: need != null && need <= 0 ? "co" : undefined };
+    },
+    capHtml: (play) => `<strong>Round ${play.round}</strong> · strikes: you ${play.struck[0]}, ${play.names[1]} ${play.struck[1]} (of ${play.strikes})`,
+    finishNote: (play) => (play.winner == null ? "A draw" : play.winner === 0 ? "You won" : `${play.names[1]} won`),
+    scoreText: (play) => `${play.struck[0]} – ${play.struck[1]}`,
+    dartWords: (d) => pointsWords(d),
+    fixOptions: (d) => x01FixOptions(d),
+    visitWords: (t, rec) => `${t.label}: ${rec.score}${rec.mark != null ? (rec.strike ? `, not more than ${rec.mark}: strike ${rec.struck}` : `, beat ${rec.mark}`) : ""}`,
+    undoLabel: (t, rec) => `${t.label}: ${rec.score}`,
+    // "Sixty." / "Forty-one. Strike 1 for Sam." then at the round's end "Sam to beat 41." / "You win."
+    voiceLine({ visit, play }) {
+      const parts = [String(visit.score)];
+      if (visit.strike) parts.push(`Strike ${visit.struck}${visit.who ? ` for ${play.names[1]}` : ""}`);
+      if (visit.over) parts.push(play.winner == null ? "A draw" : play.winner === 0 ? "You win" : `${play.names[1]} wins`);
+      else if (visit.endRound) {
+        const on = visit.spotNext.map((w) => `${w ? play.names[1] : "you"} to beat ${play.marks[w]}`);
+        parts.push(on.join(", ").replace(/^./, (c) => c.toUpperCase()));
+      }
+      return parts.join(". ") + ".";
+    },
+    moment({ visit, play }) {
+      if (visit.over) return { big: play.winner == null ? "A draw" : play.winner === 0 ? "You win" : `${play.names[1]} wins`, sub: `after ${plural(play.round - 1, "round")}`, kind: "finish" };
+      if (visit.score >= 100 && !visit.strike) return { big: String(visit.score), sub: play.names[visit.who], kind: "nine" };
+      return null;
+    },
+    resultText: (res, ctx) => `${res.draw ? "A draw" : res.winner === 0 ? "You won" : `${res.them.name} won`} after ${plural(res.rounds, "round")}. Averages: you ${res.you.average}, ${res.them.name} ${res.them.average}. ${ctx.time}.`,
+    facts: (res, ctx) => [
+      { k: "Rounds", v: res.rounds },
+      { k: "Your strikes", v: res.you.strikes },
+      { k: `${res.them.name}'s strikes`, v: res.them.strikes },
+      { k: "Your average", v: res.you.average },
+      { k: `${res.them.name}'s average`, v: res.them.average },
+      { k: "Best visits", v: `${res.you.best} / ${res.them.best}` },
+      { k: "Time", v: ctx.time },
+    ],
+    doneText: (res) => `Score More against ${res.them.name}: ${res.draw ? "a draw" : res.winner === 0 ? "you won" : `${res.them.name} won`} after ${plural(res.rounds, "round")}.`,
+    historyColumns: [{ label: "Result" }, { label: "Against" }, { label: "Rounds", num: true }],
+    historyCells: (h) => { const r = h.result || {}; return [r.draw ? "Draw" : r.winner === 0 ? "Won" : r.winner === 1 ? "Lost" : "-", r.them ? String(r.them.name) : "-", r.rounds != null ? String(r.rounds) : "-"]; },
+  };
+
+  const DRILLS = [MARATHON, BIGTRIPLES, GAMEOF9, BOBS27, LADDER, TWODART, SCOREMORE, SCOREMORE2, WARMUP];
   const CATEGORIES = ["Scoring", "Doubles and checkouts", "Pressure", "Warm-up"];
   const drillOf = (id) => DRILLS.find((d) => d.id === id) || null;
 
@@ -1043,14 +1387,21 @@
   // ---- a session ------------------------------------------------------------------------------------
   const freshCam = (seq) => ({ seq: seq || 0, visit: null });
 
-  function newSession(drillId, settings, now, sessionKey) {
+  // extra: { opponent: { name, email } } for a drill with another player (Score More, two players).
+  function newSession(drillId, settings, now, sessionKey, extra) {
     const d = drillOf(drillId);
     if (!d) return null;
     const s = cleanSettings(d, settings);
+    const meta = { startedAtMs: now, sessionKey: sessionKey || null, drill: d.id, drillVersion: d.version, settings: s };
+    const opp = extra && extra.opponent;
+    if (d.needsOpponent) {
+      if (!opp || !opp.email) return null;
+      meta.opponent = { name: String(opp.name || "").trim().slice(0, 40) || String(opp.email).split("@")[0].slice(0, 40), email: String(opp.email).trim().slice(0, 254) };
+    }
     return {
-      meta: { startedAtMs: now, sessionKey: sessionKey || null, drill: d.id, drillVersion: d.version, settings: s },
+      meta,
       timer: PT.start(now),
-      play: d.start(s, now),
+      play: d.start(s, now, meta),
       cam: freshCam(0),
       throws: [],
       visitNo: 0,
@@ -1125,7 +1476,7 @@
     }
     const hits = effects.filter((e) => e && e.kind === "hit").length;
     const before = clone(sess.play);
-    const visit = d.applyVisit(sess.play, t, { hits, effects, darts: used }, sess.meta.settings);
+    const visit = d.applyVisit(sess.play, t, { hits, effects, darts: used }, sess.meta.settings, { now, elapsedMs: elapsedMs(sess, now) });
     sess.visitNo = (sess.visitNo || 0) + 1;
     used.forEach((x, i) => { sess.throws.push(throwOf(x, t, effects[i], sess.visitNo, x.src)); });
     if (sess.throws.length > MAX_THROWS) sess.throws.splice(0, sess.throws.length - MAX_THROWS);
@@ -1375,7 +1726,8 @@
     const scoredOpen = !!(v && visitComplete(v) && !v.out);
     const finished = isFinished(sess);
     const live = t && d.live ? d.live(sess.play, t, open ? open.darts.map((x) => x.e) : []) : null;
-    const pace = ctx && ctx.best && d.paceText ? d.paceText(sess.play, ctx.best) : null;
+    const clock = { elapsedMs: elapsedMs(sess, (ctx && ctx.now) || Date.now()) };
+    const pace = ((ctx && ctx.best) || d.timed) && d.paceText ? d.paceText(sess.play, ctx && ctx.best, clock) : null;
     const prog = d.progress(sess.play);
     const max = t ? dartsPerVisit(d, sess.play, t) : 3;
     const pullOut = scoredOpen && !finished && !allByHand(v);
@@ -1398,7 +1750,7 @@
       cells: d.cells(sess.play, t),
       done: prog.done,
       of: prog.of,
-      capHtml: d.capHtml ? d.capHtml(sess.play, t) : null,
+      capHtml: d.capHtml ? d.capHtml(sess.play, t, d.timed ? clock : undefined) : null,
       note: finished ? (d.finishNote ? d.finishNote(sess.play) : "Done") : pace || "",
     };
     if (heroLabel) view.label = heroLabel;
@@ -1442,6 +1794,7 @@
       createdAt: now,
     };
     if (extra && extra.planRunId) out.planRunId = String(extra.planRunId);
+    if (sess.meta.opponent && sess.meta.opponent.email) out.opponent = { name: String(sess.meta.opponent.name || "").slice(0, 40), email: String(sess.meta.opponent.email).slice(0, 254) };
     return out;
   }
   const counts = (h) => !!h && h.complete !== false && !!h.result;
@@ -1451,7 +1804,7 @@
   // The best saved session of this drill with these settings (same pbKey), or null.
   function personalBest(history, drillId, settings) {
     const d = drillOf(drillId);
-    if (!d) return null;
+    if (!d || d.noBest) return null;
     const key = d.pbKey(cleanSettings(d, settings));
     let best = null;
     for (const h of history || []) {
@@ -1461,7 +1814,7 @@
     return best;
   }
   // Whether a result beats the best (strictly).
-  const isNewBest = (drillId, key, best) => !!drillOf(drillId) && finiteKey(key) && (!best || !finiteKey(best.key) || better(drillOf(drillId), Number(key), Number(best.key)));
+  const isNewBest = (drillId, key, best) => !!drillOf(drillId) && !drillOf(drillId).noBest && finiteKey(key) && (!best || !finiteKey(best.key) || better(drillOf(drillId), Number(key), Number(best.key)));
   // Recent sessions of a drill, newest first, as the history list shows them.
   function historyRows(history, drillId) {
     return (history || []).filter((h) => h.drill === drillId).sort((a, b) => (b.startedAtMs || 0) - (a.startedAtMs || 0));
@@ -1524,6 +1877,6 @@
     manualVisit, manualDart, cameraDart, cameraTakeout, fixDart, undoStep, undoCount, undoStackOf,
     boardView, padFor, fixOptions, dartWords, summarize, historyPayload, personalBest, isNewBest, historyRows, stamp, localDate,
     checkoutRoute, checkoutTable, parseRoute, routeText, routeTotal, endsOnDouble, routeValid, isBogey, canDouble, doubleFor, x01Effect,
-    parseLabel, describe, spot, numberAt, neighbours, ordinal, hitsWords, readLabel, speakLabel, bedWords, bedFixOptions, clone,
+    parseLabel, describe, spot, numberAt, neighbours, ordinal, hitsWords, readLabel, speakLabel, bedWords, bedFixOptions, clone, pointsWords, mmss,
   };
 });

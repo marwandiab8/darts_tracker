@@ -767,7 +767,7 @@ test("the strip columns, the progress and the settings line for each drill", () 
 
 // ---- Phase 3: the scoring drills ---------------------------------------------------------------------------
 test("the registry order and the categories of the scoring drills", () => {
-  assert.deepEqual(E.DRILLS.map((d) => d.id), ["marathon", "bigtriples", "gameof9", "bobs27", "ladder121", "twodart"]);
+  assert.deepEqual(E.DRILLS.map((d) => d.id), ["marathon", "bigtriples", "gameof9", "bobs27", "ladder121", "twodart", "scoremore", "scoremore2", "warmup"]);
   assert.ok(["marathon", "bigtriples", "gameof9"].every((id) => E.drillOf(id).category === "Scoring" && E.drillOf(id).input === "hits"));
 });
 
@@ -923,4 +923,182 @@ test("Game of 9: nine darts at the whole number, a pass mark to move on, the dar
   assert.ok(E.isFinished(sess(c)) && rc.passedAll && rc.runDarts === 63);
   assert.equal(d.paceText(play(c), { result: { trail: [0, 9, 18, 27, 36, 45, 54, 72] } }), "9 darts ahead of your best");
   assert.deepEqual(E.fixOptions(Object.assign({ key: "NBULL", label: "SB" }, {}), { drill: "gameof9", targetKey: "NBULL" }).map((o) => o.id + (o.hit ? "!" : "")), ["DB!", "SB!", "other", "remove"]);
+});
+
+// ---- Phase 4: pressure and warm-up -----------------------------------------------------------------------
+const MIN = 60000;
+const visitBy = (u, labels, t) => labels.forEach((l, i) => { const r = E.manualDart(u, sess(u), l, (t || T0) + i); assert.ok(!r.error, r.error); });
+
+test("Warm-up: the 20s for the first half, then the 19s; it ends at the end of the visit in which the time is up; no best", () => {
+  const d = E.drillOf("warmup");
+  assert.equal(d.category, "Warm-up");
+  assert.equal(d.noBest, true);
+  assert.deepEqual(E.cleanSettings(d, {}), { minutes: "10", numbers: "20 19" });
+  const u = freshDrill("warmup", { minutes: "10" });
+  let t = E.target(sess(u));
+  assert.equal(t.big, "20");
+  assert.equal(t.rings, "SDT");
+  // Any ring of the 20 counts; a dart in the 1 doesn't.
+  E.cameraDart(u, sess(u), dart("T20", 20, "T"), T0 + 1000);
+  E.cameraDart(u, sess(u), dart("S20", 20, "S"), T0 + 2000);
+  const r = E.cameraDart(u, sess(u), dart("S1", 1, "S"), T0 + 3000);
+  assert.equal(r.scored.hits, 2);
+  assert.equal(r.scored.line, null, "quiet: nothing said for an ordinary visit");
+  E.cameraTakeout(u, sess(u), takeout(3), T0 + 4000);
+  // The clock: a visit at 5:30 switches to the 19 when it is scored.
+  const view = E.boardView(sess(u), { now: T0 + 2 * MIN });
+  assert.match(view.note, /^3:00 at the 20s, then the 19s$/);
+  assert.match(view.capHtml, /67%<\/strong> in the number · 20: 67%, 19: -/);
+  sess(u).timer.lastActivityAt = T0 + 5.5 * MIN; // throwing all along (no idle pause)
+  const m = E.manualVisit(u, sess(u), 3, T0 + 5.5 * MIN);
+  assert.equal(m.visit.switched, "19");
+  assert.equal(m.line, "Half time. The 19s now.");
+  assert.equal(m.moment.big, "The 19s");
+  t = E.target(sess(u));
+  assert.equal(t.big, "19");
+  // Time up at 10:00: the visit then ends it.
+  sess(u).timer.lastActivityAt = T0 + 10 * MIN;
+  assert.match(E.boardView(sess(u), { now: T0 + 10 * MIN }).note, /Time's up: this visit is the last/);
+  const end = E.manualVisit(u, sess(u), 1, T0 + 10 * MIN + 1000);
+  assert.equal(end.over, true);
+  assert.equal(end.line, "Warm-up done. 67% in the number.");
+  const res = E.summarize(sess(u));
+  assert.deepEqual([res.rate, res.hits, res.darts, res.per["20"].hits, res.per["19"].hits], [67, 6, 9, 5, 1]);
+  const h = E.historyPayload(sess(u), T0 + 11 * MIN);
+  assert.equal(h.key, 67);
+  assert.equal(E.personalBest([Object.assign({}, h, { sessionKey: "a" })], "warmup", {}), null, "no best for a warm-up");
+  assert.equal(E.isNewBest("warmup", 67, null), false);
+});
+
+test("Score More: each visit must beat the last; a visit that doesn't is a strike; three strikes end it; the score is the longest run", () => {
+  const d = E.drillOf("scoremore");
+  assert.equal(d.category, "Pressure");
+  assert.equal(d.input, "darts");
+  assert.deepEqual(E.cleanSettings(d, {}), { beat: "last", strikes: 3 });
+  const u = freshDrill("scoremore");
+  let t = E.target(sess(u));
+  assert.equal(t.big, "Score");
+  assert.equal(t.heroLabel, "First visit: set the mark");
+  visitBy(u, ["S20", "S20", "S5"]); // 45: the mark
+  t = E.target(sess(u));
+  assert.equal(t.big, "45");
+  const pad = E.padFor(sess(u)).filter((b) => !b.hidden).map((b) => b.label || b.man);
+  assert.deepEqual(pad, ["T20", "S20", "S5", "MISS"]);
+  visitBy(u, ["T20"]);
+  let v = E.boardView(sess(u), {});
+  assert.equal(v.nextLabel, "60: beaten");
+  visitBy(u, ["MISS", "MISS"]); // 60: beat 45, run 1
+  visitBy(u, ["T20", "S1", "MISS"]); // 61: run 2
+  visitBy(u, ["S20", "S20", "S20"]); // 60: not more than 61, strike 1
+  assert.deepEqual([play(u).run, play(u).longest, play(u).struck], [0, 2, 1]);
+  visitBy(u, ["S20", "S20", "S20"]); // 60 again: the same is a strike
+  assert.equal(play(u).struck, 2);
+  const last = E.manualDart(u, sess(u), "S1", T0 + 99);
+  E.manualDart(u, sess(u), "MISS", T0 + 100);
+  const r = E.manualDart(u, sess(u), "MISS", T0 + 101); // 1: strike 3
+  assert.ok(last && r.scored.over);
+  assert.equal(r.scored.line, "1. Strike 3. 3 strikes. Longest run 2.");
+  const res = E.summarize(sess(u));
+  assert.deepEqual([res.longest, res.visits, res.struck, res.best, res.beaten], [2, 6, 3, 61, 2]);
+  assert.equal(E.historyPayload(sess(u), T0 + MIN).key, 2);
+});
+
+test("Score More with the cameras: a visit is 3 darts and nothing ends it early; unseen darts are 0; a 4th dart isn't counted", () => {
+  const u = freshDrill("scoremore");
+  E.cameraDart(u, sess(u), dart("T20", 20, "T"), T0 + 1000);
+  const t1 = E.cameraTakeout(u, sess(u), takeout(1), T0 + 2000);
+  assert.equal(t1.unseen, 2);
+  assert.equal(t1.scored.visit.score, 60);
+  E.cameraDart(u, sess(u), dart("T20", 20, "T"), T0 + 3000);
+  E.cameraDart(u, sess(u), dart("T20", 20, "T"), T0 + 4000);
+  const third = E.cameraDart(u, sess(u), dart("S5", 5, "S"), T0 + 5000);
+  assert.equal(third.scored.visit.score, 125);
+  assert.equal(third.scored.visit.beat, true);
+  const spare = E.cameraDart(u, sess(u), dart("T20", 20, "T"), T0 + 6000);
+  assert.equal(spare.effect.kind, "spare");
+  assert.equal(play(u).scores.join(","), "60,125");
+  const words = E.boardView(sess(u), {}).darts.map((x) => x.read + ":" + x.sub);
+  assert.deepEqual(words, ["T20:60", "T20:60", "S5:5"]);
+  assert.equal(E.summarize(sess(u)).visits, 2);
+});
+
+test("Score More against your average: more than the average so far; the same mode keeps its own best", () => {
+  const d = E.drillOf("scoremore");
+  assert.notEqual(d.pbKey(E.cleanSettings(d, { beat: "average" })), d.pbKey(E.cleanSettings(d, {})));
+  const u = freshDrill("scoremore", { beat: "average", strikes: 1 });
+  visitBy(u, ["S20", "S20", "S5"]); // 45
+  visitBy(u, ["T20", "MISS", "MISS"]); // 60 > 45: run 1, average 52.5
+  assert.equal(E.target(sess(u)).big, "52.5");
+  assert.equal(E.target(sess(u)).heroLabel, "Beat your average");
+  visitBy(u, ["S20", "S20", "S5"]); // 45: strike, over
+  assert.equal(E.isFinished(sess(u)), true);
+  assert.equal(E.summarize(sess(u)).longest, 1);
+});
+
+test("Score More, two players: the lower scorer of a round must beat their own score next round; strikes; the other player wins", () => {
+  const d = E.drillOf("scoremore2");
+  assert.equal(d.needsOpponent, true);
+  assert.equal(E.newSession("scoremore2", {}, T0, "k"), null, "it needs the other player");
+  const u = { uid: "me", undoStack: [] };
+  u.activeSession = E.newSession("scoremore2", { strikes: 2 }, T0, "k3", { opponent: { name: "Sam", email: "sam@example.com" } });
+  assert.deepEqual(sess(u).meta.opponent, { name: "Sam", email: "sam@example.com" });
+  let t = E.target(sess(u));
+  assert.equal(t.heroLabel, "You: throw");
+  visitBy(u, ["T20", "S20", "S5"]); // you 85
+  t = E.target(sess(u));
+  assert.equal(t.heroLabel, "Sam: throw");
+  visitBy(u, ["S20", "S20", "S1"]); // Sam 41: lower, must beat 41
+  assert.deepEqual(play(u).spot, [false, true]);
+  assert.match(E.boardView(sess(u), {}).capHtml, /Round 2/);
+  t = E.target(sess(u));
+  assert.equal(t.heroLabel, "You: throw");
+  visitBy(u, ["S20", "MISS", "MISS"]); // you 20: nothing to beat this round
+  t = E.target(sess(u));
+  assert.equal(t.heroLabel, "Sam: beat");
+  assert.equal(t.big, "41");
+  const lastSam = (labels) => { let r; labels.forEach((l, i) => { r = E.manualDart(u, sess(u), l, T0 + 500 + i); }); return r.scored; };
+  let s = lastSam(["S20", "S20", "S1"]); // Sam 41: not more than 41, strike 1; now you are lower (20 < 41)
+  assert.equal(s.visit.strike, true);
+  assert.equal(s.line, "41. Strike 1 for Sam. You to beat 20.");
+  assert.deepEqual(play(u).struck, [0, 1]);
+  visitBy(u, ["S20", "MISS", "MISS"]); // you 20: not more than 20, strike 1
+  s = lastSam(["T20", "T20", "T20"]); // Sam 180: Sam had nothing to beat; you are lower: you must beat 20
+  assert.deepEqual(play(u).struck, [1, 1]);
+  visitBy(u, ["S5", "MISS", "MISS"]); // you 5: strike 2, out
+  s = lastSam(["S1", "MISS", "MISS"]); // the round ends: Sam wins
+  assert.equal(s.over, true);
+  assert.equal(s.line, "1. Sam wins.");
+  const res = E.summarize(sess(u));
+  assert.deepEqual([res.won, res.winner, res.rounds, res.you.strikes, res.them.strikes, res.them.best], [0, 1, 4, 2, 1, 180]);
+  const h = E.historyPayload(sess(u), T0 + MIN);
+  assert.deepEqual(h.opponent, { name: "Sam", email: "sam@example.com" });
+  assert.equal(JSON.stringify(h.settings).includes("sam@"), false, "the email isn't in the settings");
+  assert.equal(E.personalBest([h], "scoremore2", { strikes: 2 }), null, "no best between two players");
+  assert.deepEqual(d.historyCells(h), ["Lost", "Sam", "4"]);
+});
+
+test("Score More, two players: a tied round puts both on the spot, and both out at once is a draw", () => {
+  const u = { uid: "me", undoStack: [] };
+  u.activeSession = E.newSession("scoremore2", { strikes: 1 }, T0, "k4", { opponent: { email: "ash@example.com" } });
+  assert.equal(sess(u).meta.opponent.name, "ash", "a name from the address when none is typed");
+  visitBy(u, ["S20", "S20", "S20"]); visitBy(u, ["S20", "S20", "S20"]); // 60 each: both must beat 60
+  assert.deepEqual(play(u).spot, [true, true]);
+  visitBy(u, ["S20", "S20", "S20"]); visitBy(u, ["S20", "S20", "S20"]); // both 60 again: both strike out
+  assert.equal(E.isFinished(sess(u)), true);
+  const res = E.summarize(sess(u));
+  assert.equal(res.draw, true);
+  assert.equal(res.winner, null);
+});
+
+test("no drill keeps a list inside a list in its state (Firestore refuses to save one)", () => {
+  const nested = (v) => Array.isArray(v) ? v.some((x) => Array.isArray(x) || nested(x)) : v && typeof v === "object" ? Object.values(v).some(nested) : false;
+  for (const d of E.DRILLS) {
+    const u = { uid: "me", undoStack: [] };
+    u.activeSession = E.newSession(d.id, {}, T0, "kn", { opponent: { name: "Sam", email: "sam@example.com" } });
+    for (let i = 0; i < 4 && !E.isFinished(sess(u)); i += 1) {
+      if (d.input === "hits") E.manualVisit(u, sess(u), 1, T0 + i * 1000);
+      else for (let k = 0; k < 3; k += 1) E.manualDart(u, sess(u), "S1", T0 + i * 1000 + k);
+    }
+    assert.equal(nested(u), false, d.id + " has a list inside a list");
+  }
 });

@@ -108,10 +108,10 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
 <script src="tracker-engine.js?v=3"></script>
-<script src="practice-engine.js?v=14"></script>
+<script src="practice-engine.js?v=15"></script>
 <script src="challenge-engine.js?v=4"></script>
 <script src="board-mode.js?v=7"></script>
-<script src="stats-engine.js?v=2"></script>
+<script src="stats-engine.js?v=3"></script>
 <script src="nav.js?v=2"></script>
 <script>
 (function () {
@@ -233,7 +233,18 @@
     html += `<h3>Average per game</h3>` + lineChart(st.series, { label: "Average per game", what: "each game's 3-dart average", window: 10, digits: 1 });
     const table = (rows, head) => `<div class="table-wrap"><table><thead><tr><th>${head}</th><th class="num">Played</th><th class="num">Won</th><th class="num">Your average</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(r.label)}</td><td class="num">${r.played}</td><td class="num">${pc(r.rate)}</td><td class="num">${fmt(r.avg, 1)}</td></tr>`).join("")}</tbody></table></div>`;
     html += `<div class="two"><div><h3>By level</h3>${table(st.byLevel, "Bot")}</div><div><h3>By format</h3>${table(st.byFormat, "Game")}</div></div>`;
-    html += recentTable(data.botGames, [{ h: "Date", v: (g) => esc(S.dateOf(g)) }, { h: "Result", v: (g) => esc(g.result) }, { h: "Average", num: true, v: (g) => fmt(Number(g.playerAvg), 1) }]);
+    html += recentTable(data.botGames.filter((g) => !S.limitLeg(g)), [{ h: "Date", v: (g) => esc(S.dateOf(g)) }, { h: "Result", v: (g) => esc(g.result) }, { h: "Average", num: true, v: (g) => fmt(Number(g.playerAvg), 1) }]);
+    // The Invisible Man (no bot: a dart limit), kept out of the numbers above.
+    const im = S.botStats(data.botGames, { hidden: data.hidden, range, today, limit: true });
+    if (im.games) {
+      html += `<h3>Invisible Man</h3><div class="kpis">`
+        + kpi("Legs", fmt(im.games), "501 legs against a dart limit, won or lost, in this range. They aren't in the games against the bot above.")
+        + kpi("Won", pc(im.winRate), `${im.won} of ${im.games}: checked out within the limit.`)
+        + kpi("Fewest darts", im.fewestDarts ? fmt(im.fewestDarts) : "-", "The fewest darts in a leg you won.")
+        + kpi("3-dart average", fmt(im.avg, 1), "Over these legs; a bust counts as 3 darts.")
+        + kpi("Checkout", im.checkout.darts ? pc(im.checkout.rate) : "-", `Darts that won a leg, out of darts thrown with a finish on (${im.checkout.hits} of ${im.checkout.darts}).`)
+        + `</div>` + table(im.byLevel, "Limit");
+    }
     return html;
   }
 

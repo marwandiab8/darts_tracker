@@ -38,6 +38,11 @@
   button:disabled { opacity: .45; cursor: not-allowed; }
   button:focus-visible, a:focus-visible, summary:focus-visible, select:focus-visible, input:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
   input[type=number] { font: inherit; color: var(--text); background: var(--chip); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; min-height: 40px; width: 110px; }
+  .opponent { margin: 12px 0 4px; display: grid; gap: 8px; max-width: 420px; }
+  .opponent label { font-weight: 700; }
+  .opponent select, .opponent input { font: inherit; color: var(--text); background: var(--chip); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; min-height: 40px; }
+  .opponent .opp-new { display: grid; gap: 8px; }
+  .opponent .help.bad { color: var(--bad, #ef4444); }
   .setting select { font: inherit; font-weight: 700; color: var(--text); background: var(--chip); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; min-height: 40px; min-width: 110px; }
   .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
   .grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
@@ -56,6 +61,7 @@
   .drill .best { font-size: 14px; font-weight: 700; color: var(--good); }
   .soon { margin-top: 12px; font-size: 13px; color: var(--muted); line-height: 1.6; }
   .soon span { display: inline-block; padding: 2px 9px; border-radius: 999px; border: 1px dashed var(--border); margin: 0 4px 4px 0; }
+  .soon a { color: var(--accent); font-weight: 700; }
 
   /* Settings */
   .settings { display: grid; gap: 10px; margin: 12px 0; }
@@ -162,9 +168,19 @@
         </details>
         <h3>Settings</h3>
         <div class="settings" id="settings"></div>
+        <div class="opponent" id="oppBox" hidden>
+          <label for="oppPick">Playing against</label>
+          <select id="oppPick"></select>
+          <div class="opp-new" id="oppNew" hidden>
+            <input type="text" id="oppName" maxlength="40" autocomplete="off" placeholder="Their name (optional)" aria-label="Their name">
+            <input type="email" id="oppEmail" maxlength="254" autocomplete="off" inputmode="email" placeholder="Their email address" aria-label="Their email address">
+          </div>
+          <div class="help" id="oppHint">Your players from the bot game. A new one is kept with them when you start.</div>
+        </div>
         <div class="pb" id="pbLine"></div>
         <div class="row">
           <button id="startBtn" type="button">Start</button>
+          <button id="warmBtn" class="secondary" type="button" title="Ten minutes on the 20s and 19s first">Warm up first</button>
           <button id="boardBtn" class="secondary" type="button" title="A full-screen scoreboard to read from the oche">Board mode</button>
         </div>
         <div class="confirm" id="startConfirm" hidden>
@@ -253,6 +269,7 @@
           <button id="againBtn" type="button">Play again</button>
           <button id="resultUndoBtn" class="secondary" type="button">Undo the last visit</button>
           <button id="boardBtn3" class="secondary" type="button">Board mode</button>
+          <button id="afterWarmBtn" class="secondary" type="button" hidden>On to the drill</button>
           <button id="doneBtn" class="secondary" type="button">Choose another drill</button>
         </div>
       </section>
@@ -274,8 +291,9 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore-compat.js"></script>
 <script src="practice-timer.js?v=3"></script>
-<script src="practice-engine.js?v=42"></script>
-<script src="training-engine.js?v=3"></script>
+<script src="players.js?v=1"></script>
+<script src="practice-engine.js?v=43"></script>
+<script src="training-engine.js?v=4"></script>
 <script src="board-mode.js?v=7"></script>
 <script src="training-board.js?v=2"></script>
 <script src="board-vision.js?v=12"></script>
@@ -311,6 +329,10 @@
   const stateRef = () => db.collection("trainingState").doc(uid);
   const sessionsCol = () => db.collection("trainingSessions");
   const drill = () => TE.drillOf(drillId);
+  // Your players (players.js, savedPlayers/{uid}): the same list as the bot game's two-player games.
+  const P = window.Players;
+  let players = [], playersKnown = false;
+  const playersRef = () => db.collection("savedPlayers").doc(uid);
 
   function fail(error) {
     console.error(error);
@@ -352,6 +374,51 @@
       return `<div class="setting"><label for="${id}">${esc(s.label)}</label>${input}${s.help ? `<div class="help">${esc(s.help)}</div>` : ""}</div>`;
     }).join("");
     $("settings").querySelectorAll("input, select").forEach((el) => el.addEventListener("change", () => { readSettingsForm(); render(); }));
+    renderOpponent();
+  }
+
+  // ---- the other player (Score More, two players) ----
+  function renderOpponent() {
+    const d = drill(), box = $("oppBox");
+    box.hidden = !d.needsOpponent;
+    if (!d.needsOpponent) return;
+    const keep = store.get("dt_trainingOpponent", "");
+    const pick = $("oppPick");
+    const was = pick.value || keep;
+    pick.innerHTML = players.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("") + `<option value="new">Someone new</option>`;
+    pick.value = players.some((p) => p.id === was) ? was : players.length ? players[0].id : "new";
+    $("oppNew").hidden = pick.value !== "new";
+    oppCheck();
+  }
+  // The player chosen or typed: { name, email, fresh } or { error }.
+  function opponent() {
+    const id = $("oppPick").value;
+    if (id && id !== "new") { const p = players.find((x) => x.id === id); if (p) return { name: p.name, email: p.email, fresh: false }; }
+    const email = $("oppEmail").value.trim(), name = P.cleanName($("oppName").value);
+    if (!P.looksLikeEmail(email)) return { error: "Type their email address: the game is kept with it, as in the bot game." };
+    if (auth.currentUser && P.emailKey(email) === P.emailKey(auth.currentUser.email)) return { error: "That's your own address: type the other player's." };
+    return { name: name || P.nameFromEmail(email), email, fresh: true };
+  }
+  function oppCheck() {
+    const d = drill();
+    if (!d.needsOpponent) { $("startBtn").disabled = false; return; }
+    const o = opponent();
+    $("oppHint").textContent = o.error && $("oppPick").value === "new" && !$("oppEmail").value.trim() ? "Their name and email address. They are kept with your players (the bot game's) when you start." : o.error || (o.fresh ? `${o.name} is kept with your players when you start.` : `${o.name}: ${o.email}`);
+    $("oppHint").classList.toggle("bad", !!o.error && !!$("oppEmail").value.trim());
+    $("startBtn").disabled = !!o.error;
+  }
+  $("oppPick").addEventListener("change", () => { store.set("dt_trainingOpponent", $("oppPick").value); $("oppNew").hidden = $("oppPick").value !== "new"; oppCheck(); });
+  $("oppName").addEventListener("input", oppCheck);
+  $("oppEmail").addEventListener("input", oppCheck);
+  // A new player is kept with your players; one chosen is marked as played now.
+  function keepOpponent(o) {
+    if (!playersKnown || !o || o.error) return;
+    const was = P.find(players, o.email);
+    if (!was && players.length >= P.MAX) return;
+    const e = P.entry(was, { name: o.name, email: o.email }, Date.now(), true);
+    players = P.apply(players, { [e.id]: e.fields });
+    store.set("dt_trainingOpponent", e.id);
+    playersRef().set({ uid, updatedAt: Date.now(), players: { [e.id]: e.fields } }, { merge: true }).catch((error) => console.warn("Your players could not be saved: " + (error && error.message ? error.message : error)));
   }
 
   // ---- the state document: every change inside a transaction ----
@@ -411,19 +478,27 @@
       });
       if (newBest && board) board.moment({ big: "New best!", sub: bestBefore ? `${payload.key}, up from ${bestBefore.key}` : `${payload.key}: your first ${d.name}`, kind: "win", ms: 3000 });
       if (newBest) speak(`New best. ${payload.key}.`);
-      note(`${d.name} saved: ${d.keyMetric.label.toLowerCase()} ${payload.key}.`);
+      note(d.keyText ? `${d.name} saved: ${d.keyText(payload.result)}.` : `${d.name} saved: ${d.keyMetric.label.toLowerCase()} ${payload.key}.`);
     } finally {
       saving.delete(key);
     }
   }
 
   // ---- starting, the buttons, undo, pause, stop ----
-  async function startDrill(settings) {
+  async function startDrill(settings, opp) {
     const s = settings || readSettingsForm();
     const d = drill();
+    let extra;
+    if (d.needsOpponent) {
+      const o = opp || opponent();
+      if (o.error) { note(o.error, true); return; }
+      if (!opp) keepOpponent(o);
+      extra = { opponent: { name: o.name, email: o.email } };
+    }
     try {
       await transact((u) => {
-        u.activeSession = TE.newSession(d.id, s, Date.now(), sessionsCol().doc().id);
+        u.activeSession = TE.newSession(d.id, s, Date.now(), sessionsCol().doc().id, extra);
+        if (!u.activeSession) return "Choose who you are playing first.";
         u.undoStack = [];
         return { started: true };
       });
@@ -534,7 +609,21 @@
     const a = model.state && model.state.activeSession;
     const s = a && a.meta ? a.meta.settings : null;
     if (a && a.meta && a.meta.drill) { drillId = a.meta.drill; store.set("dt_trainingDrill", drillId); }
-    startDrill(s).catch(fail);
+    startDrill(s, a && a.meta && a.meta.opponent ? Object.assign({}, a.meta.opponent) : null).catch(fail);
+  };
+  // Warm up first: the warm-up now, and the drill you had chosen offered when it's done.
+  $("warmBtn").onclick = () => {
+    if (drillId !== "warmup") store.set("dt_trainingAfterWarmup", drillId);
+    drillId = "warmup"; store.set("dt_trainingDrill", drillId);
+    renderSettings(); subscribeHistory();
+    startDrill(settingsFor("warmup")).catch(fail);
+  };
+  $("afterWarmBtn").onclick = () => {
+    const next = store.get("dt_trainingAfterWarmup", "");
+    store.set("dt_trainingAfterWarmup", "");
+    transact((u) => { u.activeSession = null; u.undoStack = []; return { dismissed: true }; }).then(() => {
+      if (TE.drillOf(next)) { drillId = next; store.set("dt_trainingDrill", drillId); renderSettings(); subscribeHistory(); render(); }
+    }).catch(fail);
   };
   $("doneBtn").onclick = () => transact((u) => { u.activeSession = null; u.undoStack = []; return { dismissed: true }; }).catch(fail);
 
@@ -636,7 +725,7 @@
       const best = (st.bests && st.bests[d.pbKey(settingsFor(d.id))]) || TE.personalBest(model.history, d.id, settingsFor(d.id));
       return `<button type="button" class="drill" data-drill="${esc(d.id)}" aria-pressed="${d.id === drillId}"><span class="cat">${esc(d.category)} · ${esc(d.difficulty)}</span><span class="name">${esc(d.name)}</span><span class="blurb">${esc(d.blurb)}</span>${best ? `<span class="best">Best: ${esc(best.key)}</span>` : ""}</button>`;
     }).join("");
-    $("soon").innerHTML = "Coming next: " + ["Invisible Man", "Score More", "Warm-up"].map((n) => `<span>${n}</span>`).join("");
+    $("soon").innerHTML = 'Invisible Man is in the <a href="practice.html">bot game</a>: choose Invisible Man under "Play against".';
   }
   $("drills").addEventListener("click", (e) => {
     const b = e.target.closest("[data-drill]");
@@ -655,7 +744,8 @@
     $("drillWhy").textContent = d.why;
     $("drillRules").innerHTML = d.rules.map((r) => `<li>${esc(r)}</li>`).join("");
     const best = bestFor(null);
-    $("pbLine").innerHTML = best ? `Your best with these settings: <strong>${esc(best.key)}</strong>${best.result && best.result.furthest ? ` <span class="muted">(got to ${esc(best.result.furthest === "DBULL" ? "the bull" : best.result.furthest)})</span>` : ""}` : `<span class="muted">No finished round with these settings yet: the first one sets your best.</span>`;
+    $("warmBtn").hidden = d.id === "warmup";
+    $("pbLine").innerHTML = d.noBest ? `<span class="muted">${d.needsOpponent ? "No personal best between two players: the result is kept with the other player's name." : "No best to chase: it's a warm-up. Only the in-number rate is kept."}</span>` : best ? `Your best with these settings: <strong>${esc(best.key)}</strong>${best.result && best.result.furthest ? ` <span class="muted">(got to ${esc(best.result.furthest === "DBULL" ? "the bull" : best.result.furthest)})</span>` : ""}` : `<span class="muted">No finished round with these settings yet: the first one sets your best.</span>`;
     $("drills").querySelectorAll("[data-drill]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.drill === drillId)));
   }
 
@@ -688,10 +778,10 @@
       $("timerNote").textContent = paused ? "Paused: the clock is stopped." : sess.timer.pausedBy === "idle" ? "The clock paused itself after 3 quiet minutes; the next dart starts it." : "Running: active time only.";
       $("scoreLabel").textContent = d.scoreLabel || "Score";
       $("score").textContent = d.scoreText(sess.play);
-      const pace = d.paceText ? d.paceText(sess.play, best) : null;
+      const pace = d.paceText ? d.paceText(sess.play, best, { elapsedMs: TE.elapsedMs(sess, now) }) : null;
       $("pace").textContent = pace || (best ? `Your best: ${best.key}` : "");
       $("pace").className = "pace" + (pace && /^\+/.test(pace) ? " up" : pace && /^-/.test(pace) ? " down" : "");
-      const view = TE.boardView(sess, { best });
+      const view = TE.boardView(sess, { best, now });
       $("heroLabel").textContent = view.pullOut ? "Pull your darts out, then" : view.label || "Throwing at";
       $("target").textContent = view.target != null ? view.target : "Done";
       $("upNext").className = "next" + (view.nextClass === "co" ? " co" : "");
@@ -725,9 +815,12 @@
       const isBest = !!(best && best.sessionKey === sess.meta.sessionKey) || (!best && sess.saved);
       const ctx = { best, time: TE.fmt(TE.elapsedMs(sess, now)) };
       $("resultHead").textContent = `${d.name}: done`;
-      $("resultBig").textContent = res[d.keyMetric.id] == null ? "-" : String(res[d.keyMetric.id]);
+      $("resultBig").textContent = d.keyText ? d.keyText(res) : res[d.keyMetric.id] == null ? "-" : String(res[d.keyMetric.id]);
       $("resultSub").textContent = d.resultText ? d.resultText(res, ctx) : "";
-      $("newBest").hidden = !isBest;
+      $("newBest").hidden = !isBest || !!d.noBest;
+      const after = d.id === "warmup" ? TE.drillOf(store.get("dt_trainingAfterWarmup", "")) : null;
+      $("afterWarmBtn").hidden = !after;
+      if (after) $("afterWarmBtn").textContent = `On to ${after.name}`;
       $("newBest").textContent = isBest ? "New best!" : "";
       const facts = d.facts ? d.facts(res, ctx) : [];
       $("facts").innerHTML = facts.map((f) => `<div class="fact"><div class="v">${esc(f.v)}</div><div class="k">${esc(f.k)}</div></div>`).join("");
@@ -814,11 +907,11 @@
     const d = sess ? TE.drillOf(sess.meta.drill) : drill();
     const best = bestFor(sess);
     const res = finished ? TE.summarize(sess) : null;
-    const pace = sess && !finished && d.paceText ? d.paceText(sess.play, best) : null;
+    const pace = sess && !finished && d.paceText ? d.paceText(sess.play, best, { elapsedMs: TE.elapsedMs(sess, now) }) : null;
     const doneCells = res ? d.cells(sess.play, null) : [];
     const doneCols = res ? (d.cols ? d.cols(sess.play) : doneCells.length) : 21;
     board.update({
-      view: sess ? TE.boardView(sess, { best }) : null,
+      view: sess ? TE.boardView(sess, { best, now }) : null,
       modeLabel: d.name,
       paused: !!(sess && !finished && TE.isPaused(sess, now)),
       camOn: $("camToggle").checked, camDown: (watcher && watcher.down) || "",
@@ -827,10 +920,10 @@
       note: $("camNote").textContent,
       noteWarn: $("camNote").classList.contains("warn"),
       dartsText: sess ? `${sess.throws.length} darts` : "",
-      oppHtml: sess && !finished ? `<div class="who">${esc(d.scoreLabel || "Score")}</div><div class="sc">${esc(d.scoreText(sess.play))}</div><div class="sub">${esc(best ? `best ${best.key}` : "first round")}</div>` : "",
+      oppHtml: sess && !finished ? `<div class="who">${esc(d.scoreLabel || "Score")}</div><div class="sc">${esc(d.scoreText(sess.play))}</div><div class="sub">${esc(best ? `best ${best.key}` : d.needsOpponent ? `You – ${sess.play.names[1]}` : d.noBest ? "no best: a warm-up" : "first round")}</div>` : "",
       info: pace ? `<span class="${/^\+/.test(pace) ? "up" : /^-/.test(pace) ? "down" : "m"}">${esc(pace)}</span>` : "",
       pad: sess ? TE.padFor(sess) : null,
-      doneBig: res ? (res[d.keyMetric.id] == null ? "-" : String(res[d.keyMetric.id])) : "",
+      doneBig: res ? (d.keyText ? d.keyText(res) : res[d.keyMetric.id] == null ? "-" : String(res[d.keyMetric.id])) : "",
       doneText: res && d.doneText ? d.doneText(res) : "",
       doneHtml: res ? `<div class="bm-cells" style="--bm-cols:${doneCols}">${doneCells.map((c) => `<div class="bm-cell ${esc(c.state)}">${esc(c.num)}${c.sub ? `<small>${esc(c.sub)}</small>` : ""}</div>`).join("")}</div>` : "",
       doneActions: [{ act: "again", text: "Play again", primary: true }, { act: "undo", text: "Undo the last visit" }, { act: "pick", text: "Another drill" }],
@@ -864,6 +957,11 @@
       }
       render();
     }, fail));
+    unsubs.push(playersRef().onSnapshot((snap) => {
+      playersKnown = snap.exists || !snap.metadata.fromCache;
+      players = P.listOf(snap.exists ? snap.data() : null);
+      renderOpponent();
+    }, () => {}));
     subscribeHistory();
   }
   function subscribeHistory() {

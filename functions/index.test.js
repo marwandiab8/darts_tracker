@@ -190,6 +190,23 @@ test("a bot game against the real-board bot, in a match, says so in its summary 
   assert.match(plain.summary, /45 darts thrown\.$/, "nothing made up from bad fields");
 });
 
+test("an Invisible Man leg says so: its dart limit in the title and summary, no bot", () => {
+  const leg = (o) => { const g = botGame({ dartLimit: 27, limitAuto: true, botDarts: [], botAvg: 0, botScore: 501, playerDarts: Array.from({ length: 24 }, () => ({ s: "T20" })), ...o }); delete g.rank; return g; };
+  const item = _test.mapBotGameToTimeLeft(leg(), "im1");
+  assert.equal(item.title, "Invisible Man: 501 in 27 darts (won)");
+  assert.match(item.summary, /^Won 501 against the Invisible Man: check out within 27 darts \(the limit moves with you\)\. Your three-dart average 54\.24\. 24 darts thrown\.$/);
+  assert.equal(item.metadata.practiceType, "invisibleMan");
+  assert.equal(item.metadata.dartLimit, 27);
+  assert.equal(item.metadata.limitAuto, true);
+  assert.equal(item.metadata.rank, null);
+  assert.equal(item.sourceCollection, "botGames");
+  const fixed = _test.mapBotGameToTimeLeft(leg({ limitAuto: undefined, result: "lost", leg: 2, legsToWin: 3 }), "im2");
+  assert.equal(fixed.title, "Invisible Man: 501 in 27 darts (lost)");
+  assert.match(fixed.summary, /^Lost 501 against the Invisible Man: check out within 27 darts\. .*Leg 2 of a first-to-3 match\.$/);
+  const odd = _test.mapBotGameToTimeLeft(leg({ dartLimit: 500 }), "im3");
+  assert.equal(odd.title, "Bot practice: 501 vs Club (won)", "a limit out of range is ignored");
+});
+
 test("maps a bot game to a Time Left darts record, without the dart positions", () => {
   const item = _test.mapBotGameToTimeLeft(botGame(), "game1");
   assert.equal(item.dateId, "2026-09-20");

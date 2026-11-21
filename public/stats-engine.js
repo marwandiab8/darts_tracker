@@ -48,6 +48,10 @@
   const shown = (hidden) => (x) => !(hidden && hidden.has(x.id));
   const trackerCounts = (s) => !!s && s.complete !== false && s.entry && typeof s.entry === "object";
   const botCounts = (g) => !!g && (g.result === "won" || g.result === "lost");
+  // An Invisible Man leg (practice.html, no bot: a dart limit). It is saved in botGames with its own
+  // field, dartLimit, and kept out of everything about the bot (games, win rate, levels, records,
+  // milestones, the plan). botStats(games, { limit: true }) gives its own numbers.
+  const limitLeg = (g) => !!g && Number(g.dartLimit) > 0;
 
   // ---- the tracker --------------------------------------------------------------------------------------
   // Per number and overall: hit rate (darts in the number thrown at), marks per dart, S/D/T split,
@@ -172,7 +176,7 @@
   // level and by format, the highest finish.
   function botStats(games, opts) {
     const o = opts || {};
-    const all = (games || []).filter(shown(o.hidden)).sort(byTime);
+    const all = (games || []).filter(shown(o.hidden)).filter((g) => (o.limit ? limitLeg(g) : !limitLeg(g))).sort(byTime);
     const fin = all.filter(botCounts).filter((g) => inRange(dateOf(g), o.range, o.today));
     const x01 = fin.filter((g) => g.kind === "x01");
     let scored = 0, used = 0, f9s = 0, f9d = 0, coH = 0, coD = 0, high = 0, rebuilt = 0, withVisits = 0;
@@ -203,7 +207,9 @@
       }
       return [...m.values()].map((e) => ({ label: e.label, played: e.played, won: e.won, rate: e.won / e.played, avg: e.avgSum / e.played }));
     };
-    const level = (g) => (Number.isFinite(g.botTarget) ? (g.ladder ? `Ladder (${g.botTarget})` : `Averages ${g.botTarget}`) : String(g.rank || "club").replace(/^./, (c) => c.toUpperCase()));
+    const level = (g) => (limitLeg(g) ? `${g.dartLimit} darts${g.limitAuto ? " (moving)" : ""}` : Number.isFinite(g.botTarget) ? (g.ladder ? `Ladder (${g.botTarget})` : `Averages ${g.botTarget}`) : String(g.rank || "club").replace(/^./, (c) => c.toUpperCase()));
+    // The Invisible Man: the fewest darts in a won leg.
+    const wonDarts = fin.filter((g) => g.result === "won").map((g) => (Array.isArray(g.playerDarts) ? g.playerDarts.length : 0)).filter((n) => n > 0);
     const format = (g) => (g.kind === "cricket" ? "Cricket" : `${g.startScore || 501}${g.doubleOut === false ? " straight" : ""}`) + (g.legsToWin ? `, first to ${g.legsToWin}` : "");
     return {
       games: fin.length, all: all.length, abandoned: all.filter((g) => g.result === "abandoned").length,
@@ -212,7 +218,7 @@
       avg: used ? (scored * 3) / used : mean(x01.map((g) => num(g.playerAvg))),
       first9: f9d ? (f9s * 3) / f9d : null,
       checkout: { hits: coH, darts: coD, rate: pct(coH, coD) },
-      tons, highFinish: high || null, withVisits, rebuilt,
+      tons, highFinish: high || null, withVisits, rebuilt, fewestDarts: wonDarts.length ? Math.min(...wonDarts) : null,
       byLevel: group(level), byFormat: group(format),
       series: x01.map((g) => ({ date: dateOf(g), value: num(g.playerAvg), id: g.id })),
     };
@@ -326,7 +332,7 @@
     if (ts.best) out.push({ game: "Tracker", what: "Best session", value: String(ts.best.total), date: ts.best.date, def: "Standard scoring, a finished session (not one saved part way through)." });
     const bestNums = ts.numbers.filter((n) => n.best && n.best.score >= 6).sort((a, b) => b.best.score - a.best.score).slice(0, 3);
     bestNums.forEach((n) => out.push({ game: "Tracker", what: `Best at ${n.t === "BULL" ? "the bull" : n.t}`, value: `${n.best.score} marks`, date: n.best.date, def: "The most marks with the three darts at one number." }));
-    const fin = (data.botGames || []).filter(shown(h)).filter(botCounts).filter((g) => g.kind === "x01");
+    const fin = (data.botGames || []).filter(shown(h)).filter(botCounts).filter((g) => !limitLeg(g)).filter((g) => g.kind === "x01");
     const bestAvg = fin.reduce((a, g) => (!a || num(g.playerAvg) > num(a.playerAvg) ? g : a), null);
     if (bestAvg) out.push({ game: "Bot", what: "Best average in a game", value: String(num(bestAvg.playerAvg).toFixed(1)), date: dateOf(bestAvg), def: "3-dart average in a finished x01 game (won or lost; unfinished games never count)." });
     let hi = null;
@@ -358,7 +364,7 @@
       steps.forEach((m) => { if (before < m && darts >= m) out.push({ what: `${m.toLocaleString("en")} tracker darts`, date: dateOf(s) }); });
     }
     [100, 250, 500].forEach((m) => { if (sess.length >= m) out.push({ what: `${m} tracker sessions`, date: dateOf(sess[m - 1]) }); });
-    const bots = (data.botGames || []).filter(shown(h)).filter(botCounts).sort(byTime);
+    const bots = (data.botGames || []).filter(shown(h)).filter(botCounts).filter((g) => !limitLeg(g)).sort(byTime);
     [50, 100, 250].forEach((m) => { if (bots.length >= m) out.push({ what: `${m} games against the bot`, date: dateOf(bots[m - 1]) }); });
     const first180 = bots.find((g) => { const v = botVisits(g); return v && v.some((x) => x.who === "player" && x.scored === 180 && !x.bust); });
     if (first180) out.push({ what: "First 180 against the bot", date: dateOf(first180) });
@@ -391,7 +397,7 @@
     const bs = botStats((data.botGames || []).filter((g) => g.kind === "x01").sort(byTime).slice(-10), { hidden: h });
     items.push({ game: "bot", title: "A game against the bot", href: "practice.html",
       why: bs.checkout.darts ? `Your checkout lately is ${Math.round(bs.checkout.rate * 100)}% of darts at a double: leave yourself D16, D20 or D8.` : "501 against the bot at your level.",
-      done: playedToday(data.botGames, botCounts) });
+      done: playedToday(data.botGames, (g) => botCounts(g) && !limitLeg(g)) });
     const js = jdcStats((data.challengeGames || []).slice(-10), { hidden: h });
     const partMax = { part1: 1050, part2: 1050, part3: 1230 };
     const gap = js.parts.filter((x) => x.last10 != null).sort((a, b) => (partMax[b.key] - b.last10) - (partMax[a.key] - a.last10))[0];
@@ -402,7 +408,7 @@
   }
 
   return {
-    dateOf, inRange, rolling, hiddenOf, trackerCounts, botCounts, trackerStats, landing, botVisits, botStats,
+    dateOf, inRange, rolling, hiddenOf, trackerCounts, botCounts, limitLeg, trackerStats, landing, botVisits, botStats,
     jdcStats, doublesStats, doublesLanding, practiceDays, records, milestones, practicePlan, DKEYS,
   };
 });

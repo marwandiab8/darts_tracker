@@ -17,6 +17,8 @@ The first time, the list starts by itself with the people already in your saved 
 
 The name can also be changed during a game (since Nov 14, 2026): **Edit name** under the other player's score, or by their score in Board mode, asks for it. The new name is used at once on every device showing the game, called out, saved with the game and put in its email, and it becomes that saved player's name. Your own name gets a "2" added if typed for them. Once a game is over it can't be renamed: the record is already saved, and saved games are never changed. The first player is whoever is signed in, and their email is the one on the Google account. Names are used everywhere the bot's name would be, and if both are the same the second gets a "2".
 
+The same list is used by **Score More: two players** on the Training page (`docs/training.md`), which can add a new player to it too.
+
 How it is kept: one document, `savedPlayers/{uid}`, with a map of players (`name`, `email`, `addedAt`, `usedAt`), at most 50 (the rules take 60). A player's id is made from their email address (`public/players.js`, `idOf`), so the same person added on two devices at once is one player. The page listens to the document, so a change on one device shows on the others by itself. If the list can't be reached (offline, with nothing kept), the two boxes work as before and nothing is written. Rules: only the owner reads or writes it (`match /savedPlayers/{uid}` in `firestore.rules`).
 
 Playing works as it does against the bot, with these differences:

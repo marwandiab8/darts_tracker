@@ -259,15 +259,21 @@ function mapBotGameToTimeLeft(game, gameId, syncStatus = "active") {
   const legsToWin = Number.isInteger(game.legsToWin) && game.legsToWin >= 1 && game.legsToWin <= 11 ? game.legsToWin : null;
   if (leg && legsToWin) extras.push(`Leg ${leg} of a first-to-${legsToWin} match`);
 
-  const summary = `${resultWord} ${gameName} against the ${rankName} bot${scores.length ? `. ${scores[0]}` : ""}${playerDarts ? `. ${playerDarts} darts thrown` : ""}${extras.map((x) => `. ${x}`).join("")}.`;
+  // The Invisible Man (practice.html): no bot, a leg of 501 against a dart limit (dartLimit).
+  const dartLimit = Number.isInteger(game.dartLimit) && game.dartLimit >= 9 && game.dartLimit <= 60 ? game.dartLimit : null;
+  const limitAuto = dartLimit !== null && game.limitAuto === true;
+  const limitSummary = dartLimit !== null
+    ? `${resultWord} ${gameName} against the Invisible Man: check out within ${dartLimit} darts${limitAuto ? " (the limit moves with you)" : ""}${playerAvg !== null && playerDarts ? `. Your ${averageName} ${playerAvg}` : ""}${playerDarts ? `. ${playerDarts} darts thrown` : ""}${leg && legsToWin ? `. Leg ${leg} of a first-to-${legsToWin} match` : ""}.`
+    : "";
+  const summary = limitSummary || `${resultWord} ${gameName} against the ${rankName} bot${scores.length ? `. ${scores[0]}` : ""}${playerDarts ? `. ${playerDarts} darts thrown` : ""}${extras.map((x) => `. ${x}`).join("")}.`;
 
   return {
     dateId: dateId || undefined,
     sourceApp: "DartstRacker2026",
     category: "dartsRecord",
-    title: `Bot practice: ${gameName} vs ${rankName} (${result})`,
+    title: dartLimit !== null ? `Invisible Man: ${gameName} in ${dartLimit} darts (${result})` : `Bot practice: ${gameName} vs ${rankName} (${result})`,
     summary,
-    description: `Practice game against the ${rankName} bot in Darts Tracker: ${gameName}, ${result}.`,
+    description: dartLimit !== null ? `Invisible Man practice in Darts Tracker: ${gameName}, check out within ${dartLimit} darts, ${result}.` : `Practice game against the ${rankName} bot in Darts Tracker: ${gameName}, ${result}.`,
     sourceFirebaseProjectId: DARTS_FIREBASE_PROJECT_ID.value() || "dartstracker2026",
     sourceProjectName: "Darts Tracker",
     sourceProjectId: DARTS_SOURCE_PROJECT_ID,
@@ -288,11 +294,13 @@ function mapBotGameToTimeLeft(game, gameId, syncStatus = "active") {
     syncStatus,
     metadata: {
       uid: game.uid || null,
-      practiceType: "bot",
+      practiceType: dartLimit !== null ? "invisibleMan" : "bot",
       kind,
       startScore,
       doubleOut,
-      rank,
+      rank: dartLimit !== null ? null : rank,
+      dartLimit,
+      limitAuto: dartLimit !== null ? limitAuto : null,
       result,
       playerAvg,
       botAvg,

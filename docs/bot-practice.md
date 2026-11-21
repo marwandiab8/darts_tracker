@@ -49,6 +49,17 @@ Since Nov 13, 2026 the bot throws on a real board (`practice-engine.js`; model 2
 - **Legs:** one leg, or first to 2, 3, 4, 5, 7 or 9 legs. Who throws first alternates each leg. Each leg is saved as its own game with the match's id (`matchId`), its number (`leg`) and `legsToWin`.
 - **Bull-up:** "Who throws first: Bull-up". Before the first leg, you throw one dart at the bull (tap it or let the cameras see it), then the bot; the closer (in millimetres on a real board) throws first, and a tie throws again. Against the bot only.
 
+## Invisible Man
+
+"Play against: Invisible Man" (since 2026-11-21, Training Phase 4; Marwan chose the bot game for it). No bot: a leg of 501, double out, against a dart limit. Check out within the limit and you win the leg; the dart that uses it up without a checkout (a bust included) loses it to the Invisible Man. It reuses everything else here: the x01 rules and the cameras' visit rules, Board mode, the caller, the moments, Edit my last visit and Undo, matches (first to 2 to 9 legs) and the leg report.
+
+- **The limit:** 21, 24, 27 or 30 darts, or **Moves with you** (the default): it starts at 27, his median winning leg in Nov 2026 (the usual 24 would lose about 3 legs in 4), goes down one dart after a leg you win and up one after two legs lost in a row (15 to 45). Like the ladder it is worked out from your saved legs (`limitState`), so nothing else is stored; fixed-limit legs don't move it. The setup says your next leg's limit and your record ("You've won 2 of 3 legs; fewest darts 9"). In a match the limit stays the same for every leg.
+- **Playing:** you throw every visit (the turn never passes; his side is the game's "bot", which never throws and keeps 501). Your side shows the score, his the darts left ("18 darts left of 24"); the status line counts them, and the Rounds table has your darts so far in place of his column. Only darts thrown count against the limit: a bust ends the visit on the dart that bust, as everywhere here (the average still counts it as three darts). A limit that isn't a multiple of 3, or a bust, leaves a last visit of 1 or 2 darts: the dart count, the route and the keypad (which refuses a total those darts can't make, and asks "how many darts" only up to them) all follow. "Next visit" replaces "Bot's turn"; with the cameras the pull-out starts the next visit at once, and after the leg's last dart it finishes the leg. "You require 81" is called after your own visit.
+- **Board mode:** the big number is your score; his side, beside it, is the darts left. The mode line is "Invisible Man · 24 darts"; the legs score reads "YOU 1 – 0 INVISIBLE". Out of darts, the label says so and "Finish game" waits (Undo can still take the last dart back); a moment "Out of darts: 340 left after 24 darts". A checkout's moment says the darts it took ("Game shot: 40 checkout, in 22 darts").
+- **The report** has your column only, with the darts against the limit ("Darts 24 of 24"), and your average against your last 10 Invisible Man legs.
+- **Saved** in `botGames` with its own field: `dartLimit` (and `limitAuto: true` when it moves), no `rank`, no bot fields and no bot darts; the rules allow it only for 501 double out. Everything about the bot leaves these out: the Stats page's games against the bot, win rate, levels and records, the milestones, the plan's bot item, and the ladder. Stats has its own Invisible Man lines. Time Left gets "Invisible Man: 501 in 27 darts (won)" with `practiceType: "invisibleMan"`. The history list says "Invisible Man (27)".
+- **Code and tests:** `createGame({ limit, limitAuto })`, `visitMax`, `limitLeft`, `limitState`, `limitRecord` in `practice-engine.js`; `tests/invisible-man.test.cjs`; `E2E=practice-invisible npm run test:e2e` (a first-to-2 match on a computer with the keypad and an iPad in Board mode with the cameras: a leg out of darts, two 9-darters, the saved legs, the report, the history, the moving limit).
+
 ## Board mode
 
 A full-screen scoreboard to read from the oche, on the shared Board mode kit (`public/board-mode.js` + `.css`, also used by Doubles and the tracker). Turn it on with **Board mode** on the setup screen or under the board; it stays on for that device until **Exit**, and the screen stays on while a game runs.
@@ -92,6 +103,8 @@ board radius (see dart-positions.md) and s is what it scored ("T20", "D16", "SB"
 A dart entered on the keypad is just { s: "?" }: it counts, but has no position.
 botModel, botTarget, botStyle, ladder (the real-board bot: its average, how it plays, a ladder game),
 matchId, leg, legsToWin (a leg of a match). rank is the nearest named level.
+dartLimit, limitAuto (an Invisible Man leg, since 2026-11-21: in place of rank and the bot fields;
+botDarts is empty).
 visits (since Nov 13, 2026): every visit in order, { w: "p" | "b", d: [what each dart scored],
 s: the score (0 for a bust; marks in Cricket), r: what was left, b: 1 for a bust, p: Cricket points }.
 ```

@@ -58,6 +58,7 @@
   .segmented span { display: block; text-align: center; padding: 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--chip); font-weight: 700; cursor: pointer; }
   .segmented input:checked + span { background: rgba(245,158,11,.16); border-color: var(--accent); color: var(--accent); }
   .segmented input:focus-visible + span { outline: 3px solid #fff; outline-offset: 2px; }
+  .segmented input:disabled + span { opacity: .4; cursor: not-allowed; }
   .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
   .resume { border: 1px solid rgba(245,158,11,.4); background: rgba(245,158,11,.08); border-radius: 12px; padding: 12px; margin-bottom: 14px; }
 
@@ -271,6 +272,7 @@
           <li><b>Entering darts:</b> tap where each dart landed, the score keypad, or the cameras. After your third dart the turn passes to the bot by itself; with Press Enter, it waits for Enter (or your darts being pulled out).</li>
           <li><b>Board mode</b> is a full-screen scoreboard for the oche: your score, each dart's box (tap one to fix it), the route, the bot's last visit, big moments and the match report at the end.</li>
           <li><b>Matches:</b> first to 2 to 9 legs, who throws first alternating, or a bull-up. Every leg is saved with its visits.</li>
+          <li><b>Invisible Man:</b> no bot. A leg of 501 against a dart limit: check out within it to win the leg, or he wins it. The limit can move with you (one dart fewer after a win, one more after two losses in a row). His legs stay out of your record against the bot.</li>
         </ul>
       </details>
       <div class="resume hidden" id="resumeBox">
@@ -293,7 +295,19 @@
           <div class="segmented" role="radiogroup" aria-labelledby="oppLabel">
             <label><input type="radio" name="opp" value="bot" checked><span>The bot</span></label>
             <label><input type="radio" name="opp" value="human"><span>Another player</span></label>
+            <label><input type="radio" name="opp" value="limit"><span>Invisible Man</span></label>
           </div>
+        </div>
+        <div class="wide hidden" id="limitBox">
+          <label for="dartLimit">Check out within</label>
+          <select id="dartLimit">
+            <option value="auto">Moves with you</option>
+            <option value="21">21 darts</option>
+            <option value="24">24 darts</option>
+            <option value="27">27 darts</option>
+            <option value="30">30 darts</option>
+          </select>
+          <div class="muted" id="limitBlurb" style="font-size:13px;margin-top:4px;"></div>
         </div>
         <div class="wide hidden" id="humanBox">
           <div class="hidden" id="playerPick">
@@ -325,6 +339,7 @@
           </div>
           <div class="muted field-note" id="oppHint"></div>
         </div>
+        <div id="kindNote" class="wide muted hidden" style="font-size:13px;margin-top:-6px;">Always 501, double out: the limits are set for it.</div>
         <div id="startScoreBox">
           <label for="startScore">Start score</label>
           <select id="startScore"></select>
@@ -364,7 +379,7 @@
             <option value="enter">Wait for me to press Enter</option>
           </select>
         </div>
-        <div>
+        <div id="firstBox">
           <label for="first">Who throws first</label>
           <select id="first">
             <option value="player">You</option>
@@ -384,7 +399,7 @@
             <option value="9">First to 9 legs (best of 17)</option>
             <option value="11">First to win 11 games</option>
           </select>
-          <div class="muted" style="font-size:13px;margin-top:4px;">Who throws first alternates each game after the first.</div>
+          <div class="muted" id="seriesNote" style="font-size:13px;margin-top:4px;">Who throws first alternates each game after the first.</div>
         </div>
       </div>
       <div class="actions"><button type="button" id="startBtn">Start game</button><button type="button" class="secondary" id="boardBtnSetup" title="A full-screen scoreboard to read from the oche">Board mode</button></div>
@@ -495,7 +510,7 @@
      Cache-Control: no-cache (a real, previously-seen failure mode - see docs/bot-practice.md) is
      still forced to fetch the matching engine instead of silently pairing a new page with a stale
      one, which throws inside announce()'s catch-all and looks like "no sound at all". -->
-<script src="practice-engine.js?v=14"></script>
+<script src="practice-engine.js?v=15"></script>
 <script src="board-mode.js?v=7"></script>
 <script src="practice-timer.js?v=2"></script>
 <script src="players.js?v=1"></script>
@@ -533,12 +548,16 @@
   };
 
   let user = null;
-  let settings = Object.assign({ kind: "x01", startScore: 501, doubleOut: true, rank: "club", first: "player", entry: "board", confirm: false, camera: false, mute: false, opponent: "bot", oppName: "", oppEmail: "", seriesTarget: 1, botTarget: 53, botStyle: "standard" }, store.get(SETTINGS_KEY) || {});
+  let settings = Object.assign({ kind: "x01", startScore: 501, doubleOut: true, rank: "club", first: "player", entry: "board", confirm: false, camera: false, mute: false, opponent: "bot", oppName: "", oppEmail: "", seriesTarget: 1, botTarget: 53, botStyle: "standard", dartLimit: "auto" }, store.get(SETTINGS_KEY) || {});
   // Who is playing the running game. Against the bot the two sides are "You" and the bot; with another
   // player they are two people sharing the phone, and the email address of the second one is kept
   // here so the result can be sent to both.
   let match = { human: false, names: { player: "You", bot: "Bot" }, opponentEmail: "" };
   const versus = () => match.human;
+  // The Invisible Man: no bot, a dart limit (practice-engine.js createGame's limit). His side is "bot":
+  // he never throws, and he wins the leg when the limit runs out.
+  const solo = () => !!(game && E.isLimitGame(game));
+  const INVISIBLE = "Invisible Man";
   const nameOf = (who) => match.names[who];
   // The people you play against (players.js), kept with your account in savedPlayers/{uid}, so they are
   // on every device and typed once. playersKnown: the saved list has answered (offline with nothing
@@ -573,7 +592,7 @@
   // The bot has just checked out. The game waits here rather than ending, so that a dart of yours the
   // cameras misread (a double that would have won, read as a miss) can still be corrected with "Edit
   // my last visit"; "Finish game" ends it.
-  const botWonWaiting = () => !!game && !versus() && game.winner === "bot" && !game.visitDone && !reviewing && !editing && !botBusy;
+  const botWonWaiting = () => !!game && !versus() && !solo() && game.winner === "bot" && !game.visitDone && !reviewing && !editing && !botBusy;
   const turnWord = () => (versus() ? nameOf(game.turn) + "'s turn" : "Your turn");
   const scoreWord = (who) => (versus() ? nameOf(who) + "'s score" : who === "player" ? "Your score" : "Its score");
   const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -610,7 +629,7 @@
   // station's count (seq), and goes in once however many devices saw it (camSeq).
   const L = window.LiveSync;
   // The settings that are the game's (the same on every device); entry, camera and mute stay each device's own.
-  const GAME_SETTINGS = ["kind", "startScore", "doubleOut", "rank", "first", "opponent", "oppName", "oppEmail", "seriesTarget", "confirm"];
+  const GAME_SETTINGS = ["kind", "startScore", "doubleOut", "rank", "first", "opponent", "oppName", "oppEmail", "seriesTarget", "confirm", "dartLimit"];
   const pickSettings = (s) => Object.fromEntries(GAME_SETTINGS.filter((k) => s && s[k] !== undefined).map((k) => [k, s[k]]));
   const LIVE_JOIN_MS = 30 * 60 * 1000; // a game changed this recently is joined; an older one is offered to resume
   const TAKE_OVER_MS = 3000;           // how long a device stays quiet before another one does its job
@@ -819,7 +838,7 @@
         : [{ text: E.visitSpeech(visit, game.kind, game.winner === visit.who), rate: 1, pitch: 1, volume: 1, clip: null }];
       // The next thrower with a finish on: "You require 81" (with two players, their name first).
       const next = game.turn;
-      const need = !game.winner && next !== visit.who && (versus() || next === "player") && typeof E.requireLine === "function" ? E.requireLine(game, next) : "";
+      const need = !game.winner && (next !== visit.who || solo()) && (versus() || next === "player") && typeof E.requireLine === "function" ? E.requireLine(game, next) : "";
       // Alone it is the recorded call (fetched now, while the score is said); with two players the
       // name comes first, so the browser's voice says it.
       const needClip = need && !versus() && typeof E.requireClip === "function" ? E.requireClip(game.remaining[next]) : null;
@@ -996,9 +1015,9 @@
     for (const item of rows) {
       const d = item.data, tr = el("tr");
       const avg = (v) => (typeof v === "number" ? String(Math.round(v * 10) / 10) : "-");
-      tr.append(el("td", "left", String(d.timestamp || "").slice(0, 16)), el("td", "left", gameName(d)), el("td", "", item.coll === "versusGames" ? String(d.opponentName || "Player").slice(0, 40) : rankName(d.rank)),
+      tr.append(el("td", "left", String(d.timestamp || "").slice(0, 16)), el("td", "left", gameName(d)), el("td", "", item.coll === "versusGames" ? String(d.opponentName || "Player").slice(0, 40) : d.dartLimit ? INVISIBLE + " (" + d.dartLimit + ")" : rankName(d.rank)),
         el("td", ["won", "lost", "abandoned"].includes(d.result) ? d.result : "", d.result === "won" ? "Won" : d.result === "lost" ? "Lost" : "Unfinished"),
-        el("td", "", avg(d.playerAvg) + " v " + avg(item.coll === "versusGames" ? d.opponentAvg : d.botAvg)),
+        el("td", "", d.dartLimit ? avg(d.playerAvg) : avg(d.playerAvg) + " v " + avg(item.coll === "versusGames" ? d.opponentAvg : d.botAvg)),
         el("td", "", String((d.playerDarts || []).length)));
       const cell = el("td"), del = el("button", "danger", "Delete");
       del.type = "button"; del.style.minHeight = "36px"; del.style.padding = "6px 10px";
@@ -1047,7 +1066,7 @@
     [["custom", "Set its average"], ["ladder", "The ladder: win 2 of 3 to move up"]].forEach(([v, t]) => { const o = el("option", "", t); o.value = v; rank.append(o); });
     E.STYLES.forEach((st) => { const o = el("option", "", st.name); o.value = st.id; $("botStyle").append(o); });
     applySettingsToForm();
-    for (const id of ["startScore", "outRule", "rank", "first", "entry", "handover", "seriesTarget", "botStyle", "botTarget"]) $(id).addEventListener("change", readForm);
+    for (const id of ["startScore", "outRule", "rank", "first", "entry", "handover", "seriesTarget", "botStyle", "botTarget", "dartLimit"]) $(id).addEventListener("change", readForm);
     for (const id of ["oppName", "oppEmail"]) {
       $(id).addEventListener("input", readForm); $(id).addEventListener("change", readForm);
       $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); savePlayer(); } });
@@ -1076,7 +1095,10 @@
     $("entry").value = settings.entry === "keypad" ? "keypad" : "board";
     $("handover").value = settings.confirm ? "enter" : "auto";
     $("seriesTarget").value = SERIES_TARGETS.includes(Number(settings.seriesTarget)) ? String(settings.seriesTarget) : "1";
-    document.querySelectorAll('input[name="opp"]').forEach((r) => { r.checked = r.value === (settings.opponent === "human" ? "human" : "bot"); });
+    if (!["bot", "human", "limit"].includes(settings.opponent)) settings.opponent = "bot";
+    document.querySelectorAll('input[name="opp"]').forEach((r) => { r.checked = r.value === settings.opponent; });
+    if (!(settings.dartLimit === "auto" || E.LIMITS.includes(Number(settings.dartLimit)))) settings.dartLimit = "auto";
+    $("dartLimit").value = String(settings.dartLimit);
     $("oppName").value = String(settings.oppName || "");
     $("oppEmail").value = String(settings.oppEmail || "");
     playerEdit = null;
@@ -1087,9 +1109,10 @@
     const kind = document.querySelector('input[name="kind"]:checked');
     const seriesTarget = Number($("seriesTarget").value);
     settings = { kind: kind ? kind.value : "x01", startScore: Number($("startScore").value), doubleOut: $("outRule").value !== "straight", rank: $("rank").value, first: $("first").value, entry: $("entry").value, confirm: $("handover").value === "enter",
-      opponent: (document.querySelector('input[name="opp"]:checked') || {}).value === "human" ? "human" : "bot", oppName: $("oppName").value.trim().slice(0, 40), oppEmail: $("oppEmail").value.trim(), mute: settings.mute, camera: !!settings.camera && $("entry").value !== "keypad",
+      opponent: ((v) => (v === "human" || v === "limit" ? v : "bot"))((document.querySelector('input[name="opp"]:checked') || {}).value), oppName: $("oppName").value.trim().slice(0, 40), oppEmail: $("oppEmail").value.trim(), mute: settings.mute, camera: !!settings.camera && $("entry").value !== "keypad",
       seriesTarget: SERIES_TARGETS.includes(seriesTarget) ? seriesTarget : 1,
-      botStyle: $("botStyle").value, botTarget: Math.max(15, Math.min(110, Math.round(Number($("botTarget").value) || 53))) };
+      botStyle: $("botStyle").value, botTarget: Math.max(15, Math.min(110, Math.round(Number($("botTarget").value) || 53))),
+      dartLimit: E.LIMITS.includes(Number($("dartLimit").value)) ? Number($("dartLimit").value) : "auto" };
     store.set(SETTINGS_KEY, settings);
     syncSetupVisibility();
   }
@@ -1097,6 +1120,19 @@
   // The bot a new game is played against (practice-engine.js botFor): a named level, an average set by
   // hand, or the ladder's step (worked out from your saved ladder games).
   const ladderNow = () => E.ladderState(savedGames.filter((g) => g.coll === "botGames").map((g) => g.data));
+  // The Invisible Man's limit for a new leg: the one chosen, or where "Moves with you" has got to
+  // (worked out from your saved limit legs, like the ladder, so nothing else is stored).
+  const limitGames = () => savedGames.filter((g) => g.coll === "botGames" && g.data && g.data.dartLimit).map((g) => g.data);
+  const limitForNewGame = () => (settings.dartLimit === "auto" ? E.limitState(limitGames()).limit : Number(settings.dartLimit) || E.LIMIT.start);
+  function limitBlurb() {
+    const rec = E.limitRecord(limitGames()), n = limitForNewGame();
+    const record = rec.played ? " You've won " + rec.won + " of " + rec.played + " legs" + (rec.best ? "; fewest darts " + rec.best : "") + "." : "";
+    if (settings.dartLimit === "auto") {
+      const st = E.limitState(limitGames());
+      return "Your next leg: " + n + " darts. It starts at 27 (your median winning leg) and moves with you: one dart fewer after a leg you win, one more after two legs lost in a row" + (st.lossRun ? " (one lost so far)" : "") + "." + record;
+    }
+    return "No bot: check out within " + n + " darts to win the leg, or the Invisible Man wins it." + record;
+  }
   function botForNewGame() {
     const level = settings.rank;
     return E.botFor({ level, target: level === "ladder" ? ladderNow().target : settings.botTarget, style: settings.botStyle });
@@ -1114,6 +1150,7 @@
   }
   // What the bot is called: "Club bot", "58-average bot", "Ladder bot (55)".
   function botTitle(bot) {
+    if (!bot && solo()) return INVISIBLE;
     const b = bot || (game && game.bot) || null;
     if (!b) return rankName(RANK_IDS.includes(settings.rank) ? settings.rank : "club") + " bot";
     if (b.level === "ladder") return "Ladder bot (" + b.target + ")";
@@ -1294,22 +1331,30 @@
 
   function syncSetupVisibility() {
     renderPlayers();
-    const x01 = settings.kind === "x01", human = settings.opponent === "human";
-    $("startScoreBox").classList.toggle("hidden", !x01);
-    $("outBox").classList.toggle("hidden", !x01);
+    const human = settings.opponent === "human", limit = settings.opponent === "limit";
+    // The Invisible Man is 501, double out: the limits are set for it (27 is your median winning 501 leg).
+    const x01 = settings.kind === "x01" || limit;
+    document.querySelectorAll('input[name="kind"]').forEach((r) => { r.disabled = limit && r.value === "cricket"; r.checked = r.value === (x01 ? "x01" : "cricket"); });
+    $("kindNote").classList.toggle("hidden", !limit);
+    $("startScoreBox").classList.toggle("hidden", !x01 || limit);
+    $("outBox").classList.toggle("hidden", !x01 || limit);
     $("entryBox").classList.toggle("hidden", !x01);
     $("humanBox").classList.toggle("hidden", !human);
-    $("rankBox").classList.toggle("hidden", human);
+    $("limitBox").classList.toggle("hidden", !limit);
+    if (limit) $("limitBlurb").textContent = limitBlurb();
+    $("firstBox").classList.toggle("hidden", limit);
+    $("seriesNote").classList.toggle("hidden", limit);
+    $("rankBox").classList.toggle("hidden", human || limit);
     $("rankBlurb").textContent = levelBlurb();
-    $("botTargetBox").classList.toggle("hidden", human || settings.rank !== "custom");
-    $("styleBox").classList.toggle("hidden", human);
+    $("botTargetBox").classList.toggle("hidden", human || limit || settings.rank !== "custom");
+    $("styleBox").classList.toggle("hidden", human || limit);
     $("styleBlurb").textContent = (E.STYLES.find((st) => st.id === settings.botStyle) || E.STYLES[0]).blurb;
     // A bull-up is against the bot; with two people, who starts is chosen.
     if (human && settings.first === "bullup") { settings.first = "player"; $("first").value = "player"; }
     $("first").options[2].hidden = human;
     // "Who throws first" names the other player when there is one.
     $("first").options[1].textContent = human ? (String(settings.oppName || "").trim() || "The other player") : "The bot";
-    $("handover").options[0].textContent = human ? "Pass to the other player automatically" : "Pass to the bot automatically";
+    $("handover").options[0].textContent = human ? "Pass to the other player automatically" : limit ? "Go on to my next visit automatically" : "Pass to the bot automatically";
     const problem = human ? setupProblem() : { ok: true };
     $("startBtn").disabled = human && !problem.ok;
     $("playerSaveBtn").disabled = !human || !problem.ok || !!problem.full;
@@ -1331,7 +1376,7 @@
   // A game in play is kept on this device, and so is one waiting on the bot's checkout (botWonWaiting),
   // so a reload comes back to it rather than to the bot's last dart.
   function saveLocal() {
-    if (game && !reviewing && (!game.winner || (game.winner === "bot" && !versus())) && !editing) {
+    if (game && !reviewing && (!game.winner || (game.winner === "bot" && !versus() && !solo())) && !editing) {
       store.set(GAME_KEY, { game, startedAt, settings, match, series, timer, gameId, camHold, rev: live && live.latest ? live.latest.rev : 0, at: Date.now() });
     }
   }
@@ -1519,6 +1564,7 @@
 
   // The two names for a new game. With another player, names that would be the same are told apart.
   function buildMatch() {
+    if (settings.opponent === "limit") return { human: false, solo: true, names: { player: "You", bot: INVISIBLE }, opponentEmail: "" };
     if (settings.opponent !== "human") return { human: false, names: { player: "You", bot: botTitle(botForNewGame()) }, opponentEmail: "" };
     const email = String(settings.oppEmail || "").trim();
     const mine = firstWord(user && (user.displayName || user.email)) || "Player 1";
@@ -1536,11 +1582,14 @@
     match = buildMatch();
     store.remove(SERIES_KEY);
     const target = Number(settings.seriesTarget);
-    const bullUp = settings.first === "bullup" && settings.opponent !== "human";
-    const first = bullUp ? "player" : settings.first === "bot" ? "bot" : "player";
+    const limit = settings.opponent === "limit" ? limitForNewGame() : null;
+    const bullUp = settings.first === "bullup" && settings.opponent === "bot";
+    const first = limit || bullUp ? "player" : settings.first === "bot" ? "bot" : "player";
     series = SERIES_TARGETS.includes(target) ? E.createSeries({ target, first }) : null;
     if (series) series.id = newGameId(); // the match's id, on each leg's record
-    game = E.createGame({ kind: settings.kind, startScore: settings.startScore, doubleOut: settings.doubleOut, first: series ? series.nextFirst : first, bot: settings.opponent !== "human" ? botForNewGame() : null });
+    if (series && limit) { series.limit = limit; if (settings.dartLimit === "auto") series.limitAuto = true; }
+    game = limit ? E.createGame({ kind: "x01", startScore: 501, doubleOut: true, limit, limitAuto: settings.dartLimit === "auto" })
+      : E.createGame({ kind: settings.kind, startScore: settings.startScore, doubleOut: settings.doubleOut, first: series ? series.nextFirst : first, bot: settings.opponent !== "human" ? botForNewGame() : null });
     if (bullUp) E.startBullUp(game);
     gameId = newGameId(); over = null; camDarts = []; camHold = E.cleanHold(null);
     startedAt = Date.now(); reviewing = false; lastMessage = ""; pendingRecord = null;
@@ -1557,8 +1606,12 @@
   function startNextSeriesGame() {
     if (!series || E.seriesDecided(series)) return;
     stopDriving(); editing = null;
-    // The same bot all match (its average and style), whatever the settings say now.
-    game = E.createGame({ kind: settings.kind, startScore: settings.startScore, doubleOut: settings.doubleOut, first: series.nextFirst, bot: !versus() ? (game && game.bot) || botForNewGame() : null });
+    // The same bot all match (its average and style), whatever the settings say now; against the
+    // Invisible Man, the same limit all match.
+    const was = game;
+    const limitLeg = was && E.isLimitGame(was) ? E.gameOptions(was) : series.limit ? { kind: "x01", startScore: 501, doubleOut: true, limit: series.limit, limitAuto: !!series.limitAuto } : null;
+    game = limitLeg ? E.createGame(limitLeg)
+      : E.createGame({ kind: settings.kind, startScore: settings.startScore, doubleOut: settings.doubleOut, first: series.nextFirst, bot: !versus() ? (game && game.bot) || botForNewGame() : null });
     gameId = newGameId(); over = null; camDarts = []; camHold = E.cleanHold(null);
     startedAt = Date.now(); reviewing = false; lastMessage = ""; pendingRecord = null;
     timer = T.start(startedAt);
@@ -1614,7 +1667,7 @@
   let resumeKind = null;
 
   const gameWords = (g) => (g.kind === "cricket" ? "Cricket" : String(g.startScore));
-  const againstWords = (m) => (m && m.human && m.names ? " against " + m.names.bot : "");
+  const againstWords = (m) => (m && m.solo ? " against the Invisible Man" : m && m.human && m.names ? " against " + m.names.bot : "");
   function showResume(button, text) {
     $("resumeBox").classList.remove("hidden");
     $("resumeBtn").textContent = button;
@@ -1731,7 +1784,10 @@
     const s = E.summarize(game)[who];
     const side = el("div", "side " + who + (game.turn === who && !game.winner ? " turn" : ""));
     side.append(el("div", "who", nameOf(who)));
-    if (game.kind === "x01") {
+    if (who === "bot" && solo()) {
+      side.append(el("div", "big", String(E.limitLeft(game))));
+      side.append(el("div", "small", "darts left of " + game.limit));
+    } else if (game.kind === "x01") {
       side.append(el("div", "big", String(game.remaining[who])));
       const last = game.visits.filter((v) => v.who === who).slice(-1)[0];
       side.append(el("div", "small", "Avg " + (last ? s.avg.toFixed(1) : "-") + " · Last " + (last ? (last.bust ? "bust" : last.scored) : "-")));
@@ -1792,13 +1848,14 @@
     const head = $("log").tHead, body = $("log").tBodies[0];
     head.textContent = ""; body.textContent = "";
     const hr = el("tr");
-    hr.append(el("th", "", "Round"), el("th", "", nameOf("player")), el("th", "", nameOf("bot")));
+    hr.append(el("th", "", "Round"), el("th", "", nameOf("player")), el("th", "", solo() ? "Darts" : nameOf("bot")));
     head.append(hr);
     const cell = (v) => (v ? (game.kind === "x01" ? (v.bust ? "Bust" : String(v.scored)) : v.marks + " marks" + (v.points ? ", +" + v.points : "")) : "");
     const rounds = new Map();
-    for (const v of game.visits) { const r = rounds.get(v.round) || {}; r[v.who] = v; rounds.set(v.round, r); }
+    let thrown = 0;
+    for (const v of game.visits) { const r = rounds.get(v.round) || {}; r[v.who] = v; thrown += (v.darts || []).length; if (solo()) r.darts = thrown + " of " + game.limit; rounds.set(v.round, r); }
     [...rounds.entries()].reverse().forEach(([round, r]) => {
-      const tr = el("tr"); tr.append(el("td", "", String(round)), el("td", "", cell(r.player)), el("td", "", cell(r.bot))); body.append(tr);
+      const tr = el("tr"); tr.append(el("td", "", String(round)), el("td", "", cell(r.player)), el("td", "", solo() ? r.darts : cell(r.bot))); body.append(tr);
     });
     if (!rounds.size) { const tr = el("tr"), td = el("td", "empty", "Nothing thrown yet."); td.colSpan = 3; tr.append(td); body.append(tr); }
   }
@@ -1824,10 +1881,15 @@
       noteClass = "st-msg edit";
     }
     const line = el("div", "st-main");
+    const most = E.visitMax(game), limitNote = solo() ? " " + E.limitLeft(game) + " of " + game.limit + " darts left." : "";
     if (humanTurn() && !game.visitDone && keypadActive()) {
-      line.append(el("strong", "", turnWord()), document.createTextNode(" · enter " + (versus() ? "the" : "your") + " three-dart score."));
+      line.append(el("strong", "", turnWord()), document.createTextNode(" · enter " + (versus() ? "the" : "your") + " " + (most === 3 ? "three" : most === 2 ? "two" : "one") + "-dart score." + limitNote));
     } else if (humanTurn() && !game.visitDone) {
-      line.append(el("strong", "", turnWord()), document.createTextNode(" · dart " + (game.visitDarts.length + 1) + " of 3. " + (cam ? "Throw, or tap where it landed." : "Tap where it landed.")));
+      line.append(el("strong", "", turnWord()), document.createTextNode(" · dart " + (game.visitDarts.length + 1) + " of " + most + ". " + (cam ? "Throw, or tap where it landed." : "Tap where it landed.") + limitNote));
+    } else if (humanTurn() && solo()) {
+      const won = game.winner === "player";
+      line.append(el("strong", "", won ? "Checked out in " + game.darts.player.length + " darts!" : game.winner ? "Out of darts: the Invisible Man wins the leg." : "Visit finished"),
+        document.createTextNode(game.winner ? " Check the darts, then finish." : editing ? ". Saving your change. Undo to change a dart." : passTimer ? ". Your next visit is coming. Undo to change a dart." : settings.confirm && !keypadActive() ? ". Check the darts. Press Enter when they are right, or Undo to change one." : ". Next visit when you are ready."));
     } else if (humanTurn()) {
       line.append(el("strong", "", game.winner ? (versus() ? nameOf(game.winner) + " won the game!" : "You won the game!") : "Visit finished"), document.createTextNode(game.winner ? " Check the darts, then finish." : editing ? ". Saving your change. Undo to change a dart." : passTimer ? ". " + (versus() ? nameOf(game.turn === "player" ? "bot" : "player") : "The bot") + " is up next. Undo to change a dart." : settings.confirm && !keypadActive() ? ". Check the darts. Press Enter when they are right, or Undo to change one." : ". Pass to " + (versus() ? nameOf(game.turn === "player" ? "bot" : "player") : "the bot") + " when you are ready."));
     } else if (botWonWaiting()) {
@@ -1837,8 +1899,8 @@
     }
     box.append(line);
     // Near a finish: the route for the darts left, or, with no finish possible, what to leave (S19 leaves 80).
-    const rem = game.kind === "x01" ? game.remaining[game.turn] : 0, dartsLeft = 3 - game.visitDarts.length;
-    const near = game.kind === "x01" && humanTurn() && !game.visitDone && rem <= 170;
+    const rem = game.kind === "x01" ? game.remaining[game.turn] : 0, dartsLeft = most - game.visitDarts.length;
+    const near = game.kind === "x01" && humanTurn() && !game.visitDone && rem <= 170 && dartsLeft > 0;
     const route = near ? E.checkoutRoute(rem, dartsLeft, game.doubleOut) : null;
     const setup = near && !route ? E.setupShot(rem, dartsLeft, game.doubleOut) : null;
     if (route || setup) {
@@ -1863,7 +1925,7 @@
     const pending = humanTurn() && game.visitDone && !reviewing;
     const botWon = botWonWaiting();
     $("nextBtn").classList.toggle("hidden", botWon ? false : !pending || keypadActive());
-    $("nextBtn").textContent = editing ? "Save change" : game.winner ? "Finish game" : settings.confirm && !keypadActive() ? "Enter" : "Bot's turn";
+    $("nextBtn").textContent = editing ? "Save change" : game.winner ? "Finish game" : settings.confirm && !keypadActive() ? "Enter" : solo() ? "Next visit" : "Bot's turn";
     const me = botWon ? "player" : game.turn, them = otherSide(me);
     $("editBtn").classList.toggle("hidden", !showEdit(me));
     $("editBtn").textContent = versus() ? "Edit " + nameOf(me) + "'s last visit" : "Edit my last visit";
@@ -1980,26 +2042,30 @@
 
   function kpEnter() {
     if (kpLocked() || !kpText) return;
+    // Against the Invisible Man the last visit can have fewer darts: a total they can't make is refused.
+    const tryEnter = (fn) => { try { kpSubmit(fn()); } catch (error) { lastMessage = error && error.message ? error.message : String(error); kpText = ""; kpAsking = false; render(); } };
     if (kpDartMode()) {
       const scores = kpScores();
       if (!scores || E.evaluateDarts(game.remaining[game.turn], game.doubleOut, scores).error) { renderKeypad(); return; }
-      kpSubmit(E.enterDarts(game, scores));
+      tryEnter(() => E.enterDarts(game, scores));
       return;
     }
     const score = Number(kpText);
     if (!E.canScoreVisit(score)) { renderKeypad(); return; }
-    const left = game.remaining[game.turn], route = score === left ? E.checkoutRoute(left, 3, game.doubleOut) : null;
+    const most = E.visitMax(game);
+    const left = game.remaining[game.turn], route = score === left ? E.checkoutRoute(left, most, game.doubleOut) : null;
     if (route) { kpAsking = true; renderKeypad(); return; }   // a finish: ask how many darts it took
-    kpSubmit(E.enterVisit(game, score, 3));
+    tryEnter(() => E.enterVisit(game, score, most));
   }
 
   function kpFinish(darts) {
-    kpSubmit(E.enterVisit(game, game.remaining[game.turn], darts));
+    try { kpSubmit(E.enterVisit(game, game.remaining[game.turn], darts)); }
+    catch (error) { lastMessage = error && error.message ? error.message : String(error); kpAsking = false; render(); }
   }
 
   function kpSubmit(result) {
     kpText = ""; kpAsking = false;
-    lastMessage = result.event === "bust" ? "Bust! " + scoreWord(game.turn) + " stays " + game.remaining[game.turn] + "." : result.event === "win" ? "Checkout!" : "Scored " + result.score + ".";
+    lastMessage = result.event === "bust" ? "Bust! " + scoreWord(game.turn) + " stays " + game.remaining[game.turn] + "." : result.event === "win" ? "Checkout!" : result.event === "limit" ? "Scored " + result.score + ". Out of darts." : "Scored " + result.score + ".";
     persistGame();
     // A normal visit goes straight to the bot. A bust or a win waits, so it can be undone.
     if (result.event === "ok") passTurn(); else render();
@@ -2062,12 +2128,13 @@
     if (kpAsking) {
       const fewest = E.fewestDarts(game.remaining[game.turn], game.doubleOut) || 1;
       $("kpConfirmText").textContent = "Checkout from " + game.remaining[game.turn] + "! How many darts did it take?";
-      for (let n = fewest; n <= 3; n++) add(n + (n === 1 ? " dart" : " darts"), "", () => kpFinish(n));
+      for (let n = fewest; n <= E.visitMax(game); n++) add(n + (n === 1 ? " dart" : " darts"), "", () => kpFinish(n));
       add("Back", "secondary", () => { kpAsking = false; renderKeypad(); });
     } else {
-      $("kpConfirmText").textContent = game.visitBust ? "Bust! " + scoreWord(game.turn) + " stays " + game.remaining[game.turn] + "." : game.winner ? "Checkout! " + (versus() ? nameOf(game.winner) : "You") + " won the game." : "Scored.";
+      const outOfDarts = solo() && game.winner === "bot";
+      $("kpConfirmText").textContent = (game.visitBust ? "Bust! " + scoreWord(game.turn) + " stays " + game.remaining[game.turn] + "." : outOfDarts ? "Scored." : game.winner ? "Checkout! " + (versus() ? nameOf(game.winner) : "You") + " won the game." : "Scored.") + (outOfDarts ? " Out of darts: the Invisible Man wins the leg." : "");
       add("Undo score", "secondary", undo);
-      add(editing ? "Save change" : game.winner ? "Finish game" : "Bot's turn", "", passTurn);
+      add(editing ? "Save change" : game.winner ? "Finish game" : solo() ? "Next visit" : "Bot's turn", "", passTurn);
     }
   }
 
@@ -2287,17 +2354,17 @@
       return;
     }
     // Your winning visit: pulling the darts out confirms it, so there's no walk to the iPad to finish.
-    if (ev.k === "o" && mine && game.winner && game.winner === game.turn && game.visitDone && !editing) { persistGame(); passTurn(); return; }
+    if (ev.k === "o" && mine && game.winner && (game.winner === game.turn || solo()) && game.visitDone && !editing) { persistGame(); passTurn(); return; }
     // Two players: the visit is over and its darts are out, and the next player has thrown before the
     // turn passed by itself (they throw as soon as the board is clear): it passes now, so the dart is theirs.
-    if (versus() && ev.k !== "o" && game.visitDone && !game.winner && !camHold.after && passTimer && !editing) passTurn();
+    if ((versus() || solo()) && ev.k !== "o" && game.visitDone && !game.winner && !camHold.after && passTimer && !editing) passTurn();
     const out = E.cameraEvent(game, camHold, ev, mine, missPosition);
     if (out.length === 1 && out[0].t === "none") { persistGame(); return cameraSays("Camera on: watching the board."); }
     applyCamera(out);
     persistGame();
     if (game.visitDone && !game.winner && humanTurn()) {
       // The darts are out: with Press Enter, that is Enter; with two players, the next player is up.
-      if (ev.k === "o" && (settings.confirm || versus())) passTurn();
+      if (ev.k === "o" && (settings.confirm || versus() || solo())) passTurn();
       else if (!settings.confirm && !passTimer) scheduleAutoPass();
     }
     render();
@@ -2429,7 +2496,7 @@
     lastMessage = versus() ? "Now " + nameOf(game.turn) + "." : ""; kpText = ""; kpAsking = false;
     if (game.winner) { finishGame(game.winner === "player" ? "won" : "lost"); return; }
     persistGame(); render();
-    if (!versus()) runBot();
+    if (!versus() && !solo()) runBot();
   }
 
   // The bot throws one dart at a time so the darts can be watched landing.
@@ -2510,7 +2577,7 @@
   function buildRecord(result) {
     const s = E.summarize(game);
     const record = {
-      uid: user.uid, timestamp: localStamp(startedAt), kind: game.kind, rank: game.bot ? E.nearestRank(game.bot.target) : legacyRank(), first: game.first, result,
+      uid: user.uid, timestamp: localStamp(startedAt), kind: game.kind, first: game.first, result,
       durationSec: playedSeconds(),
       rounds: game.round, playerAvg: s.player.avg, botAvg: s.bot.avg, playerScore: s.player.score, botScore: s.bot.score,
       playerDarts: game.darts.player.map(dartRecord),
@@ -2519,6 +2586,9 @@
       visits: E.visitsRecord(game),
     };
     if (game.kind === "x01") { record.startScore = game.startScore; record.doubleOut = game.doubleOut; }
+    // The Invisible Man's leg: its limit (and whether it moves) in place of a bot's level.
+    if (E.isLimitGame(game)) { record.dartLimit = game.limit; if (game.limitAuto) record.limitAuto = true; }
+    else record.rank = game.bot ? E.nearestRank(game.bot.target) : legacyRank();
     // The real-board bot (its average, how it plays, the ladder), and the match this leg was part of.
     if (game.botModel === E.BOT_MODEL && game.bot) {
       record.botModel = game.botModel; record.botTarget = game.bot.target; record.botStyle = game.bot.style;
@@ -2624,7 +2694,7 @@
   // live `match`, but a resume preview needs to build this from a saved one before it is live.
   function seriesScoreLine(s, m) {
     const info = m && m.names ? m : match;
-    const playerName = info.human ? info.names.player : "You", botName = info.human ? info.names.bot : "Bot";
+    const playerName = info.human ? info.names.player : "You", botName = info.human ? info.names.bot : info.solo ? INVISIBLE : "Bot";
     return "Match: " + playerName + " " + s.wins.player + " - " + s.wins.bot + " " + botName;
   }
 
@@ -2668,6 +2738,9 @@
     if (versus()) {
       $("overTitle").textContent = abandoned ? "Game ended" : nameOf(won ? "player" : "bot") + " won!";
       $("overSub").textContent = gameLabel + ": " + nameOf("player") + " against " + nameOf("bot");
+    } else if (solo()) {
+      $("overTitle").textContent = abandoned ? "Leg ended" : won ? "You beat the Invisible Man!" : "The Invisible Man won";
+      $("overSub").textContent = gameLabel + ": check out within " + game.limit + " darts" + (game.limitAuto ? " (moves with you)" : "");
     } else {
       $("overTitle").textContent = abandoned ? "Game ended" : won ? "You won!" : "The " + botTitle() + " won";
       $("overSub").textContent = gameLabel + " against the " + botTitle();
@@ -2692,6 +2765,11 @@
       add(s.player.avg.toFixed(1), nameOf("player") + ", " + unit); add(s.bot.avg.toFixed(1), nameOf("bot") + ", " + unit);
       add(s.player.darts + " / " + s.bot.darts, "darts thrown");
       if (game.kind === "x01") add(s.player.best + " / " + s.bot.best, "best visits");
+    } else if (solo()) {
+      add(s.player.avg.toFixed(1), "your " + unit);
+      add(s.player.darts + " / " + game.limit, won ? "darts to check out" : "darts of the limit");
+      if (!won) add(s.player.score, "left");
+      add(s.player.best, "your best visit");
     } else {
       add(s.player.avg.toFixed(1), "you, " + unit); add(s.bot.avg.toFixed(1), "bot, " + unit);
       add(s.player.darts, "your darts");
@@ -2843,12 +2921,13 @@
     if (!game || game.kind !== "x01") return "";
     const me = E.legReport(game, "player"), them = E.legReport(game, "bot");
     const pct = (c) => (c.pct == null ? "-" : Math.round(c.pct * 100) + "% (" + c.hits + "/" + c.darts + ")");
-    const row = (label, a, b) => `<tr><th>${label}</th><td>${a}</td><td>${b}</td></tr>`;
+    const one = solo(); // the Invisible Man throws nothing: your column only, and the darts against the limit
+    const row = (label, a, b) => `<tr><th>${label}</th><td>${a}</td>${one ? "" : `<td>${b}</td>`}</tr>`;
     const t = (r) => [r.tons.s60, r.tons.s100, r.tons.s140, r.tons.s180].join(" / ");
-    let html = `<div class="bm-report"><table><tr><th></th><th>${esc(nameOf("player"))}</th><th>${esc(nameOf("bot"))}</th></tr>`
+    let html = `<div class="bm-report"><table><tr><th></th><th>${esc(nameOf("player"))}</th>${one ? "" : `<th>${esc(nameOf("bot"))}</th>`}</tr>`
       + row("3-dart average", fmt1(me.avg), fmt1(them.avg)) + row("First 9", fmt1(me.first9), fmt1(them.first9))
       + row("Checkout", pct(me.checkout), pct(them.checkout)) + row("Highest finish", me.highFinish || "-", them.highFinish || "-")
-      + row("60+ / 100+ / 140+ / 180", t(me), t(them)) + row("Darts", me.darts, them.darts) + "</table>";
+      + row("60+ / 100+ / 140+ / 180", t(me), t(them)) + row("Darts", one ? me.darts + " of " + game.limit : me.darts, them.darts) + "</table>";
     // Your visits, in bands of 20.
     const bands = E.visitBands(me.visits), top = Math.max(1, ...bands.map((b) => b.n));
     const bw = 520 / bands.length;
@@ -2857,12 +2936,12 @@
       return `<rect x="${i * bw + 4}" y="${110 - h}" width="${bw - 8}" height="${h}" rx="4" fill="var(--accent)" fill-opacity="${b.n ? 0.85 : 0.15}"/><text x="${i * bw + bw / 2}" y="128" text-anchor="middle" font-size="13" fill="var(--muted)">${b.from}${i === 8 ? "+" : ""}</text>${b.n ? `<text x="${i * bw + bw / 2}" y="${104 - h}" text-anchor="middle" font-size="14" font-weight="800" fill="var(--text)">${b.n}</text>` : ""}`;
     }).join("") + `<text x="0" y="146" font-size="13" fill="var(--muted)">Your visits by score</text></svg>`;
     // Against your last 10 finished games (this one left out).
-    const prev = savedGames.filter((g) => g.coll === "botGames" && g.id !== gameId && g.data && g.data.kind === "x01" && g.data.result !== "abandoned" && Number.isFinite(g.data.playerAvg))
+    const prev = savedGames.filter((g) => g.coll === "botGames" && g.id !== gameId && g.data && g.data.kind === "x01" && g.data.result !== "abandoned" && Number.isFinite(g.data.playerAvg) && !g.data.dartLimit === !one)
       .sort((a, b) => String(a.data.timestamp).localeCompare(String(b.data.timestamp))).slice(-10);
     if (prev.length && !versus()) {
       const avg = prev.reduce((n, g) => n + g.data.playerAvg, 0) / prev.length;
       const d = me.avg - avg;
-      html += `<p>${fmt1(me.avg)} against <b>${fmt1(avg)}</b>, your average over your last ${prev.length} game${prev.length === 1 ? "" : "s"}: <b class="${d >= 0 ? "up" : "down"}">${d >= 0 ? "+" : ""}${fmt1(d)}</b>.</p>`;
+      html += `<p>${fmt1(me.avg)} against <b>${fmt1(avg)}</b>, your average over your last ${prev.length} ${one ? "Invisible Man leg" : "game"}${prev.length === 1 ? "" : "s"}: <b class="${d >= 0 ? "up" : "down"}">${d >= 0 ? "+" : ""}${fmt1(d)}</b>.</p>`;
     }
     const mine = game.darts.player.filter(hasPosition);
     if (mine.length && window.BoardMode) html += `<div style="max-width:320px">${BoardMode.boardSvg([], mine.map((d, i) => ({ index: i, x: d.x, y: d.y, kind: "hit" })), { small: true })}</div>`;
@@ -2910,7 +2989,7 @@
     const m = E.momentFor(game, visit);
     if (!m) return;
     if (versus()) m.sub = nameOf(visit.who) + ": " + m.sub;
-    else if (visit.who === "bot") m.sub = "The bot: " + m.sub;
+    else if (visit.who === "bot" && !solo()) m.sub = "The bot: " + m.sub;
     botBoard.moment(m);
   }
 
@@ -2933,11 +3012,13 @@
     const sv = shownVisit();
     const darts = sv ? boxesOf(sv) : [];
     const rem = x01 ? game.remaining[thrower] : game.points[thrower];
-    const dartsLeft = 3 - game.visitDarts.length;
-    const route = x01 && !game.visitDone && rem <= 170 ? E.checkoutRoute(rem, dartsLeft, game.doubleOut) : null;
-    const setup = x01 && !game.visitDone && !route && rem <= 230 ? E.setupShot(rem, dartsLeft, game.doubleOut) : null;
+    const most = E.visitMax(game), dartsLeft = most - game.visitDarts.length;
+    const route = x01 && !game.visitDone && rem <= 170 && dartsLeft > 0 ? E.checkoutRoute(rem, dartsLeft, game.doubleOut) : null;
+    const setup = x01 && !game.visitDone && !route && rem <= 230 && dartsLeft > 0 ? E.setupShot(rem, dartsLeft, game.doubleOut) : null;
     let label, labelClass;
-    if (reviewing) { label = over && over.result === "won" ? (versus() ? nameOf("player") + " won" : "You won") : over && over.result === "lost" ? (versus() ? nameOf("bot") + " won" : "The bot won") : "Game over"; labelClass = "over"; }
+    if (reviewing) { label = over && over.result === "won" ? (versus() ? nameOf("player") + " won" : "You won") : over && over.result === "lost" ? (versus() ? nameOf("bot") + " won" : solo() ? "The Invisible Man won" : "The bot won") : "Game over"; labelClass = "over"; }
+    else if (solo() && game.winner === "bot") { label = "Out of darts"; labelClass = "bot"; }
+    else if (solo() && game.winner) { label = "Checked out in " + game.darts.player.length; labelClass = "you"; }
     else if (botWonWaiting()) { label = x01 ? "The bot checked out" : "The bot closed it out"; labelClass = "bot"; }
     else if (game.winner) { label = (versus() ? nameOf(game.winner) : "You") + " won the game"; labelClass = "you"; }
     else if (versus()) { label = nameOf(thrower) + " to throw"; labelClass = thrower === "player" ? "you" : "bot"; }
@@ -2956,6 +3037,7 @@
         : v.bust ? `<b class="down">Bust</b> <span class="m">· back to</span> ${game.remaining[v.who]}` : `<b>${v.scored}</b> <span class="m">this visit · leaves</span> <b>${v.left}</b>`;
     } else if (x01 && thrower === "player" && !versus()) {
       info = s.player.avg ? `<span class="m">Your average</span> ${fmt1(s.player.avg)}` : "";
+      if (solo()) info = `<b>${E.limitLeft(game)}</b> <span class="m">darts left of ${game.limit}</span>` + (s.player.avg ? ` <span class="m">· average</span> ${fmt1(s.player.avg)}` : "");
     }
     // Cricket: the number to throw at (your first open number, else one the other side still has open).
     const ckAim = !x01 && !game.winner && !game.visitDone ? E.cricketAim(game, thrower) : null;
@@ -2981,11 +3063,12 @@
       sub: v.who === "player" ? (versus() ? firstWord(nameOf("player")).slice(0, 6) : "You") : versus() ? firstWord(nameOf("bot")).slice(0, 6) : "Bot",
       title: nameOf(v.who) + ", round " + v.round,
     }));
-    const avgs = x01 ? `${esc(nameOf("player"))} ${fmt1(s.player.avg)} · ${esc(nameOf("bot"))} ${fmt1(s.bot.avg)}` : `marks per round: ${esc(nameOf("player"))} ${fmt1(s.player.avg)} · ${esc(nameOf("bot"))} ${fmt1(s.bot.avg)}`;
+    const avgs = solo() ? `Your average ${fmt1(s.player.avg)} · ${E.limitLeft(game)} of ${game.limit} darts left`
+      : x01 ? `${esc(nameOf("player"))} ${fmt1(s.player.avg)} · ${esc(nameOf("bot"))} ${fmt1(s.bot.avg)}` : `marks per round: ${esc(nameOf("player"))} ${fmt1(s.player.avg)} · ${esc(nameOf("bot"))} ${fmt1(s.bot.avg)}`;
     const seriesLine = series ? ` · ${esc(nameOf("player"))} ${series.wins.player}–${series.wins.bot} ${esc(nameOf("bot"))}` : "";
     // In a match, the legs score big beside the dart count: the line under the strip is too small from the oche.
-    const legName = (who) => (versus() ? firstWord(nameOf(who)).slice(0, 8) : who === "player" ? "You" : "Bot");
-    const dartCount = game.visitDone ? (game.winner ? "Game shot" : "Visit done") : `Dart ${game.visitDarts.length + 1} <span>of 3</span>`;
+    const legName = (who) => (versus() ? firstWord(nameOf(who)).slice(0, 8) : who === "player" ? "You" : solo() ? "Invisible" : "Bot");
+    const dartCount = game.visitDone ? (game.winner ? (solo() && game.winner === "bot" ? "Out of darts" : "Game shot") : "Visit done") : `Dart ${game.visitDarts.length + 1} <span>of ${most}</span>`;
     const legsHtml = series ? `<div class="bm-legs${versus() ? " two" : ""}" role="img" aria-label="Match score: ${esc(nameOf("player"))} ${series.wins.player}, ${esc(nameOf("bot"))} ${series.wins.bot}. First to ${series.target}."><i>${esc(legName("player"))}</i><b class="you">${series.wins.player}</b><em>–</em><b class="bot">${series.wins.bot}</b><i>${esc(legName("bot"))}</i></div>` : "";
     const view = {
       target: x01 ? rem : rem,
@@ -2996,9 +3079,9 @@
       countHtml: reviewing ? "" : legsHtml ? `<div class="bm-legs-row">${legsHtml}<div>${dartCount}</div></div>` : dartCount,
       next: routeLabels, nextLabel,
       litLabel: route ? route[0].label : setup ? setup.dart.label : x01 ? (!game.visitDone ? "T20" : "") : ckLit,
-      dartNo: Math.min(3, game.visitDarts.length + 1),
+      dartNo: Math.min(most || 3, game.visitDarts.length + 1),
       darts,
-      waiting: humanTurn() && camHold.wait ? Array.from({ length: Math.min(3 - game.visitDarts.length, camHold.wait) }, () => ({ read: "Not read", sub: "Tap where it landed" })) : [],
+      waiting: humanTurn() && camHold.wait ? Array.from({ length: Math.min(most - game.visitDarts.length, camHold.wait) }, () => ({ read: "Not read", sub: "Tap where it landed" })) : [],
       unseen: 0,
       visitDone: !sv || !sv.current || game.visitDone || !humanTurn() || botBusy,
       cells: x01 ? recent : ckCells, cols: x01 ? 12 : 8,
@@ -3011,7 +3094,7 @@
       Object.assign(view, { target: "Bull", label: "Bull-up", labelClass: "over", countHtml: bu.player ? (bu.done ? "" : "The bot's dart") : "One dart at the bull", next: [], nextLabel: "", nextClass: "", targetClass: "", litLabel: "BULLUP", darts: side(0, "player").concat(side(1, "bot")), visitDone: !!bu.player });
       info = "";
     }
-    const pass = botWonWaiting() ? "Finish game" : editing ? "Save change" : game.winner ? "Finish game" : settings.confirm ? "Enter" : versus() ? "Next player" : "Bot's turn";
+    const pass = botWonWaiting() ? "Finish game" : editing ? "Save change" : game.winner ? "Finish game" : settings.confirm ? "Enter" : versus() ? "Next player" : solo() ? "Next visit" : "Bot's turn";
     const pendingPass = (humanTurn() && game.visitDone && !reviewing) || botWonWaiting();
     const meEdit = botWonWaiting() ? "player" : game.turn;
     const model = {
@@ -3022,8 +3105,8 @@
       note: camText && camText !== "setup" ? camText : lastMessage,
       noteWarn: !!camWarn,
       dartsText: x01 ? game.startScore + (game.doubleOut ? "" : " straight") : "Cricket",
-      modeLabel: versus() ? nameOf("player") + " v " + nameOf("bot") : "Against the " + botTitle(),
-      oppHtml: `<span class="who">${esc(nameOf(other))}</span>${other === "bot" && versus() && !reviewing ? `<button type="button" class="bm-rename" data-act="rename" aria-label="Change the other player's name, ${esc(nameOf("bot"))}">Edit name</button>` : ""}<span class="sc">${x01 ? game.remaining[other] : game.points[other]}</span><span class="sub">${x01 ? (s[other].avg ? "avg " + fmt1(s[other].avg) : "") : "points"}</span>`,
+      modeLabel: versus() ? nameOf("player") + " v " + nameOf("bot") : solo() ? "Invisible Man · " + game.limit + " darts" : "Against the " + botTitle(),
+      oppHtml: solo() ? `<span class="who">${INVISIBLE}</span><span class="sc">${E.limitLeft(game)}</span><span class="sub">darts left of ${game.limit}</span>` : `<span class="who">${esc(nameOf(other))}</span>${other === "bot" && versus() && !reviewing ? `<button type="button" class="bm-rename" data-act="rename" aria-label="Change the other player's name, ${esc(nameOf("bot"))}">Edit name</button>` : ""}<span class="sc">${x01 ? game.remaining[other] : game.points[other]}</span><span class="sub">${x01 ? (s[other].avg ? "avg " + fmt1(s[other].avg) : "") : "points"}</span>`,
       info,
       pad: [
         { man: "miss", text: "Missed the board", disabled: !(humanTurn() && !game.visitDone && !botBusy && !game.winner), hidden: keypadActive() },

@@ -64,6 +64,35 @@ test("bot stats: only finished games, averages from the visits (kept or rebuilt 
   assert.equal(S.botVisits({ kind: "x01", playerDarts: [{ s: "?" }], botDarts: [] }), null, "a typed total can't be replayed");
 });
 
+test("Invisible Man legs stay out of the bot's games, win rate, levels, records, milestones and plan, and have their own numbers", () => {
+  const at = (l) => (l === "MISS" ? { x: 0, y: -1.1 } : DE.aimPoint(l.slice(1), l[0]));
+  const g = DE.createGame({ kind: "x01", startScore: 501, limit: 27, limitAuto: true });
+  const play = (ls) => { ls.forEach((l) => DE.throwDart(g, at(l))); if (g.visitDone && !g.winner) DE.endVisit(g); };
+  play(["T20", "T20", "T20"]); play(["T20", "T20", "T20"]); play(["T20", "T19", "D12"]); DE.endVisit(g);
+  const leg = { id: "im1", timestamp: "2026-11-20 18:00", kind: "x01", startScore: 501, doubleOut: true, first: "player", result: "won", dartLimit: 27, limitAuto: true,
+    playerAvg: 167, playerDarts: g.darts.player, botDarts: [], visits: DE.visitsRecord(g) };
+  const lost = Object.assign({}, leg, { id: "im2", timestamp: "2026-11-20 18:10", result: "lost", playerAvg: 40, playerDarts: new Array(27).fill({ s: "S1" }), visits: undefined });
+  const bot = { id: "b1", timestamp: "2026-11-20 17:00", kind: "x01", startScore: 501, doubleOut: true, first: "player", rank: "club", result: "lost", playerAvg: 45, playerDarts: [{ s: "?" }], botDarts: [] };
+  const games = [leg, lost, bot];
+  const st = S.botStats(games);
+  assert.equal(st.games, 1, "only the bot game");
+  assert.equal(st.won, 0);
+  assert.equal(st.byLevel.length, 1);
+  assert.equal(st.byLevel[0].label, "Club");
+  const im = S.botStats(games, { limit: true });
+  assert.equal(im.games, 2);
+  assert.equal(im.won, 1);
+  assert.equal(im.fewestDarts, 9);
+  assert.equal(im.byLevel[0].label, "27 darts (moving)");
+  assert.equal(S.limitLeg(leg), true);
+  assert.equal(S.limitLeg(bot), false);
+  const data = { sessions: [], botGames: games, challengeGames: [], doublesSessions: [], hidden: new Set() };
+  assert.ok(!S.records(data).some((r) => r.game === "Bot" && r.value === "167.0"), "its average isn't the bot record");
+  assert.ok(S.practiceDays(data, "2026-11-20").today, "it counts as a day of practice");
+  const plan = S.practicePlan({ sessions: [], botGames: [leg], challengeGames: [], doublesSessions: [], hidden: new Set() }, "2026-11-20");
+  assert.equal(plan.find((p) => p.game === "bot").done, false, "a leg against the Invisible Man isn't a game against the bot");
+});
+
 test("JDC and Doubles stats", () => {
   const darts = CE.STEPS.flatMap((st) => Array(st.darts).fill(st.kind === "double" ? 1 : 2));
   const r = Object.assign({ id: "j1" }, CE.record("u", darts, { timestamp: "2026-11-10 18:00" }));

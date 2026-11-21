@@ -271,6 +271,25 @@ test("a bot game can say which bot it was and which leg of a match", async () =>
   }
 });
 
+test("an Invisible Man leg saves its dart limit in place of a bot level: 501 double out, no bot darts", async () => {
+  const db = asUser(me);
+  const leg = (o = {}) => { const g = botGame({ dartLimit: 27, limitAuto: true, botDarts: [], botAvg: 0, botScore: 501 }); delete g.rank; return { ...g, ...o }; };
+  await assertSucceeds(addDoc(collection(db, "botGames"), leg()));
+  await assertSucceeds(addDoc(collection(db, "botGames"), leg({ limitAuto: false, matchId: "m1abcdefg", leg: 1, legsToWin: 2 })));
+  const fixed = leg(); delete fixed.limitAuto;
+  await assertSucceeds(addDoc(collection(db, "botGames"), fixed));
+  for (const bad of [{ dartLimit: 8 }, { dartLimit: 61 }, { dartLimit: "27" }, { limitAuto: "yes" }, { startScore: 301 }, { doubleOut: false },
+    { botDarts: dartList(3) }, { rank: "club" }, { botModel: 4 }, { botTarget: 53 }, { ladder: true }]) {
+    await assertFails(addDoc(collection(db, "botGames"), leg(bad)));
+  }
+  const cricket = leg({ kind: "cricket" }); delete cricket.startScore; delete cricket.doubleOut;
+  await assertFails(addDoc(collection(db, "botGames"), cricket));
+  // A bot game still needs its level, and can't say its limit moves.
+  const noRank = botGame(); delete noRank.rank;
+  await assertFails(addDoc(collection(db, "botGames"), noRank));
+  await assertFails(addDoc(collection(db, "botGames"), botGame({ limitAuto: true })));
+});
+
 test("a cricket game has no start score, and an x01 game needs one from 201 to 701", async () => {
   const db = asUser(me);
   const cricket = botGame({ kind: "cricket", playerAvg: 2.1, botAvg: 1.7 });
@@ -671,6 +690,15 @@ test("finished training drills are saved as the page saves them, and only their 
   // One stopped part way is kept as unfinished, with a plan run's id when it was part of a plan.
   await assertSucceeds(setDoc(doc(asUser(me), "trainingSessions", "t3"), trainingSession({ complete: false, planRunId: "plan-1" })));
   await assertSucceeds(deleteDoc(ref));
+});
+
+test("a two-player drill keeps the other player's name and email, checked like versusGames", async () => {
+  const db = asUser(me);
+  await assertSucceeds(setDoc(doc(db, "trainingSessions", "o1"), trainingSession({ drill: "scoremore2", opponent: { name: "Sam", email: "sam@example.com" } })));
+  await assertSucceeds(setDoc(doc(db, "trainingSessions", "o2"), trainingSession({ drill: "scoremore2", opponent: { email: "sam@example.com" } })));
+  for (const [k, opponent] of [["o3", { name: "Sam" }], ["o4", { email: "not an email" }], ["o5", { email: "sam@example.com", phone: "1" }], ["o6", "sam@example.com"], ["o7", { email: "sam@example.com", name: "x".repeat(41) }]]) {
+    await assertFails(setDoc(doc(db, "trainingSessions", k), trainingSession({ drill: "scoremore2", opponent })));
+  }
 });
 
 test("training sessions with the wrong shape are refused", async () => {
