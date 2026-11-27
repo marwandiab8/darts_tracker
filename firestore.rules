@@ -410,5 +410,15 @@ service cloud.firestore {
         && request.resource.data.players is map && request.resource.data.players.size() <= 60
         && (!('updatedAt' in request.resource.data) || request.resource.data.updatedAt is number);
     }
+
+    // Matches pulled from DartCounter by the pullDartCounterMatches function (functions/dartcounter.js).
+    // Written only by the function; the owner can read them. The sync state is server-only.
+    match /dartcounterMatches/{matchId} {
+      allow read: if signedIn() && resource.data.uid == request.auth.uid;
+      allow write: if false;
+    }
+    match /dartcounterSync/{doc} {
+      allow read, write: if false;
+    }
   }
 }

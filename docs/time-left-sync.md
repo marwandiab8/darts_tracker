@@ -166,3 +166,9 @@ Check these fields:
 - `sourceProjectId not allowed`: add `dartstracker2026` to the Time Left connection allowlist and to `DARTS_ALLOWED_SOURCE_PROJECT_IDS`.
 - Missing date: the item goes to Time Left date review if `timestamp` is missing or malformed.
 - Viewer cannot see item: expected, items default to `ownerOnly`.
+
+## DartCounter matches
+
+Matches played on DartCounter are pulled from its API every 15 minutes into `dartcounterMatches/{matchId}`
+and forwarded by `syncDartCounterMatchToTimeLeft` through the same connection, as `completed_darts_match`
+events. See `docs/dartcounter-sync.md`.

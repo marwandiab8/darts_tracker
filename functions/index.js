@@ -1,5 +1,7 @@
 const { onDocumentCreated, onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { onRequest } = require("firebase-functions/v2/https");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
+const dartcounter = require("./dartcounter");
 const { defineSecret, defineString } = require("firebase-functions/params");
 const logger = require("firebase-functions/logger");
 const admin = require("firebase-admin");
@@ -30,6 +32,10 @@ const MAIL_FROM = defineString("MAIL_FROM", { default: "" });
 // strangers: only the owner's games are emailed, and at most this many games a day.
 const MAX_EMAILED_GAMES_PER_DAY = 20;
 const DARTS_SOURCE_PROJECT_ID = "1:151826966768:web:a409ac8d409bf0f796ba35";
+// DartCounter (app.dartcounter.net): the signed-in player's API token (scripts/set-dartcounter-token.sh)
+// and their DartCounter user id, which tells the owner's line apart from the opponents' in a match.
+const DARTCOUNTER_TOKEN = defineSecret("DARTCOUNTER_TOKEN");
+const DARTCOUNTER_USER_ID = defineString("DARTCOUNTER_USER_ID", { default: "" });
 
 const TARGETS = [...Array.from({ length: 20 }, (_, index) => String(20 - index)), "BULL"];
 const SCORE_VALS = { "-": 0, S: 1, D: 2, T: 3, B: 1 };
@@ -969,6 +975,43 @@ function forwardDoublesSession(event) {
   return forwardOwnerDocument({ event, collectionName: "doublesSessions", idParam: "sessionId", mapItem: mapDoublesSessionToTimeLeft });
 }
 
+// DartCounter matches (see dartcounter.js): pulled from DartCounter's API every 15 minutes into
+// dartcounterMatches/{matchId}, then forwarded to Time Left like the other darts records.
+function mapDartCounterMatchToTimeLeft(doc, matchId, syncStatus = "active") {
+  return dartcounter.mapDartCounterMatchToTimeLeft(doc, matchId, syncStatus, {
+    timeZone: DARTS_DEFAULT_TIME_ZONE.value() || "America/Toronto",
+    appBaseUrl: String(DARTS_APP_BASE_URL.value() || "").replace(/\/+$/, ""),
+    sourceFirebaseProjectId: DARTS_FIREBASE_PROJECT_ID.value() || "dartstracker2026",
+    sourceProjectId: DARTS_SOURCE_PROJECT_ID,
+    formatDateId: formatDateInTimeZone,
+  });
+}
+
+exports.pullDartCounterMatches = onSchedule(
+  {
+    schedule: "every 15 minutes",
+    timeZone: "America/Toronto",
+    region: "northamerica-northeast1",
+    timeoutSeconds: 300,
+    memory: "256MiB",
+    secrets: [DARTCOUNTER_TOKEN],
+  },
+  () =>
+    dartcounter.pullMatches({
+      db: admin.firestore(),
+      fetchImpl: fetch,
+      token: DARTCOUNTER_TOKEN.value(),
+      ownerUid: DARTS_OWNER_UID.value(),
+      myUserId: DARTCOUNTER_USER_ID.value(),
+      logger,
+    })
+);
+
+exports.syncDartCounterMatchToTimeLeft = onDocumentWritten(
+  { ...SYNC_OPTIONS, document: "dartcounterMatches/{matchId}" },
+  (event) => forwardOwnerDocument({ event, collectionName: "dartcounterMatches", idParam: "matchId", mapItem: mapDartCounterMatchToTimeLeft })
+);
+
 exports.syncDoublesSessionToTimeLeft = onDocumentWritten(
   { ...SYNC_OPTIONS, document: "doublesSessions/{sessionId}" },
   (event) => forwardDoublesSession(event)
@@ -1137,6 +1180,7 @@ module.exports._test = {
   normalizeDarts,
   mapBotGameToTimeLeft,
   mapChallengeGameToTimeLeft,
+  mapDartCounterMatchToTimeLeft,
   mapDoublesSessionToTimeLeft,
   mapSessionToTimeLeft,
   mapVersusGameToTimeLeft,
