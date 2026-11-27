@@ -604,15 +604,8 @@ function mapDoublesSessionToTimeLeft(session, sessionId, syncStatus = "active") 
 // --- emailing the result of a game between two players ---------------------------------------------
 
 const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-
-function escapeHtml(value) {
-  return String(value === undefined || value === null ? "" : value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
+// The email itself (text and HTML) is laid out in versusEmail.js.
+const { composeResultEmail, escapeHtml } = require("./versusEmail");
 
 function isEmail(value) {
   return typeof value === "string" && value.length <= 254 && EMAIL_PATTERN.test(value) && !/[\r\n,;<>"]/.test(value);
@@ -670,41 +663,8 @@ function versusSummary(game) {
 
 function buildVersusEmail(game, appUrl = "") {
   const info = versusSummary(game);
-  const averageName = info.kind === "cricket" ? "Marks per round" : "3-dart average";
-  const scoreName = info.kind === "cricket" ? "Points" : "Left";
-  const headline = info.winner ? `${info.winner} won` : "Game ended";
-  const subject = info.winner ? `Darts: ${info.winner} beat ${info.loser} at ${info.gameName}` : `Darts: ${info.gameName} between ${info.names[0]} and ${info.names[1]}`;
-
-  const minutes = info.durationSec ? Math.max(1, Math.round(info.durationSec / 60)) : 0;
-  const facts = [`${info.gameName}${info.timestamp ? `, ${info.timestamp}` : ""}`, info.rounds ? `${info.rounds} rounds` : "", minutes ? `${minutes} min` : ""].filter(Boolean).join(" · ");
-
-  const lines = [`${headline}!`, facts, ""];
-  info.rows.forEach((row, index) => {
-    lines.push(`${row.name}: ${averageName.toLowerCase()} ${row.average}, ${row.darts} darts, ${scoreName.toLowerCase()} ${row.score}${info.kind === "x01" && info.best[index] ? `, best visit ${info.best[index]}` : ""}`);
-  });
-  if (info.visitRounds.length) {
-    lines.push("", "Visit by visit:");
-    info.visitRounds.forEach((pair, index) => {
-      lines.push(`${index + 1}. ${info.names[0]} ${pair[0] ? pair[0].text : "-"} · ${info.names[1]} ${pair[1] ? pair[1].text : "-"}`);
-    });
-  }
-  if (appUrl) lines.push("", `Play again: ${appUrl}/practice.html`);
-  const text = lines.join("\n");
-
-  const cell = (value, extra = "") => `<td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;${extra}">${escapeHtml(value)}</td>`;
-  const head = (value) => `<th style="padding:6px 10px;text-align:left;color:#6b7280;font-size:12px;border-bottom:2px solid #e5e7eb">${escapeHtml(value)}</th>`;
-  const stats = info.rows.map((row, index) => `<tr>${cell(row.name, "font-weight:700")}${cell(row.average)}${cell(row.darts)}${cell(row.score)}${info.kind === "x01" ? cell(info.best[index] || "-") : ""}</tr>`).join("");
-  const visitRows = info.visitRounds.map((pair, index) => `<tr>${cell(index + 1)}${cell(pair[0] ? pair[0].text : "-")}${cell(pair[1] ? pair[1].text : "-")}</tr>`).join("");
-  const html = [
-    `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:560px;margin:auto;color:#111827">`,
-    `<h2 style="margin:0 0 4px">${escapeHtml(headline)}!</h2>`,
-    `<p style="margin:0 0 16px;color:#6b7280">${escapeHtml(facts)}</p>`,
-    `<table style="border-collapse:collapse;width:100%"><tr>${head("Player")}${head(averageName)}${head("Darts")}${head(scoreName)}${info.kind === "x01" ? head("Best visit") : ""}</tr>${stats}</table>`,
-    info.log.length ? `<h3 style="margin:20px 0 6px;font-size:15px">Visit by visit</h3><table style="border-collapse:collapse;width:100%"><tr>${head("Round")}${head(info.names[0])}${head(info.names[1])}</tr>${visitRows}</table>` : "",
-    appUrl ? `<p style="margin-top:20px"><a href="${escapeHtml(appUrl)}/practice.html">Play again</a></p>` : "",
-    `</div>`,
-  ].join("");
-  return { subject: cleanString(subject, 150), text, html };
+  const wins = [info.result === "won" ? 1 : 0, info.result === "lost" ? 1 : 0];
+  return composeResultEmail({ single: true, names: info.names, games: [game], infos: [info], wins, target: 1, decided: Boolean(info.winner), appUrl });
 }
 
 // --- a first-to-N match: one email for all its games ------------------------------------------------
@@ -729,76 +689,7 @@ function buildMatchEmail(games, appUrl = "") {
   const last = games[games.length - 1] || {};
   const { played, wins, target, decided } = matchSoFar(games, last);
   const names = [cleanString(last.playerName, 60) || "Player 1", cleanString(last.opponentName, 60) || "Player 2"];
-  const infos = played.map(versusSummary);
-  const kind = infos[0] ? infos[0].kind : "x01";
-  const gameName = infos[0] ? infos[0].gameName : "501";
-  const averageName = kind === "cricket" ? "Marks per round" : "3-dart average";
-  const scoreName = kind === "cricket" ? "Points" : "Left";
-  const lead = wins[0] >= wins[1] ? 0 : 1;
-  const winner = decided ? names[lead] : null, loser = decided ? names[1 - lead] : null;
-  const score = `${wins[lead]}-${wins[1 - lead]}`;
-  const headline = decided ? `${winner} won the match ${score}` : `Match not finished: ${names[0]} ${wins[0]}-${wins[1]} ${names[1]}`;
-  const subject = decided ? `Darts: ${winner} beat ${loser} ${score} (first to ${target}, ${gameName})` : `Darts: ${names[0]} ${wins[0]}-${wins[1]} ${names[1]}, match not finished`;
-  const seconds = played.reduce((sum, g) => sum + cleanNumber(g.durationSec, 0, 86400, 0), 0);
-  const minutes = seconds ? Math.max(1, Math.round(seconds / 60)) : 0;
-  const date = cleanString((games[0] || {}).timestamp, 20);
-  const facts = [`First to ${target}`, `${played.length} ${played.length === 1 ? "game" : "games"}`, gameName, date, minutes ? `${minutes} min` : ""].filter(Boolean).join(" · ");
-  // Each player over the whole match: games won, the average over all their darts, darts, best visit.
-  const totals = [0, 1].map((side) => {
-    let darts = 0, weighted = 0, best = 0;
-    played.forEach((g, i) => {
-      const n = Array.isArray(side ? g.opponentDarts : g.playerDarts) ? Math.min((side ? g.opponentDarts : g.playerDarts).length, 600) : 0;
-      const avg = Number(side ? g.opponentAvg : g.playerAvg);
-      if (Number.isFinite(avg) && n) { weighted += avg * n; darts += n; }
-      best = Math.max(best, infos[i].best[side] || 0);
-    });
-    return { name: names[side], won: wins[side], average: darts ? (Math.round((weighted / darts) * 10) / 10).toFixed(1) : "-", darts, best };
-  });
-  const stopped = games.length - played.length;
-
-  const lines = [`${headline}!`, facts, ""];
-  totals.forEach((t) => lines.push(`${t.name}: ${t.won} won, ${averageName.toLowerCase()} ${t.average}, ${t.darts} darts${kind === "x01" && t.best ? `, best visit ${t.best}` : ""}`));
-  infos.forEach((info, i) => {
-    const mins = info.durationSec ? Math.max(1, Math.round(info.durationSec / 60)) : 0;
-    lines.push("", `Game ${i + 1}: ${info.winner} won` + ([info.rounds ? `${info.rounds} rounds` : "", mins ? `${mins} min` : ""].filter(Boolean).length ? ` (${[info.rounds ? `${info.rounds} rounds` : "", mins ? `${mins} min` : ""].filter(Boolean).join(", ")})` : ""));
-    info.rows.forEach((row, side) => lines.push(`  ${row.name}: ${averageName.toLowerCase()} ${row.average}, ${row.darts} darts, ${scoreName.toLowerCase()} ${row.score}${kind === "x01" && info.best[side] ? `, best visit ${info.best[side]}` : ""}`));
-    if (info.visitRounds.length) {
-      lines.push("  Visit by visit:");
-      info.visitRounds.forEach((pair, k) => lines.push(`  ${k + 1}. ${info.names[0]} ${pair[0] ? pair[0].text : "-"} · ${info.names[1]} ${pair[1] ? pair[1].text : "-"}`));
-    }
-  });
-  if (stopped) lines.push("", stopped === 1 ? "One game was stopped before the end; it is not counted." : `${stopped} games were stopped before the end; they are not counted.`);
-  if (appUrl) lines.push("", `Play again: ${appUrl}/practice.html`);
-  const text = lines.join("\n");
-
-  const cell = (value, extra = "") => `<td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;${extra}">${escapeHtml(value)}</td>`;
-  const head = (value) => `<th style="padding:6px 10px;text-align:left;color:#6b7280;font-size:12px;border-bottom:2px solid #e5e7eb">${escapeHtml(value)}</th>`;
-  const table = (rows) => `<table style="border-collapse:collapse;width:100%">${rows}</table>`;
-  const matchRows = `<tr>${head("Player")}${head("Games won")}${head(averageName)}${head("Darts")}${kind === "x01" ? head("Best visit") : ""}</tr>`
-    + totals.map((t) => `<tr>${cell(t.name, "font-weight:700")}${cell(t.won)}${cell(t.average)}${cell(t.darts)}${kind === "x01" ? cell(t.best || "-") : ""}</tr>`).join("");
-  const gameSections = infos.map((info, i) => {
-    const mins = info.durationSec ? Math.max(1, Math.round(info.durationSec / 60)) : 0;
-    const gameFacts = [info.rounds ? `${info.rounds} rounds` : "", mins ? `${mins} min` : ""].filter(Boolean).join(" · ");
-    const stats = `<tr>${head("Player")}${head(averageName)}${head("Darts")}${head(scoreName)}${kind === "x01" ? head("Best visit") : ""}</tr>`
-      + info.rows.map((row, side) => `<tr>${cell(row.name, "font-weight:700")}${cell(row.average)}${cell(row.darts)}${cell(row.score)}${kind === "x01" ? cell(info.best[side] || "-") : ""}</tr>`).join("");
-    const visits = info.visitRounds.length
-      ? `<p style="margin:10px 0 4px;color:#6b7280;font-size:13px">Visit by visit</p>` + table(`<tr>${head("Round")}${head(info.names[0])}${head(info.names[1])}</tr>` + info.visitRounds.map((pair, k) => `<tr>${cell(k + 1)}${cell(pair[0] ? pair[0].text : "-")}${cell(pair[1] ? pair[1].text : "-")}</tr>`).join(""))
-      : "";
-    return `<h3 style="margin:24px 0 2px;font-size:16px">Game ${i + 1}: ${escapeHtml(info.winner)} won</h3>`
-      + (gameFacts ? `<p style="margin:0 0 8px;color:#6b7280;font-size:13px">${escapeHtml(gameFacts)}</p>` : "")
-      + table(stats) + visits;
-  }).join("");
-  const html = [
-    `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:560px;margin:auto;color:#111827">`,
-    `<h2 style="margin:0 0 4px">${escapeHtml(headline)}!</h2>`,
-    `<p style="margin:0 0 16px;color:#6b7280">${escapeHtml(facts)}</p>`,
-    table(matchRows),
-    gameSections,
-    stopped ? `<p style="margin-top:16px;color:#6b7280">${escapeHtml(stopped === 1 ? "One game was stopped before the end; it is not counted." : `${stopped} games were stopped before the end; they are not counted.`)}</p>` : "",
-    appUrl ? `<p style="margin-top:20px"><a href="${escapeHtml(appUrl)}/practice.html">Play again</a></p>` : "",
-    `</div>`,
-  ].join("");
-  return { subject: cleanString(subject, 150), text, html };
+  return composeResultEmail({ single: false, names, games: played, infos: played.map(versusSummary), wins, target, decided, stopped: games.length - played.length, appUrl });
 }
 
 // Send the result to both players, each in a message of their own so the addresses are not shared.

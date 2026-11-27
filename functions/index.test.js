@@ -371,7 +371,54 @@ test("bug 7: when the other player threw first, each visit still goes under its 
   assert.match(mail.text, /1\. Alex 60 · Sam 45/);
   assert.match(mail.text, /2\. Alex 180 · Sam 100/);
   assert.match(mail.text, /3\. Alex - · Sam 26/);
-  assert.match(mail.html, /<td[^>]*>1<\/td><td[^>]*>60<\/td><td[^>]*>45<\/td>/);
+  // Each visit's cell has the score and, in grey, what was left after it.
+  assert.match(mail.html, /<td[^>]*>1<\/td><td[^>]*>60<span[^>]*> 441<\/span><\/td><td[^>]*>45<span[^>]*> 456<\/span><\/td>/);
+});
+
+// Game 1 of the Nov 26, 2026 match, dart for dart: Marwan has five darts on a double finish (two on 40,
+// one on 18, S18 busting on 8, then D4); Ashley busts on 16 (T20 T20 S16) and finishes on 28 with two darts at it.
+const realGame = (overrides = {}) => versusGame({
+  startScore: 301, first: "player", result: "won", rounds: 9, durationSec: 235, playerName: "Marwan", opponentName: "Ashley",
+  playerAvg: 36.12, opponentAvg: 34.13, playerScore: 0, opponentScore: 28, timestamp: "2026-11-26 20:29",
+  playerDarts: "S3 S19 S19 S19 S19 S19 S19 S19 S19 S7 S19 S19 S17 S5 S19 S20 MISS S5 S17 S9 S1 S18 D4".split(" ").map((s) => ({ x: 0, y: 0, s })),
+  opponentDarts: "S20 S12 S1 T18 S1 S19 S18 S20 S20 T20 T20 S16 S11 S20 MISS T9 T1 S3 S16 S7 S14 S7 MISS MISS".split(" ").map((s) => ({ x: 0, y: 0, s })),
+  log: "p41 o33 p57 o74 p57 o58 p45 oBust p41 o31 p25 o33 p27 o37 pBust o7 p8".split(" ").map((e) => ({ w: e[0], t: e.slice(1) })),
+  ...overrides,
+});
+
+test("the darts replay into the logged visits: checkout, darts at a double, first 9 and busts", () => {
+  const { gameDartStats } = require("./versusStats");
+  const stats = gameDartStats(realGame());
+  assert.ok(stats, "the replay matches the log");
+  const [marwan, ashley] = stats;
+  assert.deepEqual(marwan.checkout, { score: 8, dart: "D4", darts: 23 });
+  assert.equal(marwan.dartsAtDouble, 5);
+  assert.equal(marwan.doublesHit, 1);
+  assert.equal(marwan.first9Points, 155);
+  assert.equal(marwan.busts, 1);
+  assert.equal(ashley.checkout, null);
+  assert.equal(ashley.dartsAtDouble, 3, "S16 on 16, then two darts on 28");
+  assert.equal(ashley.over60, 1);
+  assert.equal(ashley.busts, 1);
+  // Darts that don't add up to the log are not trusted.
+  assert.equal(gameDartStats(realGame({ log: [{ w: "p", t: "60" }] })), null);
+  assert.equal(gameDartStats(versusGame()), null, "the made-up darts of the other tests");
+});
+
+test("the email shows the replayed numbers: first 9, checkout %, highest checkout and highlights", () => {
+  const games = [realGame({ matchId: "m9", leg: 1, legsToWin: 1 })];
+  const mail = _test.buildMatchEmail(games, "https://dartstracker2026.web.app");
+  assert.equal(mail.subject, "Darts: Marwan beat Ashley 1-0 (first to 1, 301)");
+  assert.match(mail.text, /Marwan: 1 won, 3-dart average 36\.1, 23 darts, best visit 57\n {2}first 9 average 51\.7, checkout 20% \(1 of 5 darts at a double\), highest checkout 8 \(D4\), 60\+ visits 0, busts 1/);
+  assert.match(mail.text, /Highlights:\n- Highest checkout: Marwan 8 on D4/);
+  assert.match(mail.text, /Marwan: 3-dart average 36\.1, 23 darts, left 0, best visit 57, checkout 8 \(D4\)/);
+  assert.match(mail.html, /First 9 average/);
+  assert.match(mail.html, /Checkout %/);
+  assert.match(mail.html, /Thu, Nov 26, 2026 · 8:29 PM/);
+  assert.match(mail.html, /✓ D4/, "the checkout visit is marked with its double");
+  assert.match(mail.html, /See your stats/);
+  // Made-up darts: the saved numbers only, no replayed rows.
+  assert.doesNotMatch(_test.buildMatchEmail(firstTo3).html, /First 9 average/);
 });
 
 test("the result email works for a lost game, a straight-out game and cricket", () => {
@@ -708,4 +755,14 @@ test("the owner's two-player game is sent once; someone else's isn't; deleting i
   assert.equal(gone[0].body.item.syncStatus, "deletedFromSource");
   // The trigger is there, on the two-player games.
   assert.equal(typeof require("./index").syncVersusGameToTimeLeft, "function");
+});
+
+test("a very long match leaves out the visit tables instead of being cut off by Gmail", () => {
+  const longLog = [];
+  for (let i = 0; i < 200; i += 1) longLog.push({ w: i % 2 ? "o" : "p", t: "1" });
+  const games = [1, 2, 3, 4, 5, 6].map((leg) => matchGame(leg, leg % 2 ? "won" : "lost", { legsToWin: 6, log: longLog }));
+  const mail = _test.buildMatchEmail(games);
+  assert.ok(mail.html.length <= 90000, `html is ${mail.html.length} characters`);
+  assert.match(mail.html, /visit-by-visit scores are left out/);
+  assert.match(mail.text, /Visit by visit:/, "the text version keeps them");
 });
