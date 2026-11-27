@@ -234,6 +234,21 @@ test("which way up: the 20 is the red piece nearest the top, or nearest where th
   near(V.shiftBetween(before, hinted), worstOff(cam, before), 1.5, "how far the old calibration was off");
 });
 
+test("which way up after a camera was re-aimed: the 20 the way it pointed from the bull, not where it was in the picture", () => {
+  // Nov 22, 2026: the left camera was turned so the board moved about 280 px across its picture.
+  // Found again with the old calibration as the hint, the red piece nearest the old 20's spot was
+  // the 12's: every dart that camera saw read two numbers round (S20 as S18, S5 as S1).
+  const pos = { x: -260, y: -40, z: 380 };
+  const was = S.camera({ pos, look: { x: 60, y: 30, z: 0 }, width: 1280, height: 720, hfov: 78, roll: -12 });
+  const now = S.camera({ pos, look: { x: -150, y: 50, z: 0 }, width: 1280, height: 720, hfov: 78, roll: -12 });
+  const bullWas = was.project({ x: 0, y: 0, z: 0 }), bullNow = now.project({ x: 0, y: 0, z: 0 });
+  assert.ok(Math.hypot(bullNow.x - bullWas.x, bullNow.y - bullWas.y) > 220, `the board moved across the picture: ${bullWas.x},${bullWas.y} → ${bullNow.x},${bullNow.y}`);
+  const before = S.tapCalibration(was, 6, S.rng(4));
+  const still = stillOf(now, [], { smooth: 2 });
+  const found = V.autoCalibrate(still, { hint: before });
+  assert.ok(found && worstOff(now, found) < 0.8, `right way round: ${found ? worstOff(now, found).toFixed(1) : "none"} mm off`);
+});
+
 test("two cameras in one picture (OBS side by side): each half finds its own board", () => {
   const specs = [{ pos: { x: -170, y: -60, z: 420 }, width: 640, height: 720, hfov: 60 }, { pos: { x: 170, y: -60, z: 420 }, width: 640, height: 720, hfov: 60 }];
   const cams = specs.map((spec) => S.camera(spec));

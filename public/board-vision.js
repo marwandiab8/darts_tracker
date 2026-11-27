@@ -842,13 +842,20 @@
       const turn = ringsTurn(cls, w, h, H0);
       say({ step: "colours", outer: outer.on.length, inner: inner.on.length, fit: turn ? turn.fit : 0, seen: turn ? turn.seen : 0 });
       if (!turn || turn.fit < 0.6 || turn.seen < 0.5) continue;
-      // Ten ways round fit the colours. The 20 is the one nearest where it was, or nearest the top.
-      const was = o.hint && o.hint.H ? mapper(o.hint).toPixel(0, -1) : null;
+      // Ten ways round fit the colours. The 20 is the one pointing from the bull the way it did
+      // before (a camera turned to aim it elsewhere moves the whole board across its picture, but
+      // the 20 still points the same way from the bull; where the 20 had been can then be nearer
+      // another red piece: on Nov 22, 2026 the 12's, and that camera read every dart two numbers
+      // round), or the one nearest the top.
+      const hm = o.hint && o.hint.H ? mapper(o.hint) : null;
+      const wasTip = hm && hm.toPixel(0, -1), wasBull = hm && hm.toPixel(0, 0);
+      const was = wasTip && wasBull && Math.hypot(wasTip.x - wasBull.x, wasTip.y - wasBull.y) > 0 ? { x: wasTip.x - wasBull.x, y: wasTip.y - wasBull.y } : null;
       let best = -Infinity, turned = 0;
       for (let j = 0; j < 10; j += 1) {
         const a = -Math.PI / 2 + turn.angle + j * 2 * WEDGE, p = applyH(Hi0, Math.cos(a), Math.sin(a));
         if (!p) continue;
-        const score = was ? -Math.hypot(p.x - was.x, p.y - was.y) : (c.y - p.y) / (Math.hypot(p.x - c.x, p.y - c.y) || 1);
+        const dx = p.x - c.x, dy = p.y - c.y, len = Math.hypot(dx, dy) || 1;
+        const score = was ? (dx * was.x + dy * was.y) / (len * Math.hypot(was.x, was.y)) : -dy / len;
         if (score > best) { best = score; turned = turn.angle + j * 2 * WEDGE; }
       }
       const cos = Math.cos(turned), sin = Math.sin(turned);
