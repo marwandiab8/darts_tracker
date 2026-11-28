@@ -574,6 +574,50 @@ test("a hand by the darts after the third one is not a fourth dart", () => {
   assert.equal(next.length, 1, "the next visit's first dart");
 });
 
+// Twelve darts in one visit (a warm-up with a handful of darts): a loose group round the 20.
+const handful = [
+  { at: { x: 4, y: -103 }, lean: { x: 0.05, y: -0.25 }, spin: 1.1 }, { at: { x: -30, y: -112 }, lean: { x: -0.05, y: -0.3 }, spin: 2.0 },
+  { at: { x: 22, y: -95 }, lean: { x: 0.08, y: -0.2 }, spin: 0.4 }, { at: { x: -12, y: -140 }, lean: { x: -0.02, y: -0.28 }, spin: 2.6 },
+  { at: { x: 30, y: -132 }, lean: { x: 0.1, y: -0.22 }, spin: 0.9 }, { at: { x: -40, y: -78 }, lean: { x: -0.08, y: -0.24 }, spin: 1.7 },
+  { at: { x: 12, y: -70 }, lean: { x: 0.04, y: -0.3 }, spin: 3.0 }, { at: { x: 48, y: -110 }, lean: { x: 0.12, y: -0.18 }, spin: 0.2 },
+  { at: { x: -52, y: -128 }, lean: { x: -0.1, y: -0.2 }, spin: 1.4 }, { at: { x: 0, y: -155 }, lean: { x: 0, y: -0.32 }, spin: 2.2 },
+  { at: { x: 38, y: -62 }, lean: { x: 0.06, y: -0.26 }, spin: 0.7 }, { at: { x: -24, y: -58 }, lean: { x: -0.04, y: -0.27 }, spin: 1.9 },
+];
+test("visits of up to 12 (a warm-up): the 4th to the 12th dart are darts, and the pull, four at a time, is darts out once", () => {
+  const run = (visitDarts, count) => {
+    const { views, renders } = rig(61);
+    const detector = V.createDetector(views, visitDarts ? { visitDarts } : {});
+    let now = 0;
+    const feed = (make, frames) => { const out = []; for (let i = 0; i < frames; i += 1) { now += 100; out.push(...detector.push(make(), now)); } return out; };
+    const board = (darts) => () => renders.map((r) => flicker(r(darts)));
+    const fingers = (darts) => () => renders.map((r, i) => withFingers(flicker(r(darts)), views[i], { x: 8, y: -128 }));
+    feed(board([]), 10);
+    const thrown = [];
+    for (let k = 0; k < count; k += 1) thrown.push(...feed(board(handful.slice(0, k + 1)), 12));
+    return { thrown, detector, feed, board, fingers };
+  };
+  // The usual visit of 3: after the third dart, a change at the board is a hand.
+  const usual = run(0, 5);
+  assert.equal(usual.thrown.filter((e) => e.type === "dart").length, 3, "3 darts, then hands: " + usual.thrown.map((e) => e.type).join(","));
+  assert.equal(usual.thrown.filter((e) => e.type === "hand").length, 2);
+  // Told the visit is up to 12: all twelve are darts.
+  const warm = run(12, 12);
+  const darts = warm.thrown.filter((e) => e.type === "dart");
+  assert.equal(darts.length, 12, "twelve darts: " + warm.thrown.map((e) => e.type).join(","));
+  assert.deepEqual(darts.map((e) => e.index), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  assert.equal(warm.thrown.filter((e) => e.type === "hand").length, 0);
+  const right = darts.filter((e, k) => e.label === V.classify(handful[k].at.x / S.R, handful[k].at.y / S.R).label).length;
+  assert.ok(right >= 9, `most read right: ${right} of 12 (${darts.map((e) => e.label).join(" ")})`);
+  // Pulled out four at a time with the hand at the board, over 8 s: no darts, and darts out once.
+  const pull = warm.feed(warm.fingers(handful), 20).concat(warm.feed(warm.fingers(handful.slice(4)), 20), warm.feed(warm.fingers(handful.slice(8)), 20), warm.feed(warm.fingers([]), 20), warm.feed(warm.board([]), 30));
+  assert.equal(pull.filter((e) => e.type === "dart").length, 0, "nothing read as a dart: " + pull.map((e) => e.type).join(","));
+  assert.equal(pull.filter((e) => e.type === "takeout").length, 1, "darts out once: " + pull.map((e) => e.type).join(","));
+  // And the next visit starts at dart 1.
+  const next = warm.feed(warm.board([handful[1]]), 15).filter((e) => e.type === "dart");
+  assert.equal(next.length, 1);
+  assert.equal(next[0].index, 1);
+});
+
 test("a slow pull, one dart at a time with the hand at the board, is no darts and then darts out", () => {
   const { views, renders } = rig(57);
   const detector = V.createDetector(views);

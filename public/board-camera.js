@@ -308,6 +308,7 @@
     const options = Object.assign({}, learnedOptions(setup), (setup && setup.options) || {}, callerOptions);
     let cams = ready(setup);
     let streams = [], videos = [], views = [], canvases = [], stills = [], checks = [], detector = null, timer = null, running = false, swapped = false;
+    let visitDarts = 3; // the darts in a visit (see VISIT_RENEW_MS): 3 unless a warm-up asks for more
     const bgTimer = background ? workerTimer() : null;
 
     async function start() {
@@ -399,6 +400,7 @@
         }
         cams = using;
         detector = V.createDetector(views, options);
+        detector.options.visitDarts = visitDarts;
       } catch (error) {
         stop();
         throw error;
@@ -475,6 +477,11 @@
         const frames = grab();
         if (detector && frames.every(Boolean)) detector.markEmpty(frames);
       },
+      // Visits of up to n darts from now on (a warm-up: up to 12), or 3 again.
+      expect(n) {
+        visitDarts = clampVisit(n);
+        if (detector) detector.options.visitDarts = visitDarts;
+      },
       // How much the cameras' pictures differ from themselves a second later with nothing going on,
       // for each change threshold in `thresholds`: the pixels that count as changed, as a share of
       // what starts the detector looking (1 is as much as a look takes), for the worse camera.
@@ -547,6 +554,25 @@
   const LEASE_MS = 50000;
   // A camera followed this far (mm) from its saved calibration has that saved as followed.
   const FOLLOW_MM = 1;
+  // Visits of more than 3 darts (a warm-up with up to 12 before you pull them out, training.html). The
+  // detector takes anything after a visit's third dart for a hand at the board pulling them out, which
+  // keeps every other game safe; so a page playing such a drill asks the station for bigger visits:
+  // ask.visit = { darts, at, forMs }, said again every VISIT_RENEW_MS while it is played and cleared
+  // (null) when it stops. Not said again, it lapses after forMs (at most VISIT_LEASE_MAX_MS) by the
+  // station's own clock, so a page closed mid-warm-up never leaves the station on 12 for long.
+  const VISIT_RENEW_MS = 60000, VISIT_LEASE_MS = 180000, VISIT_LEASE_MAX_MS = 600000, VISIT_MOST = 12;
+  const clampVisit = (n) => (Number.isFinite(Number(n)) ? Math.max(3, Math.min(VISIT_MOST, Math.round(Number(n)))) : 3);
+  // The station's view of what was asked, from the account's `ask`: { darts, at, until } (`at` tells a
+  // new ask from the same one seen again; `until` is by the station's clock). `prev` is the last view.
+  function visitAsked(prev, ask, now) {
+    const a = ask && ask.visit;
+    if (!a || !(clampVisit(a.darts) > 3)) return { darts: 3, at: null, until: 0 };
+    if (prev && prev.at != null && prev.at === a.at && prev.darts === clampVisit(a.darts)) return prev;
+    const lease = Math.min(VISIT_LEASE_MAX_MS, Number.isFinite(a.forMs) && a.forMs > 0 ? a.forMs : VISIT_LEASE_MS);
+    return { darts: clampVisit(a.darts), at: a.at == null ? now : a.at, until: now + lease };
+  }
+  // The darts in a visit now, by that view.
+  const visitDartsAt = (asked, now) => (asked && now < asked.until ? asked.darts : 3);
   const stationRef = (db, uid) => db.collection(STATIONS).doc(uid);
   const seenAt = (v) => (typeof v === "number" ? v : v && typeof v.toMillis === "function" ? v.toMillis() : 0);
   // Whether a station's last sign of life is recent (and it hasn't said it stopped).
@@ -668,8 +694,23 @@
     // For each chosen camera: the picture its calibration was last checked on, how that went, and
     // when the board was last found from scratch in it (not again straight away if that didn't hold).
     let shots = [], results = [], foundAt = [];
-    const beatT = backTimer(), turnT = backTimer(), retryT = backTimer(), obsT = backTimer(), checkT = backTimer();
+    const beatT = backTimer(), turnT = backTimer(), retryT = backTimer(), obsT = backTimer(), checkT = backTimer(), visitT = backTimer();
     const learning = createLearning();
+    // Visits of more than 3 darts, while a game asks for them (ask.visit: see VISIT_RENEW_MS).
+    let visit = { darts: 3, at: null, until: 0 };
+    function applyVisit() {
+      const now = Date.now();
+      visit = visitAsked(visit, doc && doc.ask, now);
+      const n = visitDartsAt(visit, now);
+      const det = watcher && watcher.detector;
+      if (watcher && watcher.expect && (!det || det.options.visitDarts !== n)) {
+        watcher.expect(n);
+        if (det) traced({ type: "visit", darts: n });
+      }
+      visitT.clear();
+      // Back to 3 by itself when the ask lapses.
+      if (running && active && n > 3) visitT.set(applyVisit, Math.max(1000, visit.until - now + 50));
+    }
 
     // What the detector made of each change, lately (station.trace, sent with the sign of life): for
     // finding out afterwards why a dart wasn't read. One short line each: the time, what it was
@@ -697,6 +738,7 @@
       if (e.type === "dart" || e.type === "hand" || e.type === "soon") what += ` ${e.label || "?"}${e.method ? " " + e.method : ""}${typeof e.confidence === "number" ? " " + e.confidence.toFixed(2) : ""}${e.early ? " early" + lengths(e) : ""}${e.type === "dart" && e.soon ? " soon" : ""}`;
       else if (e.type === "takeout") what += ` ${e.darts || 0}${e.late ? " late" : ""}`;
       else if (e.type === "coarser") what += ` ${e.threshold}`;
+      else if (e.type === "visit") what += ` ${e.darts}`;
       else if (e.type === "error") what += " " + String(e.text || "").slice(0, 60);
       else if (e.type === "early") what += ` no: ${e.why}${e.extra ? " " + JSON.stringify(e.extra).slice(0, 40) : ""}`;
       else if (e.type === "started") what = `started ${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
@@ -929,7 +971,7 @@
       let devices = [];
       try { devices = (await listCameras()).map((d) => ({ deviceId: d.deviceId, label: d.label })); } catch (_) { /* keep going */ }
       const frame = watcher && watcher.views[0] ? [watcher.views[0].frameW, watcher.views[0].frameH] : null;
-      const sign = { name, seen: Date.now(), on: true, running: watchingNow(), resting: !!resting, status: status.slice(0, 200), devices: devices.slice(0, 8), frame };
+      const sign = { name, seen: Date.now(), on: true, running: watchingNow(), resting: !!resting, status: status.slice(0, 200), devices: devices.slice(0, 8), frame, visitDarts: visitDartsAt(visit, Date.now()) };
       // The trace only when it has new lines (it is most of what this writes).
       if (traceRev !== traceSent) {
         traceSent = traceRev;
@@ -1128,6 +1170,7 @@
         if (watcher !== w) { w.stop(); return; } // stopped, or given way, while the cameras were opening
         live = true;
         traced({ type: "started" });
+        applyVisit();
         const again = settle(w, setup, calibrated);
         if (!again) {
           const wrong = trouble();
@@ -1250,6 +1293,7 @@
       busy = busy.then(async () => {
         await reconcile();
         learning.apply();
+        applyVisit();
         if (ask.still && ask.still !== handled.still) {
           handled.still = ask.still;
           await sendStills(ask.still).catch((error) => say("Couldn't send pictures: " + error.message, true));
@@ -1441,7 +1485,7 @@
         running = false; active = false;
         if (unsub) unsub();
         unsub = null;
-        beatT.clear(); turnT.clear(); retryT.clear(); obsT.clear(); checkT.clear();
+        beatT.clear(); turnT.clear(); retryT.clear(); obsT.clear(); checkT.clear(); visitT.clear();
         if (watcher) watcher.stop();
         watcher = null; watchingKey = ""; live = false;
         stopWaiting();
@@ -1502,6 +1546,12 @@
   function createRemoteWatcher(db, uid, { onEvent = () => {} } = {}) {
     const ref = stationRef(db, uid);
     let unsubs = [], running = false, lastSeq = null, doc = null, online = null, state = null, down = "", timer = null, readySent = false;
+    // The darts in a visit this page has asked the station for (see VISIT_RENEW_MS), and when it last said so.
+    let want = 3, said = 0;
+    function sayVisit(now) {
+      said = now;
+      ref.set({ ask: { visit: want > 3 ? { darts: want, at: now, forMs: VISIT_LEASE_MS } : null } }, { merge: true }).catch(() => {});
+    }
 
     // Three things it can be: watching; on but not watching (a camera unplugged, or still being
     // calibrated: the station's own words say which); or not running at all.
@@ -1551,7 +1601,10 @@
               first = false;
               if (!doc) { this.stop(); reject(new Error("No camera station is set up yet. Open the Camera station page on the computer with the cameras.")); return; }
               resolveStart();
+              if (want > 3) sayVisit(Date.now()); // asked before it had started
             }
+            // Bigger visits still wanted here, but cleared (another device stopped watching): asked again.
+            else if (running && want > 3 && !(doc && doc.ask && doc.ask.visit) && Date.now() - said > 2000) sayVisit(Date.now());
             checkOnline();
           }, (error) => { if (first) { first = false; reject(error); } else onEvent({ type: "error", text: "Lost touch with the camera station: " + error.message }); }));
           unsubs.push(ref.collection("events").doc("latest").onSnapshot((snap) => {
@@ -1578,11 +1631,25 @@
         });
       },
       stop() {
+        const asked = running && want > 3 && !!doc;
         running = false;
         unsubs.forEach((u) => u());
         unsubs = [];
         if (timer) clearInterval(timer);
         timer = null;
+        // The station back to visits of 3 (another device still playing the warm-up asks again).
+        want = 3;
+        if (asked) sayVisit(Date.now());
+      },
+      // Visits of up to n darts while a warm-up is played (n 4 to 12), or 3 again: called often (on
+      // every redraw); it writes only when that changes, and to renew the ask every VISIT_RENEW_MS.
+      expect(n) {
+        const v = clampVisit(n), now = Date.now();
+        if (!running) { want = v; return; }
+        if (v === want && (v <= 3 || now - said < VISIT_RENEW_MS)) return;
+        const had = want;
+        want = v;
+        if (v > 3 || had > 3) sayVisit(now);
       },
       get running() { return running; },
       // Why the cameras aren't reading, in a few words for the game's screen ("" when they are).
@@ -1643,12 +1710,13 @@
   // This browser's own cameras, for an account with no camera station. If a station turns up while
   // it watches, it stops and the station's darts are used from then on: never both at once.
   function createLocalWatcher(db, uid, setup, { onEvent = () => {} } = {}) {
-    let inner = createWatcher(setup, { onEvent }), unsub = null, running = false, handed = false;
+    let inner = createWatcher(setup, { onEvent }), unsub = null, running = false, handed = false, want = 3;
     const handOver = () => {
       if (handed || !running) return;
       handed = true;
       inner.stop();
       inner = createRemoteWatcher(db, uid, { onEvent });
+      inner.expect(want);
       inner.start().catch((error) => onEvent({ type: "error", text: error.message }));
     };
     return {
@@ -1667,6 +1735,7 @@
         unsub = null;
         inner.stop();
       },
+      expect(n) { want = n; inner.expect(n); },
       get remote() { return handed; },
       get running() { return running; },
       get down() { return handed ? inner.down : ""; },
@@ -1752,6 +1821,7 @@
   root.DartCamera = {
     KEY, load, save, ready, listCameras, requestAccess, openStream, videoFor, still, pixelsOf, lensOptions, snap, explain, resolve, matchCameras, otherWayFits, createWatcher,
     isOnline, hasStation, stationHere, thresholdFloor, slimEvent, createStation, createRemoteWatcher, createLocalWatcher, getStation, chooseWatcher, requestStills, requestCalibration, saveStationSetup, setStationOptions,
+    visitAsked, visitDartsAt, VISIT_RENEW_MS, VISIT_LEASE_MS,
     calibrateFrom, findBoardCameras, GOOD_EDGES, GOOD_RMS,
     noteDart, forgetLearned, learnedOptions,
   };

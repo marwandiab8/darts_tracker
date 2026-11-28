@@ -1,6 +1,7 @@
 // Phase 4 on the Training page, on a computer and an iPad in Board mode (voice on), one account:
-// Warm-up with the cameras (the clock line; half time moves it to the 19s at the end of the visit; it
-// ends at the end of the visit in which the time is up; no best; "Warm up first" then "On to" the
+// Warm-up with the cameras (the clock line; minutes on each number, moving on at the end of the visit in
+// which its time is up; the end the same way; no best; up to 12 darts a visit, the station asked for them
+// and back to 3 after; free throwing with Finish from Board mode; "Warm up first" then "On to" the
 // drill); Score More by hand and with the cameras (the mark, "Beat", strikes, the longest run saved as
 // its best); Score More with two players (a new player typed, kept with your saved players; the lower
 // scorer must beat their own score; the other player's email saved with the session, not shown).
@@ -60,37 +61,41 @@ const { check, failed } = H.checker();
     const hand = async (ids) => { for (const id of ids) { await computer.click("#" + id); await H.sleep(700); } };
     const other = async (label) => { await computer.selectOption("#segPick", label); await computer.click("#segAdd"); await H.sleep(700); };
 
-    // ---- Warm-up: 5 minutes, with the cameras --------------------------------------------------------
+    // ---- Warm-up: 3 minutes on each number, visits of 3, with the cameras --------------------------------
     await ipad.waitForSelector("#boardMode:not([hidden])", { timeout: 15000 });
     await computer.waitForSelector("#startBtn", { state: "visible", timeout: 15000 });
     let p = await page(computer);
     check(p.head === "Warm-up" && /No best to chase/.test(p.pb), "the warm-up card: no best to chase: " + p.pb);
     check(await computer.$eval("#warmBtn", (e) => e.hidden), "no Warm up first on the warm-up itself");
-    await computer.selectOption("#set_minutes", "5");
+    await computer.selectOption("#set_each", "3");
+    await computer.selectOption("#set_visit", "3");
     await H.sleep(300);
     await computer.click("#startBtn");
     await H.sleep(1500);
     p = await page(computer);
-    check(p.playing && p.target === "20" && p.hitsRow && p.scoreLabel === "In the number" && /at the 20s, then the 19s/.test(p.pace), `the warm-up starts at the 20: ${p.target}, "${p.pace}"`);
+    check(p.playing && p.target === "20" && p.hitsRow && p.scoreLabel === "In the number" && /^(3:00|2:5\d) at the 20s, then the 19s$/.test(p.pace), `the warm-up starts at the 20: ${p.target}, "${p.pace}"`);
     let b = await boardView();
     check(b.target === "20" && /no best: a warm-up/.test(b.opp) && /left/.test(b.cap), `Board mode: ${b.target}, ${b.opp}, ${b.cap}`);
     await ipad.click("#boardMode [data-act=camera]");
     await ipad.waitForFunction(() => /watching the board/i.test(document.getElementById("camNote").textContent), null, { timeout: 15000 });
+    let cs = await station.read("cameraStations", uid);
+    check(!(cs.ask && cs.ask.visit), "visits of 3: nothing asked of the station");
     await throwAt(20, "T", "T20"); await throwAt(20, "S", "S20"); await throwAt(1, "S", "S1", 1800);
     let st = await state();
     check(st.activeSession.play.hits === 2 && st.activeSession.play.darts === 3, "any ring of the 20 counts, the 1 doesn't: 2 of 3");
     await takeout();
-    await clockAt(2.6 * 60000);
+    await clockAt(3.1 * 60000);
     p = await page(computer);
-    check(/Half time: the 19s after this visit/.test(p.pace), "past half time: " + p.pace);
+    check(/Time's up at the 20s: the 19s after this visit/.test(p.pace), "the 20s' time is up: " + p.pace);
     await throwAt(20, "S", "S20"); await throwAt(20, "S", "S20"); await throwAt(20, "D", "D20", 1800);
     b = await boardView();
     p = await page(computer);
-    check(p.target === "19" && b.target === "19", "the visit in which half time came moves it to the 19: " + p.target);
+    check(p.target === "19" && b.target === "19", "the visit in which the time was up moves it to the 19: " + p.target);
+    check(/^(3:00|2:5\d) at the 19s$|left at the 19s/.test(p.pace), "the 19s get their own 3 minutes: " + p.pace);
     let heard = await said();
-    check(heard.some((x) => x === "Half time. The 19s now."), "the voice at half time: " + heard.slice(-2).join(" / "));
+    check(heard.some((x) => x === "The 19s now."), "the voice at the change: " + heard.slice(-2).join(" / "));
     await takeout();
-    await clockAt(5 * 60000 + 2000);
+    await clockAt(6.4 * 60000);
     await throwAt(19, "S", "S19"); await throwAt(19, "T", "T19"); await throwAt(7, "S", "S7", 2500);
     p = await page(computer);
     st = await state();
@@ -102,14 +107,71 @@ const { check, failed } = H.checker();
     await takeout();
     await computer.click("#doneBtn"); await H.sleep(1200);
 
+    // ---- Warm-up with up to 12 darts: the station is asked for bigger visits -----------------------------
+    const visitAsked = async (want, ms = 8000) => {
+      const until = Date.now() + ms;
+      let got;
+      do { const d = await station.read("cameraStations", uid); got = d && d.ask && d.ask.visit ? d.ask.visit.darts : 3; if (got === want) return got; await H.sleep(500); } while (Date.now() < until);
+      return got;
+    };
+    await computer.selectOption("#set_visit", "12");
+    await computer.selectOption("#set_numbers", "20-15 BULL");
+    await H.sleep(300);
+    await computer.click("#startBtn"); await H.sleep(1500);
+    p = await page(computer);
+    check(p.playing && p.target === "20" && !p.hitsRow && p.pad.join(",") === "T20,S20,D20,Miss", `up to 12: one dart at a time by hand: ${p.pad.join(",")}`);
+    check((await visitAsked(12)) === 12, "the station is asked for visits of up to 12");
+    const seven = [[20, "T", "T20"], [20, "S", "S20"], [1, "S", "S1"], [20, "S", "S20"], [20, "D", "D20"], [5, "S", "S5"], [20, "S", "S20"]];
+    for (const [n, ring, label] of seven) await throwAt(n, ring, label, 900);
+    await H.sleep(1200);
+    st = await state();
+    check(st.activeSession.cam.visit.darts.length === 7 && st.activeSession.play.darts === 0, "seven darts in, the visit still open: " + st.activeSession.cam.visit.darts.length);
+    const slots = await ipad.evaluate(() => { const el = document.querySelector("#boardMode [data-ref=slots]"); return { many: el.classList.contains("many"), n: el.querySelectorAll(".bm-slot").length, count: document.querySelector("#boardMode [data-ref=count]").textContent }; });
+    check(slots.many && slots.n === 8 && /Dart 8 of up to 12/.test(slots.count), `Board mode: small boxes, the 7 darts and the next: ${JSON.stringify(slots)}`);
+    await station.send({ type: "takeout", darts: 7 }); await H.sleep(1500);
+    st = await state();
+    check(st.activeSession.play.darts === 7 && st.activeSession.play.hits === 5, `pulled out: the visit is the 7 darts, none filled in: ${st.activeSession.play.hits} of ${st.activeSession.play.darts}`);
+    // Stopped: back to visits of 3.
+    await computer.click("#abandonBtn"); await computer.click("#abandonYesBtn"); await H.sleep(1500);
+    check((await visitAsked(3)) === 3, "stopped: the station is back to visits of 3");
+    docs = await saved();
+    check(docs.some((d) => d.drill === "warmup" && d.complete === false && d.result.darts === 7), "the stopped warm-up kept as unfinished");
+
+    // ---- Free throwing: no target, Finish, and the station asked for up to 12 -----------------------------
+    await computer.click("[data-drill='free']"); await H.sleep(600);
+    p = await page(computer);
+    check(p.head === "Free throwing" && /throw at whatever you like/i.test(p.pb), "the free throwing card: " + p.pb);
+    await computer.selectOption("#set_minutes", "0");
+    await H.sleep(300);
+    await computer.click("#startBtn"); await H.sleep(1500);
+    p = await page(computer);
+    check(p.playing && p.target === "Any" && /press Finish/.test(p.pace) && !(await computer.$eval("#finishBtn", (e) => e.hidden)), `free throwing starts: ${p.target}, ${p.pace}`);
+    check((await visitAsked(12)) === 12, "free throwing asks for visits of up to 12 too");
+    for (const [n, ring, label] of [[20, "T", "T20"], [19, "T", "T19"], [5, "S", "S5"], [20, "D", "D20"]]) await throwAt(n, ring, label, 900);
+    await H.sleep(1000);
+    b = await boardView();
+    check(b.target === "Any" && /4 darts/.test(await ipad.$eval("#boardMode [data-ref=darts]", (e) => e.textContent)), "Board mode: " + b.target + ", the darts still in the board counted");
+    await ipad.click("#boardMode [data-man=fin]"); await H.sleep(2000);
+    p = await page(computer);
+    check(p.result && p.resultBig === "4 darts" && /2 triples, 1 double/.test(p.resultSub), `Finish (from Board mode): ${p.resultBig}, ${p.resultSub}`);
+    docs = await saved();
+    check(docs.some((d) => d.drill === "free" && d.complete && d.key === 4), "free throwing saved, finished, with its darts");
+    check((await visitAsked(3)) === 3, "finished: the station is back to visits of 3");
+    heard = await said();
+    check(heard.some((x) => x === "Free throwing done. 4 darts."), "the voice at the end: " + heard.slice(-1)[0]);
+    await computer.click("#doneBtn"); await H.sleep(1200);
+
     // ---- Warm up first, from Big Triples ------------------------------------------------------------------
     await computer.click("[data-drill='bigtriples']"); await H.sleep(600);
     check(!(await computer.$eval("#warmBtn", (e) => e.hidden)), "Warm up first on another drill's card");
+    // The warm-up as this computer last set it up: the 20s only, a minute, up to 12 darts.
+    await computer.evaluate(() => localStorage.setItem("dt_training_warmup", JSON.stringify({ numbers: "20", each: "1", visit: "12" })));
     await computer.click("#warmBtn"); await H.sleep(1800);
     p = await page(computer);
     check(p.playing && p.target === "20" && /Warm-up/.test(await computer.$eval("#playHead", (e) => e.textContent)), "Warm up first starts the warm-up");
-    await clockAt(10 * 60000 + 1000);
-    await computer.click("#h2"); await H.sleep(2000);
+    await clockAt(1 * 60000 + 1000);
+    await station.send(H.dart("S20", H.spot(20, "S").x, H.spot(20, "S").y)); await H.sleep(1300);
+    await station.send({ type: "takeout", darts: 1 }); await H.sleep(2000);
     p = await page(computer);
     check(p.result && p.after === "On to Big Triples", "when it's done: " + p.after);
     await computer.click("#afterWarmBtn"); await H.sleep(1500);

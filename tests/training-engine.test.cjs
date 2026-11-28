@@ -767,7 +767,7 @@ test("the strip columns, the progress and the settings line for each drill", () 
 
 // ---- Phase 3: the scoring drills ---------------------------------------------------------------------------
 test("the registry order and the categories of the scoring drills", () => {
-  assert.deepEqual(E.DRILLS.map((d) => d.id), ["marathon", "bigtriples", "gameof9", "bobs27", "ladder121", "twodart", "scoremore", "scoremore2", "warmup"]);
+  assert.deepEqual(E.DRILLS.map((d) => d.id), ["marathon", "bigtriples", "gameof9", "bobs27", "ladder121", "twodart", "scoremore", "scoremore2", "warmup", "free"]);
   assert.ok(["marathon", "bigtriples", "gameof9"].every((id) => E.drillOf(id).category === "Scoring" && E.drillOf(id).input === "hits"));
 });
 
@@ -929,12 +929,16 @@ test("Game of 9: nine darts at the whole number, a pass mark to move on, the dar
 const MIN = 60000;
 const visitBy = (u, labels, t) => labels.forEach((l, i) => { const r = E.manualDart(u, sess(u), l, (t || T0) + i); assert.ok(!r.error, r.error); });
 
-test("Warm-up: the 20s for the first half, then the 19s; it ends at the end of the visit in which the time is up; no best", () => {
+test("Warm-up, visits of 3: minutes on each number in turn; it changes at the end of the visit in which the time is up; no best", () => {
   const d = E.drillOf("warmup");
   assert.equal(d.category, "Warm-up");
   assert.equal(d.noBest, true);
-  assert.deepEqual(E.cleanSettings(d, {}), { minutes: "10", numbers: "20 19" });
-  const u = freshDrill("warmup", { minutes: "10" });
+  assert.deepEqual(E.cleanSettings(d, {}), { numbers: "20 19", each: "3", visit: "12" });
+  // An old device's settings (one time for the lot) are put right.
+  assert.deepEqual(E.cleanSettings(d, { minutes: "10", numbers: "20 19" }), { numbers: "20 19", each: "3", visit: "12" });
+  const u = freshDrill("warmup", { each: "3", visit: "3" });
+  assert.equal(E.inputOf(d, play(u)), "hits", "visits of 3: the hits by hand");
+  assert.equal(E.cameraVisitDarts(sess(u), T0 + 1), 3, "the cameras keep visits of 3");
   let t = E.target(sess(u));
   assert.equal(t.big, "20");
   assert.equal(t.rings, "SDT");
@@ -945,29 +949,145 @@ test("Warm-up: the 20s for the first half, then the 19s; it ends at the end of t
   assert.equal(r.scored.hits, 2);
   assert.equal(r.scored.line, null, "quiet: nothing said for an ordinary visit");
   E.cameraTakeout(u, sess(u), takeout(3), T0 + 4000);
-  // The clock: a visit at 5:30 switches to the 19 when it is scored.
   const view = E.boardView(sess(u), { now: T0 + 2 * MIN });
-  assert.match(view.note, /^3:00 at the 20s, then the 19s$/);
-  assert.match(view.capHtml, /67%<\/strong> in the number · 20: 67%, 19: -/);
-  sess(u).timer.lastActivityAt = T0 + 5.5 * MIN; // throwing all along (no idle pause)
-  const m = E.manualVisit(u, sess(u), 3, T0 + 5.5 * MIN);
+  assert.equal(view.note, "1:00 at the 20s, then the 19s");
+  assert.match(view.capHtml, /67%<\/strong> in the number · 20: 67%, 19: - · 4:00 left/);
+  assert.equal(view.slots, undefined, "three dart boxes");
+  // A visit at 3:30 is the one in which the 20s' time was up: on to the 19s, with their own 3 minutes.
+  sess(u).timer.lastActivityAt = T0 + 3.5 * MIN; // throwing all along (no idle pause)
+  assert.equal(E.boardView(sess(u), { now: T0 + 3.5 * MIN }).note, "Time's up at the 20s: the 19s after this visit");
+  const m = E.manualVisit(u, sess(u), 3, T0 + 3.5 * MIN);
   assert.equal(m.visit.switched, "19");
-  assert.equal(m.line, "Half time. The 19s now.");
+  assert.equal(m.line, "The 19s now.");
   assert.equal(m.moment.big, "The 19s");
   t = E.target(sess(u));
   assert.equal(t.big, "19");
-  // Time up at 10:00: the visit then ends it.
-  sess(u).timer.lastActivityAt = T0 + 10 * MIN;
-  assert.match(E.boardView(sess(u), { now: T0 + 10 * MIN }).note, /Time's up: this visit is the last/);
-  const end = E.manualVisit(u, sess(u), 1, T0 + 10 * MIN + 1000);
+  assert.equal(play(u).stageAt, 3.5 * MIN);
+  sess(u).timer.lastActivityAt = T0 + 6 * MIN;
+  assert.equal(E.boardView(sess(u), { now: T0 + 6 * MIN }).note, "0:30 left at the 19s");
+  assert.equal(E.manualVisit(u, sess(u), 0, T0 + 6 * MIN).over, false, "the 19s still have 30 seconds");
+  sess(u).timer.lastActivityAt = T0 + 6.6 * MIN;
+  assert.equal(E.boardView(sess(u), { now: T0 + 6.6 * MIN }).note, "Time's up: this visit is the last");
+  const end = E.manualVisit(u, sess(u), 1, T0 + 6.6 * MIN);
   assert.equal(end.over, true);
-  assert.equal(end.line, "Warm-up done. 67% in the number.");
+  assert.equal(end.line, "Warm-up done. 50% in the number.");
   const res = E.summarize(sess(u));
-  assert.deepEqual([res.rate, res.hits, res.darts, res.per["20"].hits, res.per["19"].hits], [67, 6, 9, 5, 1]);
+  assert.deepEqual([res.rate, res.hits, res.darts, res.per["20"].hits, res.per["19"].hits, res.visits], [50, 6, 12, 5, 1, 4]);
+  assert.deepEqual(E.boardView(sess(u)).cells.map((c) => `${c.num}:${c.state}:${c.sub}`), ["20:done h3:83%", "19:done h1:17%"]);
   const h = E.historyPayload(sess(u), T0 + 11 * MIN);
-  assert.equal(h.key, 67);
+  assert.equal(h.key, 50);
   assert.equal(E.personalBest([Object.assign({}, h, { sessionKey: "a" })], "warmup", {}), null, "no best for a warm-up");
-  assert.equal(E.isNewBest("warmup", 67, null), false);
+  assert.equal(E.isNewBest("warmup", 50, null), false);
+  assert.equal(E.cameraVisitDarts(sess(u), T0 + 7 * MIN), 3, "over: visits of 3 again");
+});
+
+test("Warm-up, up to 12 darts: the take-out ends a visit however many went in; unseen darts aren't counted; the cameras are told", () => {
+  const d = E.drillOf("warmup");
+  const u = freshDrill("warmup", { numbers: "20-15 BULL", each: "1", visit: "12" });
+  assert.equal(E.inputOf(d, play(u)), "darts", "one dart at a time by hand");
+  assert.equal(E.cameraVisitDarts(sess(u), T0 + 1), 12);
+  assert.deepEqual(play(u).numbers, ["20", "19", "18", "17", "16", "15", "BULL"]);
+  assert.deepEqual(E.padFor(sess(u)).filter((b) => !b.hidden).map((b) => b.label || b.man), ["T20", "S20", "D20", "MISS"]);
+  // Seven darts with the cameras: nothing is scored until they come out.
+  const labels = [["T20", 20, "T"], ["S20", 20, "S"], ["S1", 1, "S"], ["S20", 20, "S"], ["D20", 20, "D"], ["S5", 5, "S"], ["S20", 20, "S"]];
+  let r;
+  labels.forEach(([l, n, ring], i) => { r = E.cameraDart(u, sess(u), dart(l, n, ring), T0 + 1000 + i * 1000); });
+  assert.equal(r.scored, null, "the 7th dart of up to 12 doesn't end the visit");
+  assert.match(r.message, /dart 7 of up to 12 at 20/);
+  let v = E.boardView(sess(u), { now: T0 + 8000 });
+  assert.equal(v.darts.length, 7);
+  assert.equal(d.scoreText(E.shownPlay(sess(u))), "71%", "the darts still in the board show in the rate (5 of 7)");
+  assert.equal(play(u).darts, 0, "but the visit isn't scored yet");
+  assert.equal(v.slots, 12);
+  assert.equal(v.countHtml, "Dart 8 <span>of up to 12</span>");
+  // A dart fixed before the take-out: still not scored.
+  const fx = E.fixDart(u, sess(u), 2, v.darts[2].s, { label: "S20", x: 0, y: -0.4 }, T0 + 8500);
+  assert.equal(fx.scored, null);
+  const out = E.cameraTakeout(u, sess(u), takeout(7), T0 + 9000);
+  assert.equal(out.unseen, 0, "no misses filled in");
+  assert.equal(out.message, "Darts out. The 20s: 6 of 7 in.");
+  assert.deepEqual([play(u).hits, play(u).darts], [6, 7]);
+  // By hand, a dart joins the visit; Miss too.
+  assert.ok(!E.manualDart(u, sess(u), "T20", T0 + 10000).error);
+  assert.ok(!E.manualDart(u, sess(u), "MISS", T0 + 10100).error);
+  assert.equal(sess(u).cam.visit.darts.length, 2);
+  // Undo takes back the whole visit of 7.
+  E.cameraTakeout(u, sess(u), takeout(2), T0 + 11000);
+  assert.deepEqual([play(u).hits, play(u).darts], [7, 9]);
+  E.undoStep(u, sess(u), T0 + 12000);
+  E.undoStep(u, sess(u), T0 + 12100);
+  assert.deepEqual([play(u).hits, play(u).darts], [0, 0]);
+  // Twelve darts end the visit by themselves: the 13th isn't counted.
+  for (let i = 0; i < 12; i += 1) r = E.cameraDart(u, sess(u), dart("S20", 20, "S"), T0 + 20000 + i);
+  assert.ok(r.scored && r.scored.hits === 12);
+  assert.match(r.message, /Pull your darts out, then 20\./);
+  assert.equal(E.boardView(sess(u)).pullOut, true);
+  assert.equal(E.boardView(sess(u)).countHtml, "Next visit");
+  assert.equal(E.cameraDart(u, sess(u), dart("S20", 20, "S"), T0 + 21000).effect.kind, "spare");
+  E.cameraTakeout(u, sess(u), takeout(12), T0 + 22000);
+  // Paused: the cameras go back to visits of 3 until it is resumed.
+  E.pauseResume(sess(u), T0 + 23000);
+  assert.equal(E.cameraVisitDarts(sess(u), T0 + 23001), 3);
+  E.pauseResume(sess(u), T0 + 24000);
+  assert.equal(E.cameraVisitDarts(sess(u), T0 + 24001), 12);
+  // At the bull: the bull's two rings.
+  play(u).stage = 6;
+  assert.equal(E.target(sess(u)).big, "BULL");
+  assert.deepEqual(E.padFor(sess(u)).filter((b) => !b.hidden).map((b) => b.label || b.man), ["DB", "SB", "MISS"]);
+  assert.equal(d.dartEffect(play(u), E.target(sess(u)), { l: "SB" }).kind, "hit");
+});
+
+test("Free throwing: no target, up to 12 a visit, where the darts went; Finish with no time limit, and Undo takes it back", () => {
+  const d = E.drillOf("free");
+  assert.equal(d.category, "Warm-up");
+  assert.equal(d.input, "darts");
+  assert.deepEqual(E.cleanSettings(d, {}), { minutes: "10", visit: "12" });
+  const u = freshDrill("free", { minutes: "0" });
+  assert.equal(E.cameraVisitDarts(sess(u), T0 + 1), 12);
+  assert.equal(E.target(sess(u)).big, "Any");
+  [["T20", 20, "T"], ["T20", 20, "T"], ["S1", 1, "S"], ["DB", "BULL"], ["D16", 16, "D"], [null, null]].forEach(([l, n, ring], i) => E.cameraDart(u, sess(u), dart(l || "MISS", n, ring), T0 + 1000 + i));
+  let v = E.boardView(sess(u), { now: T0 + 7000 });
+  assert.deepEqual(v.darts.map((x) => `${x.read}:${x.sub}`), ["T20:60", "T20:60", "S1:1", "Bull:50", "D16:32", "Outside:0"]);
+  // Still in the board: on the screen already (the tallies and the strip), not yet in the drill.
+  assert.equal(E.pendingDarts(sess(u)).length, 6);
+  assert.equal(play(u).darts, 0);
+  assert.equal(v.capHtml, "<strong>6</strong> darts · average 101.5 · 2 triples, 1 double, 1 bull");
+  assert.equal(v.cells[0].sub, "2");
+  assert.equal(v.note, "No time limit: press Finish when you're done");
+  const out = E.cameraTakeout(u, sess(u), takeout(6), T0 + 8000);
+  assert.equal(out.message, "Darts out. 6 darts, 203 scored.");
+  assert.equal(play(u).by["20"], 2);
+  v = E.boardView(sess(u), { now: T0 + 9000 });
+  assert.equal(v.capHtml, "<strong>6</strong> darts · average 101.5 · 2 triples, 1 double, 1 bull");
+  assert.equal(v.cells.length, 21);
+  assert.equal(v.cells[0].state + ":" + v.cells[0].sub, "done h3:2");
+  // Finish mid-visit: the darts in it count, as at a take-out.
+  E.cameraDart(u, sess(u), dart("S19", 19, "S"), T0 + 10000);
+  const f = E.finishNow(u, sess(u), T0 + 11000);
+  assert.ok(f.finished && E.isFinished(sess(u)));
+  assert.equal(sess(u).say.text, "Free throwing done. 7 darts.");
+  const res = E.summarize(sess(u));
+  assert.deepEqual([res.darts, res.visits, res.triples, res.doubles, res.bulls, res.off], [7, 2, 2, 1, 1, 1]);
+  assert.deepEqual(res.top.map((x) => x.n), ["20", "19", "16"], "a tie goes to the higher number");
+  assert.equal(E.historyPayload(sess(u), T0 + 12000).key, 7);
+  assert.equal(E.cameraVisitDarts(sess(u), T0 + 12000), 3);
+  // Undo takes the finish back, and then the visit.
+  const un = E.undoStep(u, sess(u), T0 + 13000);
+  assert.ok(un.unfinished && !E.isFinished(sess(u)));
+  assert.equal(play(u).darts, 7);
+  E.undoStep(u, sess(u), T0 + 14000);
+  assert.equal(play(u).darts, 6);
+  // With a time limit: it ends at the take-out after the time is up.
+  const w = freshDrill("free", { minutes: "5", visit: "6" });
+  assert.equal(E.cameraVisitDarts(sess(w), T0 + 1), 6);
+  assert.equal(E.finishNow(w, sess(w), T0 + 2).finished, true, "Finish works with a time limit too");
+  const x = freshDrill("free", { minutes: "5", visit: "3" });
+  assert.equal(E.cameraVisitDarts(sess(x), T0 + 1), 3, "up to 3: the cameras' usual visit");
+  E.cameraDart(x, sess(x), dart("S20", 20, "S"), T0 + 1000);
+  sess(x).timer.lastActivityAt = T0 + 5 * MIN;
+  const late = E.cameraTakeout(x, sess(x), takeout(1), T0 + 5 * MIN + 1000);
+  assert.equal(late.unseen, 0, "free throwing never fills in misses");
+  assert.ok(late.scored.over, "time's up: that visit ended it");
 });
 
 test("Score More: each visit must beat the last; a visit that doesn't is a strike; three strikes end it; the score is the longest run", () => {

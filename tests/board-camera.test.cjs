@@ -503,3 +503,50 @@ test("the finest change threshold is the one the cameras' own noise allows", () 
   assert.equal(C.thresholdFloor(null), null);
   assert.equal(C.thresholdFloor([]), null);
 });
+
+test("visits of up to 12: a page playing a warm-up asks the station, says it again while it plays, and clears it when it stops", async (t) => {
+  const db = fakeDb();
+  db.write("cameraStations/me", station());
+  const w = C.createRemoteWatcher(db, "me", {});
+  t.after(() => w.stop());
+  // Asked before it had started: said once it has.
+  w.expect(12);
+  await w.start();
+  let ask = db.docs.get("cameraStations/me").ask;
+  assert.equal(ask.visit.darts, 12);
+  assert.equal(ask.visit.forMs, C.VISIT_LEASE_MS);
+  // Called on every redraw: nothing more is written until it changes (or a minute has gone).
+  const at = ask.visit.at;
+  w.expect(12); w.expect(12);
+  assert.equal(db.docs.get("cameraStations/me").ask.visit.at, at);
+  // Another device stopped watching and cleared it: this one asks again (after a moment).
+  db.write("cameraStations/me", { ask: { visit: null } }, { merge: true });
+  assert.equal(db.docs.get("cameraStations/me").ask.visit, null, "not straight back (2 s)");
+  // The warm-up over: visits of 3 again.
+  w.expect(3);
+  assert.equal(db.docs.get("cameraStations/me").ask.visit, null);
+  w.expect(9);
+  assert.equal(db.docs.get("cameraStations/me").ask.visit.darts, 9);
+  w.stop();
+  assert.equal(db.docs.get("cameraStations/me").ask.visit, null, "stopping clears it");
+});
+
+test("visits of up to 12: the station's view of the ask, which lapses by its own clock", () => {
+  const now = 1_000_000;
+  let v = C.visitAsked(null, { visit: { darts: 12, at: 5, forMs: 180000 } }, now);
+  assert.deepEqual(v, { darts: 12, at: 5, until: now + 180000 });
+  assert.equal(C.visitDartsAt(v, now + 1000), 12);
+  // The same ask seen again (another write to the document): the lease isn't renewed.
+  assert.equal(C.visitAsked(v, { visit: { darts: 12, at: 5, forMs: 180000 } }, now + 60000), v);
+  // Said again: renewed from when the station saw it.
+  v = C.visitAsked(v, { visit: { darts: 12, at: 6, forMs: 180000 } }, now + 60000);
+  assert.equal(v.until, now + 240000);
+  assert.equal(C.visitDartsAt(v, now + 239999), 12);
+  assert.equal(C.visitDartsAt(v, now + 240000), 3, "lapsed: visits of 3");
+  // Cleared, or nonsense: 3. More than 12, or a lease of an hour: kept within bounds.
+  assert.equal(C.visitDartsAt(C.visitAsked(v, { visit: null }, now), now), 3);
+  assert.equal(C.visitDartsAt(C.visitAsked(null, {}, now), now), 3);
+  assert.equal(C.visitDartsAt(C.visitAsked(null, { visit: { darts: 2, at: 1 } }, now), now), 3);
+  assert.equal(C.visitAsked(null, { visit: { darts: 40, at: 1, forMs: 3600000 } }, now).darts, 12);
+  assert.equal(C.visitAsked(null, { visit: { darts: 12, at: 1, forMs: 3600000 } }, now).until, now + 600000);
+});

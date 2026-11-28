@@ -39,7 +39,7 @@
 //          so, instead of "The cameras are watching".
 // view:  { target, finished, label?, next: [], dartNo, darts: [{ index, s, x, y, kind, read, sub, fixed }],
 //          unseen, waiting: [{ read, sub }], visitDone, pullOut, cells: [{ key, num, state, sub }],
-//          done, of, note }
+//          done, of, note, slots? (a visit of up to that many darts: the boxes go small, four a row) }
 //
 // Also: BoardMode.boardSvg(lit, darts), BoardMode.voice(isOn), BoardMode.wakeLock(),
 // BoardMode.spotIn(label, x, y), BoardMode.numberAt(x, y), BoardMode.neighbours(n).
@@ -210,11 +210,13 @@
   </div>`;
   }
 
+  // The dart boxes: 3, or for a visit of up to 12 (a warm-up, v.slots) those used so far and the next.
+  const slotCount = (v) => (v.slots > 3 ? Math.min(v.slots, Math.max(4, v.darts.length + (v.waiting || []).length + (v.visitDone ? 0 : 1))) : 3);
   function slotsHtml(v, m) {
     let out = "";
     const waiting = v.waiting || [];
     let w = 0;
-    for (let i = 0; i < 3; i += 1) {
+    for (let i = 0, n = slotCount(v); i < n; i += 1) {
       const d = v.darts[i];
       if (d) {
         out += `<button type="button" class="bm-slot ${esc(d.kind)}" data-i="${i}"><span class="n">${i + 1}</span><span class="r">${esc(d.read)}</span><span class="s">${esc(d.sub)}${d.fixed ? " · fixed" : ""}</span></button>`;
@@ -423,6 +425,7 @@
         ref.hero.classList.toggle("co", v.nextClass === "co"); // landscape and phones give the route its own row
         ref.board.innerHTML = boardSvg(cfg.lit ? cfg.lit(v) : [], v.darts.map((d) => Object.assign({}, d, { fixable: fixable(d, v) })));
         ref.slots.innerHTML = slotsHtml(v, m);
+        ref.slots.classList.toggle("many", v.slots > 3);
         ref.cells.style.setProperty("--bm-cols", String(Math.max(1, v.cols || v.cells.length || 21)));
         ref.cells.innerHTML = v.cells.map((c) => `<div class="bm-cell ${esc(c.state)}" title="${esc(c.title || c.key)}">${esc(c.num)}${c.sub ? `<small>${esc(c.sub)}</small>` : ""}</div>`).join("");
         ref.capLeft.innerHTML = v.capHtml != null ? v.capHtml : `<strong>${esc(v.done)} of ${esc(v.of || 21)}</strong> done`;

@@ -318,3 +318,17 @@ body.bm-open { overflow: hidden; }
   .bm-slot.wait .n { animation: bm-pulse 1.6s ease-in-out infinite; }
   @keyframes bm-pulse { 50% { box-shadow: 0 0 0 8px rgba(245, 158, 11, .18); } }
 }
+
+/* A visit of up to 12 darts (a warm-up): small dart boxes, four a row, in every layout. */
+.bm .bm-slots.many { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-rows: none; align-content: start; gap: 6px; }
+.bm .bm-slots.many .bm-slot { flex: none; min-height: 0; grid-template-columns: auto minmax(0, 1fr); align-items: center; align-content: center; gap: 0 8px; padding: 6px 8px; border-radius: 12px; }
+.bm .bm-slots.many .bm-slot .n { grid-row: auto; width: 24px; height: 24px; font-size: 13px; }
+.bm .bm-slots.many .bm-slot .r { font-size: clamp(17px, 2.1vw, 24px); }
+.bm .bm-slots.many .bm-slot .s { display: none; }
+.bm .bm-slots.many .bm-note { grid-column: 1 / -1; }
+/* Narrow columns (an iPad upright, a phone): the dart's number above it, so "S20" never breaks. */
+.bm .bm-slots.many .bm-slot { grid-template-columns: minmax(0, 1fr); justify-items: start; gap: 2px; }
+.bm .bm-slots.many .bm-slot .r { overflow-wrap: normal; word-break: keep-all; white-space: nowrap; overflow: hidden; max-width: 100%; }
+@media (min-aspect-ratio: 1/1) and (min-width: 900px) {
+  .bm .bm-slots.many .bm-slot { grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 0 8px; }
+}

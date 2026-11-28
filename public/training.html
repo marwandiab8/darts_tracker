@@ -7,7 +7,7 @@
 <title>Training - Darts Tracker</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="nav.css?v=1">
-<link rel="stylesheet" href="board-mode.css?v=5">
+<link rel="stylesheet" href="board-mode.css?v=6">
 <style>
   :root {
     --bg: #0b0f17; --muted: #94a3b8; --text: #e5e7eb; --accent: #f59e0b; --blue: #38bdf8;
@@ -180,7 +180,7 @@
         <div class="pb" id="pbLine"></div>
         <div class="row">
           <button id="startBtn" type="button">Start</button>
-          <button id="warmBtn" class="secondary" type="button" title="Ten minutes on the 20s and 19s first">Warm up first</button>
+          <button id="warmBtn" class="secondary" type="button" title="The warm-up first, as you last set it up">Warm up first</button>
           <button id="boardBtn" class="secondary" type="button" title="A full-screen scoreboard to read from the oche">Board mode</button>
         </div>
         <div class="confirm" id="startConfirm" hidden>
@@ -201,6 +201,7 @@
           <div class="time" id="timer" aria-live="off">0:00</div>
           <div class="row">
             <button id="pauseBtn" class="secondary" type="button">Pause</button>
+            <button id="finishBtn" class="secondary" type="button" hidden>Finish</button>
             <button id="boardBtn2" class="secondary" type="button" title="A full-screen scoreboard to read from the oche">Board mode</button>
             <button id="abandonBtn" class="secondary" type="button">Stop</button>
           </div>
@@ -293,11 +294,11 @@
 <script src="practice-timer.js?v=3"></script>
 <script src="players.js?v=1"></script>
 <script src="practice-engine.js?v=43"></script>
-<script src="training-engine.js?v=4"></script>
-<script src="board-mode.js?v=7"></script>
-<script src="training-board.js?v=2"></script>
+<script src="training-engine.js?v=5"></script>
+<script src="board-mode.js?v=8"></script>
+<script src="training-board.js?v=3"></script>
 <script src="board-vision.js?v=12"></script>
-<script src="board-camera.js?v=14"></script>
+<script src="board-camera.js?v=15"></script>
 <script>
 (function () {
   "use strict";
@@ -503,9 +504,10 @@
         return { started: true };
       });
       $("startConfirm").hidden = true;
-      const t0 = model.state && model.state.activeSession ? TE.target(model.state.activeSession) : null;
+      const a0 = model.state && model.state.activeSession, t0 = a0 ? TE.target(a0) : null;
       speak(`${d.name}. ${t0 ? t0.intro || `Throw at ${t0.spoken}` : ""}.`);
-      note(camOn() ? "Started: the cameras are watching." : d.input === "darts" ? "Started. Enter each dart: the route's dart, Miss, or another dart from the list." : "Started. Tap how many darts went in after each visit.");
+      const many = a0 ? TE.cameraVisitDarts(a0) : 3;
+      note(camOn() ? (many > 3 ? `Started: the cameras are watching. Throw up to ${many} darts, then pull them out.` : "Started: the cameras are watching.") : TE.inputOf(d, a0 && a0.play) === "darts" ? "Started. Enter each dart: tap the board in Board mode, a button, Miss, or another dart from the list." : "Started. Tap how many darts went in after each visit.");
     } catch (e) { fail(e); }
   }
   function startTapped() {
@@ -585,6 +587,22 @@
   $("resultUndoBtn").onclick = doUndo;
 
   $("pauseBtn").onclick = () => transact((u, sess, now) => (sess && TE.pauseResume(sess, now) ? { paused: true } : null)).catch(fail);
+
+  // Finish: a drill with no end of its own (free throwing). It is saved like any finished drill.
+  async function finish() {
+    try {
+      let r = null;
+      await transact((u, sess, now) => {
+        if (!sess) return null;
+        const out = TE.finishNow(u, sess, now);
+        if (out.error) return out.error;
+        r = out;
+        return out;
+      });
+      if (r) afterChange(r);
+    } catch (e) { fail(e); }
+  }
+  $("finishBtn").onclick = finish;
 
   // Stop: what was thrown is kept as an unfinished session (never in stats or bests).
   async function abandon(silent) {
@@ -745,7 +763,7 @@
     $("drillRules").innerHTML = d.rules.map((r) => `<li>${esc(r)}</li>`).join("");
     const best = bestFor(null);
     $("warmBtn").hidden = d.id === "warmup";
-    $("pbLine").innerHTML = d.noBest ? `<span class="muted">${d.needsOpponent ? "No personal best between two players: the result is kept with the other player's name." : "No best to chase: it's a warm-up. Only the in-number rate is kept."}</span>` : best ? `Your best with these settings: <strong>${esc(best.key)}</strong>${best.result && best.result.furthest ? ` <span class="muted">(got to ${esc(best.result.furthest === "DBULL" ? "the bull" : best.result.furthest)})</span>` : ""}` : `<span class="muted">No finished round with these settings yet: the first one sets your best.</span>`;
+    $("pbLine").innerHTML = d.noBest ? `<span class="muted">${esc(d.needsOpponent ? "No personal best between two players: the result is kept with the other player's name." : d.noBestText || "No best to chase: it's a warm-up.")}</span>` : best ? `Your best with these settings: <strong>${esc(best.key)}</strong>${best.result && best.result.furthest ? ` <span class="muted">(got to ${esc(best.result.furthest === "DBULL" ? "the bull" : best.result.furthest)})</span>` : ""}` : `<span class="muted">No finished round with these settings yet: the first one sets your best.</span>`;
     $("drills").querySelectorAll("[data-drill]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.drill === drillId)));
   }
 
@@ -777,7 +795,7 @@
       $("pauseBtn").textContent = paused ? "Resume" : "Pause";
       $("timerNote").textContent = paused ? "Paused: the clock is stopped." : sess.timer.pausedBy === "idle" ? "The clock paused itself after 3 quiet minutes; the next dart starts it." : "Running: active time only.";
       $("scoreLabel").textContent = d.scoreLabel || "Score";
-      $("score").textContent = d.scoreText(sess.play);
+      $("score").textContent = d.scoreText(TE.shownPlay(sess)); // with a warm-up's darts still in the board
       const pace = d.paceText ? d.paceText(sess.play, best, { elapsedMs: TE.elapsedMs(sess, now) }) : null;
       $("pace").textContent = pace || (best ? `Your best: ${best.key}` : "");
       $("pace").className = "pace" + (pace && /^\+/.test(pace) ? " up" : pace && /^-/.test(pace) ? " down" : "");
@@ -804,6 +822,9 @@
       $("cells").innerHTML = cellsHtml(view.cells);
       $("abandonBtn").disabled = false;
     }
+    $("finishBtn").hidden = !playing || !d.finishable;
+    // The camera station reads visits of up to 12 darts while a warm-up with a handful is played, and of 3 otherwise.
+    if (watcher && watcher.expect) watcher.expect(sess ? TE.cameraVisitDarts(sess, now) : 3);
     const steps = sess ? TE.undoCount(st, sess) : 0;
     $("undoBtn").disabled = !steps;
     $("resultUndoBtn").disabled = !steps;
@@ -888,6 +909,7 @@
     voice: () => setVoice(!voiceWanted()),
     camera: () => { const c = $("camToggle"); c.checked = !c.checked; setCamera(c.checked); },
     manual: (man) => {
+      if (man === "fin") return finish();
       if (/^h[0-3]$/.test(man)) return manual(Number(man.slice(1)));
       const b = $(man);
       if (b && b.dataset.label) manualDart(b.dataset.label);
@@ -919,8 +941,8 @@
       undoCount: sess ? TE.undoCount(st, sess) : 0,
       note: $("camNote").textContent,
       noteWarn: $("camNote").classList.contains("warn"),
-      dartsText: sess ? `${sess.throws.length} darts` : "",
-      oppHtml: sess && !finished ? `<div class="who">${esc(d.scoreLabel || "Score")}</div><div class="sc">${esc(d.scoreText(sess.play))}</div><div class="sub">${esc(best ? `best ${best.key}` : d.needsOpponent ? `You – ${sess.play.names[1]}` : d.noBest ? "no best: a warm-up" : "first round")}</div>` : "",
+      dartsText: sess ? `${sess.throws.length + TE.pendingDarts(sess).length} darts` : "",
+      oppHtml: sess && !finished ? `<div class="who">${esc(d.scoreLabel || "Score")}</div><div class="sc">${esc(d.scoreText(TE.shownPlay(sess)))}</div><div class="sub">${esc(best ? `best ${best.key}` : d.needsOpponent ? `You – ${sess.play.names[1]}` : d.noBest ? "no best: a warm-up" : "first round")}</div>` : "",
       info: pace ? `<span class="${/^\+/.test(pace) ? "up" : /^-/.test(pace) ? "down" : "m"}">${esc(pace)}</span>` : "",
       pad: sess ? TE.padFor(sess) : null,
       doneBig: res ? (d.keyText ? d.keyText(res) : res[d.keyMetric.id] == null ? "-" : String(res[d.keyMetric.id])) : "",

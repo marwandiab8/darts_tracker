@@ -9,7 +9,7 @@
 //   board.update(model);   // on every change (cheap when nothing changed)
 //   board.tick(clockText); // every half second
 //
-// handlers: exit(), start(), pause(), voice(), camera(), manual("h0".."h3" | "p1".."p3" | "pm"),
+// handlers: exit(), start(), pause(), voice(), camera(), manual("h0".."h3" | "p1".."p3" | "pm" | "fin"),
 //           boardTap(x, y), undo(), fix(index, seq, { label, x, y } | { remove: true }), and the done
 //           screen's actions (again(), pick()).
 (function (root) {
@@ -33,6 +33,7 @@
       pad: [
         { man: "h0", text: "No hits", cls: "m" }, { man: "h1", text: "1 hit" }, { man: "h2", text: "2 hits" }, { man: "h3", text: "3 hits" },
         { man: "p1", text: "" }, { man: "p2", text: "" }, { man: "p3", text: "" }, { man: "pm", text: "Miss", cls: "m" },
+        { man: "fin", text: "Finish", cls: "m" },
       ],
       idleTitle: "Training",
       idleSub: "Pick a drill on the page, then throw. The cameras enter the darts.",
